@@ -17,7 +17,7 @@ GitHub issue, pull request, or discussion for a suspected vulnerability.
 
 Preferred channel:
 
-- Use email **security@corrobore.org** to send a confidential advisory.
+- Use email **security<<0>>corrobore.org** to send a confidential advisory.
 
 When reporting, please include:
 
