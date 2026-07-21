@@ -46,7 +46,7 @@ See [Architecture](architecture.md) for crate-level boundaries and
 - durable session state, JSONL audit logs, health data, Prometheus metrics, rate limiting, body limits, and graceful shutdown;
 - incremental TAXII 2.1 ingestion with persisted cursors.
 
-The current public baseline is `0.1.x`. Historical context remains in release
+The current public baseline is `0.2.x`. Historical context remains in release
 notes, while this site describes behavior available on `main`.
 
 Corrobore is not a distributed graph database and does not claim full openCypher support. Candidate R&D work is tracked separately under `project-documents/`; this site describes the code that exists on `main`.
@@ -62,4 +62,4 @@ Corrobore is not a distributed graph database and does not claim full openCypher
 - [Architecture](architecture.md) — crate and runtime boundaries.
 - [Interactive API reference](api/index.html) — browse HTTP API parameters and schemas.
 - [OpenAPI specification](api/openapi.yaml) — raw OpenAPI 3.1 contract.
-- [Release Notes](release-notes/v0.1.0.md) — current operational baseline and history.
+- [Release Notes](release-notes/v0.2.0.md) — current operational baseline and history.
