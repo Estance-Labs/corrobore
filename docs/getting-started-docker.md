@@ -2,6 +2,17 @@
 
 This guide covers running Corrobore as a container — no Rust toolchain required.
 
+## Deployment modes
+
+Corrobore supports three practical startup modes:
+
+1. HTTP runtime only (default Compose mode).
+2. HTTP runtime + TAXII connector (`corrobore-ingest`) through a Compose profile.
+3. Embedded engine (in-process Rust library), which is not a Docker Compose service mode.
+
+Use Docker for modes 1 and 2. Use the embedded mode from your Rust application
+as documented in [Getting Started](getting-started.md#use-corrobore-in-process).
+
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) 24 or later
@@ -64,9 +75,43 @@ The most common variables to override:
 | `CORROBORE_HTTP_AUTH_TOKEN` | **required** | Bearer token for all protected routes. |
 | `CORROBORE_HTTP_PORT` | `8080` | Published port. |
 | `CORROBORE_STORAGE_MODE` | `ephemeral` | Set to `persistent` to write the graph to disk. |
-| `CORROBORE_STORAGE_DIR` | unset | Required when `persistent`; directory inside the container (mount a volume here). |
+| `CORROBORE_STORAGE_DIR` | `/graph-data` in Compose | Graph directory when `persistent` mode is enabled. |
+| `CORROBORE_INGEST_TAXII_ROOT_URL` | unset | Required when TAXII profile is enabled. |
+| `CORROBORE_INGEST_TAXII_COLLECTION_ID` | unset | Required when TAXII profile is enabled. |
+| `CORROBORE_INGEST_CORROBORE_BASE_URL` | `http://corrobore-http-server:8080` in Compose | Corrobore target URL for connector imports. |
+| `CORROBORE_INGEST_CORROBORE_AUTH_TOKEN` | defaults to `CORROBORE_HTTP_AUTH_TOKEN` in Compose | Auth token used by the connector toward Corrobore. |
 
 See the [HTTP Server reference](user-guide/http-server.md#configuration) for the full list.
+
+## Compose startup examples
+
+### Mode 1: HTTP only (default)
+
+```bash
+docker compose up --build --wait
+```
+
+### Mode 2: HTTP with persistent graph storage
+
+```bash
+CORROBORE_STORAGE_MODE=persistent \
+docker compose up --build --wait
+```
+
+The Compose file mounts `corrobore-graph-data` at `/graph-data` by default.
+
+### Mode 3: HTTP + TAXII connector
+
+Set the required TAXII variables, then enable the `taxii` profile:
+
+```bash
+export CORROBORE_INGEST_TAXII_ROOT_URL=https://taxii.example.org/api/v1
+export CORROBORE_INGEST_TAXII_COLLECTION_ID=collection-id
+
+docker compose --profile taxii up --build --wait
+```
+
+The connector waits for the HTTP runtime health check before starting.
 
 ## First query
 
@@ -110,6 +155,9 @@ volumes:
 docker compose -f docker-compose.yml -f docker-compose.override.yml up --build --wait
 ```
 
+This override remains useful when you want to customize storage location or
+volume naming beyond the default Compose contract.
+
 ## Session workflow
 
 Sessions group writes and reads under a single audit trail.
@@ -140,5 +188,6 @@ curl -X POST "http://127.0.0.1:8080/v1/sessions/${SESSION_ID}/stop" \
 ## Next steps
 
 - [HTTP Server reference](user-guide/http-server.md) — full route catalogue and configuration.
+- [TAXII Ingestion](user-guide/ingestion.md) — connector variables and polling behavior.
 - [Cypher support](user-guide/cypher.md) — which Cypher features are available.
 - [Intelligence Domains](user-guide/domains.md) — built-in node schemas for CTI, FIMI, and Crisis.

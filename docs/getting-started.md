@@ -2,6 +2,20 @@
 
 This guide targets the current `0.1.x` release.
 
+## Startup mode overview
+
+Pick the mode that matches your deployment target:
+
+| Mode | What runs | Best for | How to start |
+|---|---|---|---|
+| HTTP (ephemeral) | `corrobore-http-server` only | Local API development and quick checks | `docker compose up --build --wait` |
+| HTTP (persistent) | `corrobore-http-server` + persistent graph volume | Durable local state across restarts | `CORROBORE_STORAGE_MODE=persistent docker compose up --build --wait` |
+| HTTP + TAXII | `corrobore-http-server` + `corrobore-ingest` | Connector-driven ingestion workflows | `docker compose --profile taxii up --build --wait` |
+| Embedded | In-process `corrobore_engine` library | Rust applications embedding Corrobore directly | See [Use Corrobore in process](#use-corrobore-in-process) |
+
+For Docker-specific examples and environment variables, see
+[Getting Started with Docker](getting-started-docker.md).
+
 ## Install
 
 ### Docker (recommended)
