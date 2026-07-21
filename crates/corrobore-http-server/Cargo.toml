@@ -30,7 +30,7 @@ chrono = { workspace = true }
 clap = { workspace = true }
 dotenvy = { workspace = true }
 domain-provider-abi = { path = "../domain-provider-abi" }
-ed25519-dalek = { version = "2.2", features = ["pkcs8"] }
+ed25519-dalek = { version = "3.0", features = ["pkcs8"] }
 export-stix = { path = "../export-stix" }
 graph-core = { path = "../graph-core" }
 graph-storage = { path = "../graph-storage" }
