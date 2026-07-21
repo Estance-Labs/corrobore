@@ -1,0 +1,83 @@
+# Rust build artifacts
+/target/
+
+# Web build artifacts and local dependencies
+/web/node_modules/
+/web/dist/
+/web/coverage/
+/web/playwright-report/
+/web/test-results/
+/web/*.tsbuildinfo
+/web/public/runtime-config.local.js
+
+# Rust tooling
+**/*.rs.bk
+**/*.rs.tmp
+*.pdb
+
+# IDEs and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+.directory
+.Trash-*
+
+# Logs and temporary files
+*.log
+logs/
+tmp/
+temp/
+.cache/
+
+# Coverage and profiling
+coverage/
+tarpaulin-report.html
+*.profraw
+*.profdata
+
+# Generated docs
+/doc/
+
+# Backup files
+*.bak
+*.orig
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+pyvenv.cfg
+
+# Local environment configuration (never commit real secrets)
+.env
+.env.*
+!.env.sample
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# MkDocs build output
+/site/
+
+# Runtime state
+.corrobore-runtime/
+.corrobore-runtime/sessions.json

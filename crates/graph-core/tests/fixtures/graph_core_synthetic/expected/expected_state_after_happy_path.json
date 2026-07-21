@@ -1,0 +1,165 @@
+{
+  "format": "graph-core-expected-state/v1",
+  "after_sequence": "fixtures/happy_path_operations.json",
+  "assertion_policy": [
+    "Assert using logical refs resolved to generated IDs.",
+    "Do not assert exact generated ID strings.",
+    "Sort returned IDs before comparing where API ordering is not part of the contract."
+  ],
+  "visible_current_nodes": {
+    "actor_apt28": {
+      "labels": [
+        "ThreatActor"
+      ],
+      "version": 2,
+      "status": "NeedsReview",
+      "properties": {
+        "name": {
+          "type": "string",
+          "value": "Fancy Bear"
+        }
+      }
+    },
+    "malware_xagent": {
+      "labels": [
+        "Malware"
+      ],
+      "version": 1,
+      "status": "Candidate"
+    },
+    "indicator_ip": {
+      "labels": [
+        "Indicator"
+      ],
+      "version": 1,
+      "status": "Candidate"
+    },
+    "fimi_incident_ghostwriter": {
+      "labels": [
+        "FIMIIncident"
+      ],
+      "version": 1,
+      "status": "NeedsReview"
+    },
+    "narrative_energy_prices": {
+      "labels": [
+        "Narrative"
+      ],
+      "version": 1,
+      "status": "Candidate"
+    },
+    "media_asset_video": {
+      "labels": [
+        "MediaAsset"
+      ],
+      "version": 1,
+      "status": "Candidate"
+    }
+  },
+  "hidden_from_default_node_reads": {
+    "actor_apt29": {
+      "current_version": 2,
+      "current_status": "Tombstoned",
+      "version_count": 2
+    }
+  },
+  "visible_current_relationships": {
+    "rel_apt28_uses_xagent": {
+      "source_ref": "actor_apt28",
+      "type": "USES",
+      "target_ref": "malware_xagent",
+      "version": 2,
+      "status": "Validated",
+      "confidence": 0.91
+    },
+    "rel_xagent_uses_indicator": {
+      "source_ref": "malware_xagent",
+      "type": "INDICATES",
+      "target_ref": "indicator_ip",
+      "version": 1,
+      "status": "Candidate",
+      "confidence": 0.73
+    },
+    "rel_incident_amplifies_narrative": {
+      "source_ref": "fimi_incident_ghostwriter",
+      "type": "AMPLIFIES",
+      "target_ref": "narrative_energy_prices",
+      "version": 1,
+      "status": "NeedsReview",
+      "confidence": 0.64
+    },
+    "rel_narrative_uses_media": {
+      "source_ref": "narrative_energy_prices",
+      "type": "USES_MEDIA",
+      "target_ref": "media_asset_video",
+      "version": 1,
+      "status": "Candidate",
+      "confidence": 0.58
+    }
+  },
+  "hidden_from_default_relationship_reads": {
+    "rel_apt29_uses_xagent_to_tombstone": {
+      "current_version": 2,
+      "current_status": "Tombstoned",
+      "version_count": 2
+    }
+  },
+  "adjacency": {
+    "outgoing": {
+      "actor_apt28": [
+        "rel_apt28_uses_xagent"
+      ],
+      "actor_apt29": [],
+      "malware_xagent": [
+        "rel_xagent_uses_indicator"
+      ],
+      "fimi_incident_ghostwriter": [
+        "rel_incident_amplifies_narrative"
+      ],
+      "narrative_energy_prices": [
+        "rel_narrative_uses_media"
+      ]
+    },
+    "incoming": {
+      "malware_xagent": [
+        "rel_apt28_uses_xagent"
+      ],
+      "indicator_ip": [
+        "rel_xagent_uses_indicator"
+      ],
+      "narrative_energy_prices": [
+        "rel_incident_amplifies_narrative"
+      ],
+      "media_asset_video": [
+        "rel_narrative_uses_media"
+      ]
+    },
+    "between": {
+      "actor_apt28->malware_xagent": [
+        "rel_apt28_uses_xagent"
+      ],
+      "actor_apt29->malware_xagent": [],
+      "malware_xagent->indicator_ip": [
+        "rel_xagent_uses_indicator"
+      ]
+    }
+  },
+  "version_counts": {
+    "nodes": {
+      "actor_apt28": 2,
+      "actor_apt29": 2,
+      "malware_xagent": 1,
+      "indicator_ip": 1,
+      "fimi_incident_ghostwriter": 1,
+      "narrative_energy_prices": 1,
+      "media_asset_video": 1
+    },
+    "relationships": {
+      "rel_apt28_uses_xagent": 2,
+      "rel_xagent_uses_indicator": 1,
+      "rel_incident_amplifies_narrative": 1,
+      "rel_narrative_uses_media": 1,
+      "rel_apt29_uses_xagent_to_tombstone": 2
+    }
+  }
+}

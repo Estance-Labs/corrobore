@@ -1,0 +1,59 @@
+[package]
+name = "corrobore-http-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+
+[lib]
+name = "corrobore_http_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "corrobore-http-server"
+path = "src/main.rs"
+
+[features]
+default = ["enterprise-cti-binary", "enterprise-crisis", "enterprise-fimi"]
+enterprise-cti = []
+enterprise-cti-binary = ["enterprise-cti"]
+enterprise-crisis = []
+enterprise-fimi = []
+
+[dependencies]
+axum = { workspace = true }
+base64 = "0.22"
+chrono = { workspace = true }
+clap = { workspace = true }
+dotenvy = { workspace = true }
+domain-provider-abi = { path = "../domain-provider-abi" }
+ed25519-dalek = { version = "2.2", features = ["pkcs8"] }
+export-stix = { path = "../export-stix" }
+graph-core = { path = "../graph-core" }
+graph-storage = { path = "../graph-storage" }
+libloading = "0.8"
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true, optional = true }
+sha2 = "0.10"
+shared-runtime = { path = "../shared-runtime" }
+subtle = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["net"] }
+tower = { workspace = true }
+tower-http = { workspace = true, features = ["fs"] }
+tower_governor = { workspace = true }
+tracing = { workspace = true }
+tracing-appender = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["json"] }
+uuid = { workspace = true }
+
+[dev-dependencies]
+http-body-util = { workspace = true }
+tower = { workspace = true }
+
+[lints]
+workspace = true

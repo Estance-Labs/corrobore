@@ -1,0 +1,36 @@
+name: CI duration guard
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 7 * * 1'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: ci-duration-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-ci-duration:
+    name: Rust CI duration budget
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install pinned Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26.4.0
+
+      - name: Measure Rust CI workflow duration
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          P95_MAX_MINUTES: '30'
+        run: node scripts/ci-duration-guard.mjs --workflow rust-ci.yml --branch main --max-runs 30

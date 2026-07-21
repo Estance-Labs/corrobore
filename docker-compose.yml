@@ -1,0 +1,42 @@
+# The image serves the API on http://localhost:8080.
+# Copy `.env.sample` to `.env`, set a local token, then run
+# `docker compose up --build --wait`.
+
+services:
+  corrobore-http-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: corrobore-http-server:latest
+    ports:
+      - "127.0.0.1:${CORROBORE_HTTP_PORT:-8080}:8080"
+    environment:
+      # Required: bearer token guarding every authenticated route.
+      CORROBORE_HTTP_AUTH_TOKEN: ${CORROBORE_HTTP_AUTH_TOKEN:?set CORROBORE_HTTP_AUTH_TOKEN}
+      # Bind on all interfaces inside the container so the published port works.
+      CORROBORE_HTTP_HOST: 0.0.0.0
+      CORROBORE_HTTP_PORT: "8080"
+      CORROBORE_HTTP_SESSION_STORE_DIR: /data
+    volumes:
+      # Persist session state and logs across restarts.
+      - corrobore-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/usr/local/bin/busybox",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:8080/health",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    stop_grace_period: 10s
+
+volumes:
+  corrobore-data:

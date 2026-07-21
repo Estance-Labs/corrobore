@@ -1,0 +1,21 @@
+[package]
+name = "export-fimi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+
+[lib]
+name = "export_fimi"
+path = "src/lib.rs"
+
+[dependencies]
+graph-core = { path = "../graph-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

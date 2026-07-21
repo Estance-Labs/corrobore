@@ -1,0 +1,278 @@
+{
+  "format": "graph-core-node-fixtures/v1",
+  "notes": [
+    "All IDs under `ref` are dataset-local logical references.",
+    "The graph implementation should allocate actual NodeId values.",
+    "Labels are intentionally domain-looking but graph-core must treat them as plain labels."
+  ],
+  "nodes": [
+    {
+      "ref": "actor_apt28",
+      "labels": [
+        "ThreatActor"
+      ],
+      "status": "Candidate",
+      "properties": {
+        "name": {
+          "type": "string",
+          "value": "APT28"
+        },
+        "aliases": {
+          "type": "string_list",
+          "value": [
+            "Fancy Bear",
+            "Sofacy"
+          ]
+        },
+        "first_seen_year": {
+          "type": "integer",
+          "value": 2007
+        },
+        "active": {
+          "type": "bool",
+          "value": true
+        },
+        "source": {
+          "type": "string",
+          "value": "synthetic-fixture"
+        }
+      }
+    },
+    {
+      "ref": "actor_apt29",
+      "labels": [
+        "ThreatActor"
+      ],
+      "status": "Candidate",
+      "properties": {
+        "name": {
+          "type": "string",
+          "value": "APT29"
+        },
+        "aliases": {
+          "type": "string_list",
+          "value": [
+            "Cozy Bear"
+          ]
+        },
+        "first_seen_year": {
+          "type": "integer",
+          "value": 2008
+        },
+        "active": {
+          "type": "bool",
+          "value": true
+        },
+        "source": {
+          "type": "string",
+          "value": "synthetic-fixture"
+        }
+      }
+    },
+    {
+      "ref": "malware_xagent",
+      "labels": [
+        "Malware"
+      ],
+      "status": "Candidate",
+      "properties": {
+        "name": {
+          "type": "string",
+          "value": "X-Agent"
+        },
+        "families": {
+          "type": "string_list",
+          "value": [
+            "credential-theft",
+            "remote-access"
+          ]
+        },
+        "first_seen_year": {
+          "type": "integer",
+          "value": 2012
+        },
+        "source": {
+          "type": "string",
+          "value": "synthetic-fixture"
+        }
+      }
+    },
+    {
+      "ref": "indicator_ip",
+      "labels": [
+        "Indicator"
+      ],
+      "status": "Candidate",
+      "properties": {
+        "name": {
+          "type": "string",
+          "value": "203.0.113.42"
+        },
+        "pattern_type": {
+          "type": "string",
+          "value": "ipv4-addr"
+        },
+        "confidence_hint": {
+          "type": "float",
+          "value": 0.73
+        },
+        "is_synthetic": {
+          "type": "bool",
+          "value": true
+        },
+        "source": {
+          "type": "string",
+          "value": "synthetic-fixture"
+        }
+      }
+    },
+    {
+      "ref": "fimi_incident_ghostwriter",
+      "labels": [
+        "FIMIIncident"
+      ],
+      "status": "NeedsReview",
+      "properties": {
+        "name": {
+          "type": "string",
+          "value": "Ghostwriter-style influence cluster"
+        },
+        "campaign_window_days": {
+          "type": "integer",
+          "value": 14
+        },
+        "languages": {
+          "type": "string_list",
+          "value": [
+            "en",
+            "fr",
+            "pl"
+          ]
+        },
+        "narrative_count": {
+          "type": "integer",
+          "value": 3
+        },
+        "source": {
+          "type": "string",
+          "value": "synthetic-fixture"
+        }
+      }
+    },
+    {
+      "ref": "narrative_energy_prices",
+      "labels": [
+        "Narrative"
+      ],
+      "status": "Candidate",
+      "properties": {
+        "name": {
+          "type": "string",
+          "value": "Energy price manipulation narrative"
+        },
+        "summary": {
+          "type": "string",
+          "value": "Synthetic narrative used only to exercise graph properties."
+        },
+        "channels": {
+          "type": "string_list",
+          "value": [
+            "blog",
+            "telegram",
+            "video"
+          ]
+        },
+        "source": {
+          "type": "string",
+          "value": "synthetic-fixture"
+        }
+      }
+    },
+    {
+      "ref": "media_asset_video",
+      "labels": [
+        "MediaAsset"
+      ],
+      "status": "Candidate",
+      "properties": {
+        "name": {
+          "type": "string",
+          "value": "synthetic-video-001"
+        },
+        "media_type": {
+          "type": "string",
+          "value": "video"
+        },
+        "duration_seconds": {
+          "type": "integer",
+          "value": 93
+        },
+        "watermarked": {
+          "type": "bool",
+          "value": false
+        },
+        "source": {
+          "type": "string",
+          "value": "synthetic-fixture"
+        }
+      }
+    },
+    {
+      "ref": "property_probe",
+      "labels": [
+        "Indicator"
+      ],
+      "status": "Candidate",
+      "properties": {
+        "string": {
+          "type": "string",
+          "value": "value"
+        },
+        "integer": {
+          "type": "integer",
+          "value": 42
+        },
+        "float": {
+          "type": "float",
+          "value": 42.5
+        },
+        "bool": {
+          "type": "bool",
+          "value": true
+        },
+        "null": {
+          "type": "null",
+          "value": null
+        },
+        "strings": {
+          "type": "string_list",
+          "value": [
+            "a",
+            "b"
+          ]
+        },
+        "integers": {
+          "type": "integer_list",
+          "value": [
+            1,
+            2
+          ]
+        },
+        "floats": {
+          "type": "float_list",
+          "value": [
+            1.0,
+            2.0
+          ]
+        },
+        "bools": {
+          "type": "bool_list",
+          "value": [
+            true,
+            false
+          ]
+        }
+      }
+    }
+  ]
+}

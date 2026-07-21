@@ -1,0 +1,10 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Documented placeholder and synthetic graph fixture identifiers"
+regexTarget = "secret"
+regexes = [
+  '''^change-me$''',
+  '''^relationship--9$''',
+]

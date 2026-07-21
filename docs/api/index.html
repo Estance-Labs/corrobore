@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Interactive OpenAPI reference for the Corrobore HTTP API.">
+  <title>Corrobore API Reference</title>
+  <link rel="icon" href="../assets/corrobore-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+  <style>
+    :root {
+      color-scheme: dark;
+      --corrobore-bg: #0b1017;
+      --corrobore-surface: #111923;
+      --corrobore-border: #253244;
+      --corrobore-text: #f4f7fb;
+      --corrobore-muted: #a7b3c4;
+      --corrobore-accent: #5eead4;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--corrobore-bg);
+    }
+
+    .corrobore-header {
+      align-items: center;
+      background: var(--corrobore-surface);
+      border-bottom: 1px solid var(--corrobore-border);
+      display: flex;
+      font: 500 14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      gap: 16px;
+      justify-content: space-between;
+      min-height: 64px;
+      padding: 12px 24px;
+    }
+
+    .corrobore-brand {
+      align-items: center;
+      color: var(--corrobore-text);
+      display: flex;
+      font-size: 18px;
+      font-weight: 700;
+      gap: 10px;
+      text-decoration: none;
+    }
+
+    .corrobore-brand img {
+      height: 32px;
+      width: 32px;
+    }
+
+    .corrobore-links {
+      display: flex;
+      gap: 18px;
+    }
+
+    .corrobore-links a {
+      color: var(--corrobore-muted);
+      text-decoration: none;
+    }
+
+    .corrobore-links a:hover,
+    .corrobore-links a:focus-visible {
+      color: var(--corrobore-accent);
+    }
+
+    #swagger-ui {
+      background: #fafafa;
+      min-height: calc(100vh - 64px);
+      padding-bottom: 48px;
+    }
+
+    .swagger-ui .topbar { display: none; }
+
+    @media (max-width: 640px) {
+      .corrobore-header {
+        align-items: flex-start;
+        flex-direction: column;
+        padding: 12px 16px;
+      }
+
+      .corrobore-links {
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="corrobore-header">
+    <a class="corrobore-brand" href="../">
+      <img src="../assets/corrobore-mark.svg" alt="">
+      <span>Corrobore API</span>
+    </a>
+    <nav class="corrobore-links" aria-label="API resources">
+      <a href="../">Documentation</a>
+      <a href="./openapi.yaml" download>Download OpenAPI YAML</a>
+      <a href="https://github.com/Noetance-Labs/corrobore">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="swagger-ui" aria-label="Interactive API reference"></main>
+
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-standalone-preset.js"></script>
+  <script>
+    window.addEventListener("load", () => {
+      SwaggerUIBundle({
+        url: "./openapi.yaml",
+        dom_id: "#swagger-ui",
+        deepLinking: true,
+        displayRequestDuration: true,
+        docExpansion: "list",
+        filter: true,
+        persistAuthorization: true,
+        supportedSubmitMethods: [],
+        validatorUrl: null,
+        presets: [
+          SwaggerUIBundle.presets.apis,
+          SwaggerUIStandalonePreset
+        ],
+        layout: "StandaloneLayout"
+      });
+    });
+  </script>
+</body>
+</html>

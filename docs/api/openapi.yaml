@@ -1,0 +1,755 @@
+openapi: 3.1.0
+info:
+  title: Corrobore HTTP API
+  version: 0.1.0
+  description: |
+    Agent-facing Corrobore API. `/health` and `/metrics` are public; every `/v1/*`
+    operation requires a Bearer token.
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+servers:
+  - url: http://127.0.0.1:8080
+    description: Default local server
+
+security:
+  - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    SessionPath:
+      name: session_id
+      in: path
+      required: true
+      schema: {type: string}
+  responses:
+    BadRequest:
+      description: Invalid query selection or projection budget
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    Unauthorized:
+      description: Missing or invalid Bearer token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required: [ok, error]
+      properties:
+        ok: {type: boolean, const: false}
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: {type: string}
+            message: {type: string}
+    CypherRequest:
+      type: object
+      required: [query]
+      properties:
+        query: {type: string}
+        params:
+          type: object
+          additionalProperties: true
+        mode:
+          type: string
+          enum: [read, write, validate, auto]
+        workspace_id: {type: string}
+        session_id: {type: string}
+        budget_ref: {type: string}
+    CypherEnvelope:
+      type: object
+      required: [ok, result]
+      properties:
+        ok: {type: boolean, const: true}
+        result:
+          type: object
+          required: [status]
+          properties:
+            status:
+              type: string
+              enum: [Success, Rejected, ValidationFailed]
+            data: {}
+            mutation_summary: {}
+            validation_errors:
+              type: array
+              items:
+                type: object
+                properties:
+                  code: {type: string}
+                  message: {type: string}
+    StixBundle:
+      type: object
+      required: [type, objects]
+      properties:
+        type: {type: string, const: bundle}
+        id: {type: string}
+        objects:
+          type: array
+          items: {type: object}
+    ImportResult:
+      type: object
+      required: [processed_objects, applied_mutations, rejected_mutations, errors]
+      properties:
+        processed_objects: {type: integer, minimum: 0}
+        applied_mutations: {type: integer, minimum: 0}
+        rejected_mutations: {type: integer, minimum: 0}
+        errors:
+          type: array
+          items: {type: string}
+    SessionStatus:
+      type: string
+      enum: [idle, working, processing, degraded, stopped]
+    ExplorerSession:
+      type: object
+      required: [session_id, workspace_id, actor_id, actor_kind, status, started_at_ms, updated_at_ms]
+      properties:
+        session_id: {type: string}
+        workspace_id: {type: string}
+        actor_id: {type: string}
+        actor_kind:
+          type: string
+          enum: [user, agent, orchestrator_agent, worker_agent, tool, system, test_fixture]
+        status: {$ref: '#/components/schemas/SessionStatus'}
+        started_at_ms: {type: integer, minimum: 0}
+        updated_at_ms: {type: integer, minimum: 0}
+        auto_stopped_due_to_idle_ttl: {type: boolean}
+    DomainProviderCapability:
+      type: object
+      required: [name, version]
+      properties:
+        name: {type: string}
+        version: {type: string}
+    DomainProviderIssue:
+      type: object
+      required: [code, message, severity]
+      properties:
+        code: {type: string}
+        message: {type: string}
+        field: {type: [string, 'null']}
+        severity: {type: string, enum: [error, warning]}
+        node_id: {type: [string, 'null']}
+
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Service health, version, uptime, and session expiration metrics
+      tags: [Operations]
+      security: []
+      responses:
+        '200':
+          description: Healthy process
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, service, version, uptime_ms, session_ttl_metrics, durability]
+                properties:
+                  status: {type: string, const: ok}
+                  service: {type: string, const: corrobore-http-server}
+                  version: {type: string}
+                  storage_mode:
+                    type: string
+                    enum: [ephemeral, persistent]
+                  uptime_ms: {type: integer}
+                  session_ttl_metrics:
+                    type: object
+                    properties:
+                      total_expired_sessions: {type: integer}
+                      expired_last_5m_sessions: {type: integer}
+                  durability:
+                    type: object
+                    required: [controls, wal_bytes, wal_lag_sequences, checkpoint_sequence, checkpoint_age_seconds, compaction_backlog_bytes, recovery]
+                    properties:
+                      controls:
+                        type: object
+                        required: [require_fsync, strict_recovery]
+                        properties:
+                          require_fsync: {type: boolean}
+                          strict_recovery: {type: boolean}
+                      wal_bytes: {type: integer, minimum: 0}
+                      wal_lag_sequences: {type: integer, minimum: 0}
+                      checkpoint_sequence:
+                        oneOf:
+                          - {type: integer, minimum: 0}
+                          - {type: 'null'}
+                      checkpoint_age_seconds:
+                        oneOf:
+                          - {type: integer, minimum: 0}
+                          - {type: 'null'}
+                      compaction_backlog_bytes: {type: integer, minimum: 0}
+                      recovery:
+                        type: object
+                        required: [outcome, manifest_validated, required_components_validated, catalog_recovered, adjacency_storage_recovered, warning_count, derived_state_rebuilt]
+                        properties:
+                          outcome:
+                            type: string
+                            enum: [ephemeral, recovered, unavailable]
+                          manifest_validated: {type: boolean}
+                          required_components_validated: {type: boolean}
+                          catalog_recovered: {type: boolean}
+                          adjacency_storage_recovered: {type: boolean}
+                          warning_count: {type: integer, minimum: 0}
+                          derived_state_rebuilt: {type: boolean}
+
+  /metrics:
+    get:
+      operationId: getMetrics
+      summary: Prometheus text metrics
+      tags: [Operations]
+      security: []
+      responses:
+        '200':
+          description: Prometheus exposition
+          content:
+            text/plain:
+              schema: {type: string}
+
+  /v1/cypher/read:
+    post:
+      operationId: executeCypherRead
+      summary: Execute a forced read-only Cypher request
+      tags: [Cypher]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CypherRequest'}
+      responses:
+        '200':
+          description: Runtime response
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CypherEnvelope'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/cypher/write:
+    post:
+      operationId: executeCypherWrite
+      summary: Execute a forced mutation Cypher request
+      tags: [Cypher]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CypherRequest'}
+      responses:
+        '200':
+          description: Runtime response
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CypherEnvelope'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/cypher/execute:
+    post:
+      operationId: executeCypher
+      summary: Execute Cypher with explicit or automatic mode
+      tags: [Cypher]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CypherRequest'}
+      responses:
+        '200':
+          description: Runtime response
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CypherEnvelope'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/seed/search:
+    post:
+      operationId: searchSeeds
+      summary: Rank graph seed nodes for a natural-language objective
+      tags: [Seeds]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [objective]
+              properties:
+                objective: {type: string}
+                workspace_id: {type: string}
+                domain_profile:
+                  type: string
+                  enum: [cti, fimi, crisis, cross_domain]
+                mode:
+                  type: string
+                  enum: [hybrid, full_text, semantic, vector]
+                top_k: {type: integer, minimum: 1, default: 10}
+                score_threshold: {type: number, default: 0.0}
+      responses:
+        '200':
+          description: Ranked candidates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: true}
+                  result:
+                    type: object
+                    properties:
+                      candidates:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            node_id: {type: string}
+                            score: {type: number}
+                            explanation:
+                              type: object
+                              properties:
+                                rationale: {type: string}
+                                source_refs: {type: array, items: {type: string}}
+                                boundary_notes: {type: array, items: {type: string}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '422':
+          description: No seed, ambiguous seed, or overbroad objective
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorEnvelope'}
+
+  /v1/domains/{domain}/validate:
+    post:
+      operationId: validateDomainNode
+      summary: Validate domain data through a licensed native provider
+      tags: [Domains]
+      parameters:
+        - name: domain
+          in: path
+          required: true
+          schema: {type: string, enum: [cti, fimi, crisis]}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [payload]
+              properties:
+                request_id: {type: string}
+                workspace_id: {type: string}
+                snapshot_id: {type: string}
+                payload: {}
+      responses:
+        '200':
+          description: Correlated provider validation response
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, result]
+                properties:
+                  ok: {type: boolean, const: true}
+                  result:
+                    type: object
+                    required: [schema_version, request_id, status, issues]
+                    properties:
+                      schema_version: {type: string, const: '1'}
+                      request_id: {type: string}
+                      status: {type: string, enum: [accepted, rejected, failed]}
+                      issues:
+                        type: array
+                        items: {$ref: '#/components/schemas/DomainProviderIssue'}
+                      diagnostics: {type: [object, 'null'], additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/BadRequest'}
+        '502': {$ref: '#/components/responses/BadRequest'}
+        '503': {$ref: '#/components/responses/BadRequest'}
+        '504': {$ref: '#/components/responses/BadRequest'}
+
+  /v1/license/status:
+    get:
+      operationId: getLicenseStatus
+      summary: Read runtime enterprise license status
+      tags: [Operations]
+      responses:
+        '200':
+          description: Active runtime license summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: true}
+                  result:
+                    type: object
+                    properties:
+                      source: {type: string, enum: [signed_pem, legacy_env, none]}
+                      client_uuid: {type: [string, 'null']}
+                      client_email: {type: [string, 'null']}
+                      modules:
+                        type: array
+                        items: {type: string}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/admin/license/status:
+    get:
+      operationId: getAdminLicenseStatus
+      summary: Read runtime enterprise license status with admin token boundary
+      tags: [Operations]
+      security: []
+      responses:
+        '200':
+          description: Active runtime license summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: true}
+                  result:
+                    type: object
+                    properties:
+                      source: {type: string, enum: [signed_pem, legacy_env, none]}
+                      client_uuid: {type: [string, 'null']}
+                      client_email: {type: [string, 'null']}
+                      modules:
+                        type: array
+                        items: {type: string}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/BadRequest'}
+
+  /v1/admin/domain-providers/status:
+    get:
+      operationId: getAdminDomainProviderStatus
+      summary: Read non-sensitive native provider readiness with admin token boundary
+      tags: [Operations]
+      security: []
+      responses:
+        '200':
+          description: Loaded provider identity, capabilities, and readiness
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, result]
+                properties:
+                  ok: {type: boolean, const: true}
+                  result:
+                    type: object
+                    required: [providers]
+                    properties:
+                      providers:
+                        type: array
+                        items:
+                          type: object
+                          required: [provider_id, provider_version, domain, capabilities, ready]
+                          properties:
+                            provider_id: {type: string}
+                            provider_version: {type: string}
+                            domain: {type: string, enum: [cti, fimi, crisis]}
+                            capabilities:
+                              type: array
+                              items: {$ref: '#/components/schemas/DomainProviderCapability'}
+                            ready: {type: boolean}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/BadRequest'}
+
+  /v1/import/stix:
+    post:
+      operationId: importStixBundle
+      summary: Import a STIX 2.1 bundle
+      tags: [STIX]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bundle]
+              properties:
+                bundle: {$ref: '#/components/schemas/StixBundle'}
+                workspace_id: {type: string}
+                session_id: {type: string}
+                budget_ref: {type: string}
+      responses:
+        '200':
+          description: Import summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: true}
+                  result: {$ref: '#/components/schemas/ImportResult'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/import/stix/file:
+    post:
+      operationId: importStixFile
+      summary: Import a multipart .json or .stix file
+      tags: [STIX]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: {type: string, format: binary}
+                workspace_id: {type: string}
+                session_id: {type: string}
+                budget_ref: {type: string}
+      responses:
+        '200':
+          description: Import summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: true}
+                  result: {$ref: '#/components/schemas/ImportResult'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/stix/validate:
+    post:
+      operationId: validateStix
+      summary: Validate an explicit STIX bundle or current graph nodes
+      tags: [STIX]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                source: {type: string, enum: [bundle, graph], default: bundle}
+                bundle: {$ref: '#/components/schemas/StixBundle'}
+                workspace_id: {type: string}
+                session_id: {type: string}
+                budget_ref: {type: string}
+                snapshot_id: {type: string}
+      responses:
+        '200':
+          description: Validation report and optional correction persistence
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: true}
+                  result:
+                    type: object
+                    properties:
+                      source_mode: {type: string, enum: [bundle, graph]}
+                      valid: {type: boolean}
+                      issues: {type: array, items: {type: object}}
+                      playbooks_applied: {type: array, items: {type: object}}
+                      corrections_summary: {type: [object, 'null']}
+                      persistence:
+                        anyOf:
+                          - {$ref: '#/components/schemas/ImportResult'}
+                          - {type: 'null'}
+                      errors: {type: array, items: {type: string}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/export/stix:
+    get:
+      operationId: exportStix
+      summary: Export the current graph as deterministic STIX
+      tags: [STIX]
+      parameters:
+        - {name: snapshot_id, in: query, schema: {type: string, default: snapshot--current}}
+        - {name: transaction_id, in: query, schema: {type: string, default: transaction--http-export}}
+        - {name: exporter_version, in: query, schema: {type: string, default: corrobore-http-server-v0}}
+        - {name: mode, in: query, schema: {type: string, enum: [strict, permissive], default: strict}}
+        - {name: profile, in: query, schema: {type: string, enum: [stix-mvp], default: stix-mvp}}
+      responses:
+        '200':
+          description: Raw STIX bundle
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/StixBundle'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/sessions/start:
+    post:
+      operationId: startSession
+      summary: Start a durable session
+      tags: [Sessions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workspace_id, actor_id]
+              properties:
+                workspace_id: {type: string}
+                actor_id: {type: string}
+                actor_kind:
+                  type: string
+                  enum: [user, agent, orchestrator_agent, worker_agent, tool, system, test_fixture]
+                  default: agent
+                metadata:
+                  type: object
+                  additionalProperties: {type: string}
+      responses:
+        '200':
+          description: Started session
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: true}
+                  result:
+                    type: object
+                    properties:
+                      session_id: {type: string, format: uuid}
+                      status: {$ref: '#/components/schemas/SessionStatus'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/explorer/sessions:
+    get:
+      operationId: listExplorerSessions
+      summary: List current sessions for the graph explorer
+      tags: [Explorer]
+      parameters:
+        - name: include_stopped
+          in: query
+          schema: {type: boolean, default: false}
+      responses:
+        '200':
+          description: Deterministically ordered session read models
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, result]
+                properties:
+                  ok: {type: boolean, const: true}
+                  result:
+                    type: object
+                    required: [sessions]
+                    properties:
+                      sessions:
+                        type: array
+                        items: {$ref: '#/components/schemas/ExplorerSession'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/explorer/sessions/{session_id}/timeline:
+    get:
+      operationId: getExplorerTimeline
+      summary: Read one session's snapshot and timeshot tree
+      tags: [Explorer]
+      parameters:
+        - {$ref: '#/components/parameters/SessionPath'}
+      responses:
+        '200':
+          description: Persisted acyclic temporal lineage
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/explorer/sessions/{session_id}/graph:
+    get:
+      operationId: getExplorerGraph
+      summary: Project a bounded graph at a selected temporal boundary
+      tags: [Explorer]
+      parameters:
+        - {$ref: '#/components/parameters/SessionPath'}
+        - {name: boundary_kind, in: query, schema: {type: string, enum: [current, snapshot, timeshot], default: current}}
+        - {name: boundary_id, in: query, schema: {type: string}}
+        - {name: max_nodes, in: query, schema: {type: integer, minimum: 1, maximum: 50000, default: 5000}}
+        - {name: max_relationships, in: query, schema: {type: integer, minimum: 1, maximum: 100000, default: 10000}}
+        - {name: max_properties_per_record, in: query, schema: {type: integer, minimum: 1, maximum: 256, default: 32}}
+        - {name: max_payload_bytes, in: query, schema: {type: integer, minimum: 1024, maximum: 16777216, default: 2097152}}
+        - {name: max_computation_units, in: query, schema: {type: integer, minimum: 1, maximum: 1000000, default: 100000}}
+      responses:
+        '200':
+          description: Bounded deterministic graph projection with exact boundary identity
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/sessions/{session_id}/health:
+    get:
+      operationId: getSessionHealth
+      summary: Inspect durable session state
+      tags: [Sessions]
+      parameters:
+        - {$ref: '#/components/parameters/SessionPath'}
+      responses:
+        '200':
+          description: Session health and identity
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/sessions/{session_id}/logs:
+    get:
+      operationId: getSessionLogs
+      summary: Read filtered session logs and audit parity
+      tags: [Sessions]
+      parameters:
+        - {$ref: '#/components/parameters/SessionPath'}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 5000, default: 500}}
+        - {name: from_ms, in: query, schema: {type: integer}}
+        - {name: to_ms, in: query, schema: {type: integer}}
+        - {name: format, in: query, schema: {type: string, enum: [json, ndjson], default: json}}
+      responses:
+        '200':
+          description: JSON envelope or NDJSON log lines
+          content:
+            application/json:
+              schema: {type: object}
+            application/x-ndjson:
+              schema: {type: string}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/sessions/{session_id}/stop:
+    post:
+      operationId: stopSession
+      summary: Stop and persist a session
+      tags: [Sessions]
+      parameters:
+        - {$ref: '#/components/parameters/SessionPath'}
+      responses:
+        '200':
+          description: Stopped session
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+tags:
+  - {name: Operations, description: Public health and observability}
+  - {name: Cypher, description: Graph reads and mutations}
+  - {name: Seeds, description: Semantic working-set entry points}
+  - {name: STIX, description: "Import, validation, and export"}
+  - {name: Sessions, description: Durable session lifecycle and audit}
+  - {name: Explorer, description: Read-only temporal graph exploration}

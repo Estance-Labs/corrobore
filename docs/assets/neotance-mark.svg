@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 220" role="img" aria-labelledby="title">
+  <title id="title">Noetance</title>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M52 42v136" stroke="#1c3666" stroke-width="9"/>
+    <path d="M52 42 166 164" stroke="#1c3666" stroke-width="9"/>
+    <path d="M166 42v122" stroke="#1c3666" stroke-width="9"/>
+    <path d="M52 164c30-6 52-24 66-58" stroke="#79be9f" stroke-width="9"/>
+  </g>
+  <g fill="#ffffff" stroke-width="8">
+    <circle cx="52" cy="42" r="12" stroke="#1c3666"/>
+    <circle cx="52" cy="164" r="12" stroke="#ef6a75"/>
+    <circle cx="166" cy="42" r="12" stroke="#ef6a75"/>
+    <circle cx="166" cy="164" r="12" stroke="#1c3666"/>
+    <circle cx="118" cy="102" r="12" stroke="#79be9f"/>
+  </g>
+</svg>

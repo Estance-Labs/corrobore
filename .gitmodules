@@ -1,0 +1,3 @@
+[submodule "project-documents"]
+	path = project-documents
+	url = git@github.com:Noetance-Labs/project-documents.git
