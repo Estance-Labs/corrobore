@@ -17,8 +17,7 @@ GitHub issue, pull request, or discussion for a suspected vulnerability.
 
 Preferred channel:
 
-- Use GitHub's **[Private vulnerability reporting](https://github.com/Noetance-Labs/corrobore/security/advisories/new)**
-  (Security tab → "Report a vulnerability") to open a confidential advisory.
+- Use email **security@corrobore.org** to send a confidential advisory.
 
 When reporting, please include:
 
