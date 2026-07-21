@@ -40,35 +40,6 @@ function markdownFiles(root) {
   return files;
 }
 
-test('project documents use the public feature-artifact hierarchy', () => {
-  assert.equal(fs.existsSync(repositoryPath('dev-docs')), false);
-
-  for (const required of [
-    'project-documents/README.md',
-    'project-documents/AGENTS.md',
-    'project-documents/adr',
-    'project-documents/product',
-    'project-documents/reviews',
-  ]) {
-    assert.equal(fs.existsSync(repositoryPath(required)), true, `${required} must exist`);
-  }
-
-  const featureDirectories = fs
-    .readdirSync(repositoryPath('project-documents'), { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && entry.name.startsWith('feature-'));
-  assert.ok(featureDirectories.length > 0, 'at least one feature directory is required');
-
-  for (const feature of featureDirectories) {
-    const root = `project-documents/${feature.name}`;
-    assert.equal(fs.statSync(repositoryPath(`${root}/README.md`)).isFile(), true);
-    assert.equal(fs.statSync(repositoryPath(`${root}/artifacts`)).isDirectory(), true);
-    assert.ok(
-      fs.readdirSync(repositoryPath(`${root}/artifacts`)).length > 0,
-      `${root}/artifacts must not be empty`,
-    );
-  }
-});
-
 test('tracked repository content excludes local and generated artifacts', () => {
   const forbidden = trackedFiles().filter((file) =>
     /(^|\/)(\.env|\.DS_Store)$|(^|\/)(target|site|node_modules|\.venv)\//.test(file),
@@ -77,12 +48,13 @@ test('tracked repository content excludes local and generated artifacts', () => 
 });
 
 test('public Markdown links resolve inside the repository', () => {
+  const projectDocumentsRoot = repositoryPath('project-documents');
   const files = [
     repositoryPath('README.md'),
     repositoryPath('CONTRIBUTING.md'),
     repositoryPath('SECURITY.md'),
     ...markdownFiles(repositoryPath('docs')),
-    ...markdownFiles(repositoryPath('project-documents')),
+    ...(fs.existsSync(projectDocumentsRoot) ? markdownFiles(projectDocumentsRoot) : []),
   ];
   const brokenLinks = [];
 

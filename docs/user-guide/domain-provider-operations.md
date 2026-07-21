@@ -1,75 +1,68 @@
-# Domain Provider Operations
+# Domain Provider Runtime Contract
 
-This runbook covers production deployment of private CTI, FIMI, and Crisis native providers into the public Corrobore runtime. Provider source, signing credentials, customer licenses, and private image assembly remain outside this repository.
+This page documents the public runtime contract exposed by the OSS server for
+native domain providers. Private EE release and operations procedures are
+maintained outside this repository.
 
-## Release contract
+## Scope
 
-Each EE repository builds one platform-native dynamic library against the canonical `corrobore_domain_provider.h` from the exact core release. Its release pipeline must:
+The OSS server supports:
 
-1. Run repository tests plus the shared ABI conformance suite.
-2. Compile with panic/exception containment at every exported C function.
-3. Strip according to the private release policy and preserve separate debug symbols.
-4. Generate a lowercase SHA-256 digest for the final bytes copied into the image.
-5. Sign and attest the provider artifact in the private supply-chain system.
-6. Publish immutable artifacts keyed by core version, provider version, target OS, and architecture.
+1. Loading domain providers from a trusted directory and strict manifest.
+2. Startup fail-closed validation of provider manifest, digest, ABI shape, and
+	required capabilities.
+3. Runtime gating by build feature and license claim before provider invocation.
+4. Public diagnostics through stable health, metrics, and admin-status surfaces.
 
-The private EE image starts from the matching immutable core image digest, copies all licensed provider libraries into a root such as `/opt/corrobore/providers`, copies a generated manifest to `/etc/corrobore/domain-providers.json`, and sets both provider environment variables at runtime. Never bake a customer license into either image layer.
+The server does not perform provider hot reload; provider and manifest changes
+require process restart.
 
-## Manifest generation
+## Required configuration
 
-Start from [the three-domain example](../examples/domain-providers.json). Replace filenames for the target platform and replace every sample digest with the digest of the exact packaged bytes:
+Configure both variables together:
 
-```bash
-shasum -a 256 /opt/corrobore/providers/libcorrobore_domain_cti.dylib
-sha256sum /opt/corrobore/providers/libcorrobore_domain_cti.so
-```
+1. `CORROBORE_DOMAIN_PROVIDER_DIR`
+2. `CORROBORE_DOMAIN_PROVIDER_MANIFEST_FILE`
 
-Use relative filenames only. Set `required: true` when the image promises that module. The manifest capability list is a deployment requirement, not discovery: provider metadata must declare every listed name/version or startup fails.
+If one is set without the other, startup fails. See the manifest shape example
+in [docs/examples/domain-providers.json](../examples/domain-providers.json).
 
-## Deployment procedure
+## Runtime and observability surfaces
 
-1. Verify image signatures, SBOM, provenance, provider digests, and core/provider compatibility in the promotion environment.
-2. Deploy with `CORROBORE_DOMAIN_PROVIDER_DIR` and `CORROBORE_DOMAIN_PROVIDER_MANIFEST_FILE` configured as a pair.
-3. Supply the signed customer license at runtime through the normal secret boundary.
-4. Require process startup success before adding an instance to service discovery.
-5. Check `/health`: `domain_providers.configured` and `domain_providers.ready` must equal the number promised by the image.
-6. Scrape `corrobore_domain_providers_configured` and `corrobore_domain_providers_ready`; alert when they differ or change unexpectedly.
-7. Query `/v1/admin/domain-providers/status` with the admin token and verify domain, provider id, version, capabilities, and readiness.
-8. Run one non-mutating validation canary per licensed domain through `/v1/domains/{domain}/validate`.
+Use these public endpoints to verify runtime state:
 
-The server intentionally has no hot reload. Roll out a new image or restart the process after any provider or manifest change.
+1. `GET /health`: includes `domain_providers.configured` and
+	`domain_providers.ready`.
+2. `GET /metrics`: exports `corrobore_domain_providers_configured` and
+	`corrobore_domain_providers_ready`.
+3. `GET /v1/admin/domain-providers/status`: returns provider identity,
+	readiness, and capability summary (admin token required).
+4. `GET /v1/admin/license/status`: returns the effective module-license view
+	used by runtime gates (admin token required).
 
-## Failure diagnosis
+## Public gate outcomes
 
-Startup diagnostics identify the stage without exposing paths through public HTTP:
+Before a provider call is attempted, handlers enforce build-feature and license
+contracts. Stable API-level outcomes include:
 
-| Diagnostic | Operator action |
+| Code | Meaning |
 | :--- | :--- |
-| Manifest missing or invalid | Verify both environment variables, JSON schema `1`, unique domains, relative paths, lowercase 64-character hashes, and known fields. |
-| Path outside trusted directory | Remove symlinks/path traversal and package the library directly under the trusted root. |
-| SHA-256 mismatch | Stop rollout; compare artifact provenance and regenerate the manifest only from verified final bytes. |
-| Missing entrypoint or incompatible ABI | Deploy a provider built against the matching core ABI major/minor and canonical header. |
-| Invalid metadata or domain mismatch | Correct provider identity, non-zero limits/concurrency, schema version, and declared domain in the EE repository. |
-| Required capability missing | Publish a provider implementing the manifest capability version or correct the image manifest promise. |
-| Create/health failure | Inspect private provider logs/debug symbols; do not bypass readiness or mark the provider optional to complete rollout. |
-| `FEATURE_NOT_AVAILABLE` | Use a core build containing the domain feature. |
-| `LICENSE_MODULE_MISSING` | Install a valid signed license claim for that domain. |
-| `DOMAIN_PROVIDER_NOT_READY` | Verify image contents, startup status, health aggregate, and admin provider status. |
-| `DOMAIN_PROVIDER_ERROR` | Correlate server and provider diagnostics by `request_id`; check response schema, size limits, and provider status. |
+| `FEATURE_NOT_AVAILABLE` | The running binary was built without the required enterprise module feature. |
+| `LICENSE_MODULE_MISSING` | The running instance has no valid claim for the requested module. |
+| `DOMAIN_PROVIDER_NOT_READY` | The provider is not available or did not pass startup/readiness checks. |
+| `DOMAIN_PROVIDER_CAPABILITY_MISSING` | The provider is loaded but does not declare the required capability version. |
+| `DOMAIN_PROVIDER_ERROR` | Provider invocation failed while handling a request. |
+| `REQUEST_TIMEOUT` | Invocation exceeded the handler timeout budget. |
 
-## Rollback
+## Security boundaries
 
-Rollback is image-based. Restore the previous signed private image digest and its matching manifest as one unit, restart, then repeat health, metrics, admin-status, and per-domain canaries. Do not mix a previous core with newer providers unless that exact combination passed ABI conformance and promotion. Retain the failed image, manifest, digests, logs, and request ids for incident analysis.
+1. Keep provider libraries under the trusted directory root.
+2. Keep manifest paths relative and pinned by digest.
+3. Supply signed licenses only through runtime secret boundaries.
+4. Never bake customer license material into container image layers.
 
-## Migration from the CTI-only loader
+## Private EE operations
 
-The former `CORROBORE_CTI_PLUGIN_PATH` loaded a CTI library per call and expected `corrobore_cti_validate_node_json_v1` plus `corrobore_cti_free_string_v1`. These symbols and that variable are no longer supported.
-
-To migrate:
-
-1. Implement the single `corrobore_domain_provider_get_api_v1` entrypoint and all six mandatory v1 functions in the CTI EE repository.
-2. Return CTI identity, operational limits, and `node.validate/1` from metadata; accept the generic invocation envelope and preserve `request_id`.
-3. Add the CTI library to the common manifest with its final SHA-256 digest.
-4. Replace `CORROBORE_CTI_PLUGIN_PATH` with the provider directory/manifest variable pair.
-5. Build the private image with CTI, FIMI, and Crisis artifacts appropriate to the licensed distribution; do not copy them into the OSS image.
-6. Validate startup fail-closed behavior and the generic route before removing the previous deployment.
+EE release engineering, provenance/signing workflows, deployment promotion,
+rollback playbooks, and incident procedures are maintained in the private
+project-documentation repository and are intentionally not duplicated here.

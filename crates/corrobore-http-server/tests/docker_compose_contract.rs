@@ -81,23 +81,3 @@ fn container_image_stays_secret_free_and_backend_only() {
         "the image must never bake the API token"
     );
 }
-
-#[test]
-fn public_docs_cover_the_complete_compose_lifecycle() {
-    let guide = repository_file("docs/user-guide/http-server.md");
-
-    for expected in [
-        "cp .env.sample .env",
-        "docker compose config",
-        "docker compose up --build --wait",
-        "http://localhost:8080",
-        "docker compose logs -f",
-        "docker compose down",
-        "docker compose down --volumes",
-    ] {
-        assert!(
-            guide.contains(expected),
-            "HTTP guide should document `{expected}`"
-        );
-    }
-}

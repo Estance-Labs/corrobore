@@ -17,9 +17,15 @@ services:
       CORROBORE_HTTP_HOST: 0.0.0.0
       CORROBORE_HTTP_PORT: "8080"
       CORROBORE_HTTP_SESSION_STORE_DIR: /data
+      # Optional graph durability mode: keep ephemeral by default, set
+      # CORROBORE_STORAGE_MODE=persistent to retain graph records.
+      CORROBORE_STORAGE_MODE: ${CORROBORE_STORAGE_MODE:-ephemeral}
+      CORROBORE_STORAGE_DIR: ${CORROBORE_STORAGE_DIR:-/graph-data}
     volumes:
       # Persist session state and logs across restarts.
       - corrobore-data:/data
+      # Persist graph records when CORROBORE_STORAGE_MODE=persistent.
+      - corrobore-graph-data:/graph-data
     healthcheck:
       test:
         [
@@ -38,5 +44,34 @@ services:
     restart: unless-stopped
     stop_grace_period: 10s
 
+  # Optional TAXII connector mode.
+  # Enable with: docker compose --profile taxii up --build --wait
+  corrobore-ingest:
+    image: rust:1.96.0-slim
+    working_dir: /workspace
+    depends_on:
+      corrobore-http-server:
+        condition: service_healthy
+    profiles: ["taxii"]
+    environment:
+      CORROBORE_INGEST_TAXII_ROOT_URL: ${CORROBORE_INGEST_TAXII_ROOT_URL:?set CORROBORE_INGEST_TAXII_ROOT_URL}
+      CORROBORE_INGEST_TAXII_COLLECTION_ID: ${CORROBORE_INGEST_TAXII_COLLECTION_ID:?set CORROBORE_INGEST_TAXII_COLLECTION_ID}
+      CORROBORE_INGEST_TAXII_TOKEN: ${CORROBORE_INGEST_TAXII_TOKEN:-}
+      CORROBORE_INGEST_TAXII_USERNAME: ${CORROBORE_INGEST_TAXII_USERNAME:-}
+      CORROBORE_INGEST_TAXII_PASSWORD: ${CORROBORE_INGEST_TAXII_PASSWORD:-}
+      CORROBORE_INGEST_CORROBORE_BASE_URL: ${CORROBORE_INGEST_CORROBORE_BASE_URL:-http://corrobore-http-server:8080}
+      CORROBORE_INGEST_CORROBORE_AUTH_TOKEN: ${CORROBORE_INGEST_CORROBORE_AUTH_TOKEN:-${CORROBORE_HTTP_AUTH_TOKEN:?set CORROBORE_HTTP_AUTH_TOKEN}}
+      CORROBORE_INGEST_WORKSPACE_ID: ${CORROBORE_INGEST_WORKSPACE_ID:-workspace--ingest-taxii}
+      CORROBORE_INGEST_POLL_INTERVAL_MS: ${CORROBORE_INGEST_POLL_INTERVAL_MS:-300000}
+      CORROBORE_INGEST_PAGE_LIMIT: ${CORROBORE_INGEST_PAGE_LIMIT:-100}
+      CORROBORE_INGEST_STATE_DIR: /ingest-state
+    volumes:
+      - ./:/workspace
+      - corrobore-ingest-data:/ingest-state
+    command: ["cargo", "run", "-p", "corrobore-ingest", "--release"]
+    restart: unless-stopped
+
 volumes:
   corrobore-data:
+  corrobore-graph-data:
+  corrobore-ingest-data:

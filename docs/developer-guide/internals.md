@@ -52,7 +52,7 @@ Structured tracing omits request headers. Cypher audit input and output events i
 
 The registry owns each `Library` for longer than its handle, destroys handles before unload, and releases every provider output through the same table's `free_buffer`. ABI v1 serializes calls per provider with a mutex even when metadata declares thread safety; request and response sizes are bounded by provider metadata, and HTTP handlers add an outer timeout. Providers must contain language panics/exceptions because unwinding across C is forbidden.
 
-Capability envelopes are JSON and independently versioned. The host currently dispatches `node.validate/1` after checking, in order, build feature, license claim, loaded domain, and declared capability. A response must preserve schema version and `request_id`. See [Domain Provider Operations](../user-guide/domain-provider-operations.md) for deployment and incident procedures.
+Capability envelopes are JSON and independently versioned. The host currently dispatches `node.validate/1` after checking, in order, build feature, license claim, loaded domain, and declared capability. A response must preserve schema version and `request_id`. See [Domain Provider Runtime Contract](../user-guide/domain-provider-operations.md) for the public runtime boundary and diagnostic surfaces.
 
 ## Architecture records
 
