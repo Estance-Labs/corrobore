@@ -40,7 +40,7 @@ clap = { version = "4", features = ["derive"] }
 # Property-based and benchmark tooling used by the testing-depth crates. Kept in
 # the workspace table so versions stay aligned; each crate opts in as a
 # dev-dependency only where the tests/benches actually live.
-criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 dotenvy = "0.15"
 http-body-util = "0.1"
 nom = "8"
