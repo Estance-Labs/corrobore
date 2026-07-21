@@ -27,6 +27,35 @@ Configure both variables together:
 If one is set without the other, startup fails. See the manifest shape example
 in [docs/examples/domain-providers.json](../examples/domain-providers.json).
 
+## Provider retrieval automation
+
+Use [scripts/fetch-ee-domain-binaries.mjs](../../scripts/fetch-ee-domain-binaries.mjs)
+to assemble runtime-ready provider libraries and manifest entries from EE release
+archives.
+
+The script performs these checks before writing output:
+
+1. Extracts each provider archive for `cti`, `fimi`, and `crisis`.
+2. Validates `release-manifest.json` (`schema_version`, domain, platform suffix,
+	 provider version, and library name).
+3. Validates `SHA256SUMS` and fails closed on digest mismatches.
+4. Copies verified libraries into the configured output directory.
+5. Writes a runtime `domain-providers.json` with strict `sha256` digests and
+	 `node.validate/1` capability requirements.
+
+Example:
+
+```bash
+node scripts/fetch-ee-domain-binaries.mjs \
+	--version v0.1.0 \
+	--platform linux-x64 \
+	--output-dir overrides/domain-providers \
+	--manifest-file overrides/domain-providers/domain-providers.json
+```
+
+For offline or test execution, set `--download-mode local` and provide
+`--local-archive-dir` containing the expected release archives.
+
 ## Runtime and observability surfaces
 
 Use these public endpoints to verify runtime state:
