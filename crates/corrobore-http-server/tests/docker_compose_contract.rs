@@ -81,4 +81,3 @@ fn container_image_stays_secret_free_and_backend_only() {
         "the image must never bake the API token"
     );
 }
-
