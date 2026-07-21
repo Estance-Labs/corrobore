@@ -104,14 +104,6 @@ Use `docs/` and code on `main` as the source of truth for shipped functionality.
 - LLM operating guidance: `docs/for-llms.md`
 - Interactive API reference: `docs/api/index.html`
 
-## Non-goals
-
-Corrobore is not a distributed graph database and does not claim full openCypher
-coverage. Candidate and forward-looking work remains in the private
-`Noetance-Labs/project-documents` repository, included here as the
-`project-documents/` submodule for authorized maintainers. The public site
-documents behavior available on `main`.
-
 ## License
 
 MIT. See `LICENSE`.
