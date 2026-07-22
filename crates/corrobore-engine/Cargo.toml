@@ -1,0 +1,25 @@
+[package]
+name = "corrobore-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+
+[lib]
+name = "corrobore_engine"
+path = "src/lib.rs"
+
+[dependencies]
+export-stix = { path = "../export-stix" }
+graph-core = { path = "../graph-core" }
+shared-runtime = { path = "../shared-runtime" }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

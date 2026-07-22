@@ -1,0 +1,22 @@
+[package]
+name = "shared-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+
+[lib]
+name = "shared_runtime"
+path = "src/lib.rs"
+
+[dependencies]
+cypher-executor = { path = "../cypher-executor" }
+graph-core = { path = "../graph-core" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

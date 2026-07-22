@@ -1,0 +1,343 @@
+// Copyright (c) 2026 AreDee-Bangs
+// SPDX-License-Identifier: MIT
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+use std::{collections::HashMap, time::Duration};
+
+use axum::{
+    Json,
+    extract::{Multipart, State},
+};
+use graph_core::{SessionId, WorkspaceId};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use shared_runtime::{CypherBudgetRef, CypherParameters, CypherRequest, CypherResponseStatus};
+
+use crate::{app::AppState, error::ApiError};
+
+#[derive(Debug, Deserialize)]
+pub struct ImportStixRequest {
+    pub bundle: Value,
+    pub workspace_id: Option<String>,
+    pub session_id: Option<String>,
+    pub budget_ref: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ImportStixResponse {
+    pub ok: bool,
+    pub result: ImportStixResult,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ImportStixResult {
+    pub processed_objects: usize,
+    pub applied_mutations: usize,
+    pub rejected_mutations: usize,
+    pub errors: Vec<String>,
+}
+
+pub async fn import_stix_bundle(
+    State(state): State<AppState>,
+    Json(payload): Json<ImportStixRequest>,
+) -> Result<Json<ImportStixResponse>, ApiError> {
+    let result = import_bundle_with_context(
+        &state,
+        payload.bundle,
+        payload.workspace_id,
+        payload.session_id,
+        payload.budget_ref,
+    )
+    .await?;
+
+    Ok(Json(ImportStixResponse { ok: true, result }))
+}
+
+pub async fn import_stix_bundle_file(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> Result<Json<ImportStixResponse>, ApiError> {
+    let mut bundle: Option<Value> = None;
+    let mut workspace_id: Option<String> = None;
+    let mut session_id: Option<String> = None;
+    let mut budget_ref: Option<String> = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|error| ApiError::bad_request("INVALID_MULTIPART", error.to_string()))?
+    {
+        let name = field.name().unwrap_or_default().to_owned();
+
+        match name.as_str() {
+            "file" => {
+                let filename = field.file_name().unwrap_or_default().to_owned();
+                if !filename.is_empty() && !has_supported_stix_extension(&filename) {
+                    return Err(ApiError::bad_request(
+                        "UNSUPPORTED_FILE_EXTENSION",
+                        "file must use .json or .stix extension",
+                    ));
+                }
+
+                let bytes = field.bytes().await.map_err(|error| {
+                    ApiError::bad_request("INVALID_MULTIPART", error.to_string())
+                })?;
+
+                let parsed = serde_json::from_slice::<Value>(&bytes).map_err(|error| {
+                    ApiError::bad_request("INVALID_STIX_FILE", error.to_string())
+                })?;
+                bundle = Some(parsed);
+            }
+            "workspace_id" => {
+                let value = field.text().await.map_err(|error| {
+                    ApiError::bad_request("INVALID_MULTIPART", error.to_string())
+                })?;
+                if !value.trim().is_empty() {
+                    workspace_id = Some(value.trim().to_owned());
+                }
+            }
+            "session_id" => {
+                let value = field.text().await.map_err(|error| {
+                    ApiError::bad_request("INVALID_MULTIPART", error.to_string())
+                })?;
+                if !value.trim().is_empty() {
+                    session_id = Some(value.trim().to_owned());
+                }
+            }
+            "budget_ref" => {
+                let value = field.text().await.map_err(|error| {
+                    ApiError::bad_request("INVALID_MULTIPART", error.to_string())
+                })?;
+                if !value.trim().is_empty() {
+                    budget_ref = Some(value.trim().to_owned());
+                }
+            }
+            _ => {
+                // Ignore unknown multipart fields to keep endpoint forward-compatible.
+            }
+        }
+    }
+
+    let bundle = bundle.ok_or_else(|| {
+        ApiError::bad_request("MISSING_FILE_FIELD", "multipart field 'file' is required")
+    })?;
+
+    let result =
+        import_bundle_with_context(&state, bundle, workspace_id, session_id, budget_ref).await?;
+
+    Ok(Json(ImportStixResponse { ok: true, result }))
+}
+
+pub(crate) async fn import_bundle_with_context(
+    state: &AppState,
+    bundle: Value,
+    workspace_id: Option<String>,
+    session_id: Option<String>,
+    budget_ref: Option<String>,
+) -> Result<ImportStixResult, ApiError> {
+    let object_queries = build_queries_from_bundle(&bundle)?;
+
+    let workspace_id =
+        WorkspaceId::new(workspace_id.unwrap_or_else(|| "workspace--http-default".to_owned()))
+            .map_err(|error| ApiError::bad_request("INVALID_WORKSPACE_ID", error.to_string()))?;
+
+    let session_id =
+        SessionId::new(session_id.unwrap_or_else(|| "session--http-import-stix".to_owned()))
+            .map_err(|error| ApiError::bad_request("INVALID_SESSION_ID", error.to_string()))?;
+
+    let budget_ref =
+        CypherBudgetRef::new(budget_ref.unwrap_or_else(|| "budget--http-import-stix".to_owned()))
+            .map_err(|error| ApiError::bad_request("INVALID_BUDGET_REF", error.to_string()))?;
+
+    let timeout = Duration::from_millis(state.config.request_timeout_ms);
+    let gateway = state.gateway.clone();
+
+    let result = tokio::time::timeout(
+        timeout,
+        tokio::task::spawn_blocking(move || {
+            let mut locked = gateway.lock().map_err(|_| {
+                ApiError::internal("STATE_LOCK_FAILED", "cypher gateway lock poisoned")
+            })?;
+
+            let mut applied_mutations = 0usize;
+            let mut rejected_mutations = 0usize;
+            let mut errors = Vec::new();
+
+            for query in &object_queries {
+                let request = CypherRequest::build_mutation_request(
+                    query.clone(),
+                    CypherParameters::new(HashMap::new()),
+                    workspace_id.clone(),
+                    session_id.clone(),
+                    budget_ref.clone(),
+                )
+                .map_err(|error| ApiError::bad_request("INVALID_REQUEST", error.to_string()))?;
+
+                let response = locked.execute(&request).map_err(|error| {
+                    ApiError::bad_request(
+                        "RUNTIME_ERROR",
+                        format!("stix import mutation failed: {error}"),
+                    )
+                })?;
+
+                match response.status {
+                    CypherResponseStatus::Success => {
+                        applied_mutations += 1;
+                    }
+                    CypherResponseStatus::Rejected | CypherResponseStatus::ValidationFailed => {
+                        rejected_mutations += 1;
+                        if let Some(first_error) = response.validation_errors.first() {
+                            errors.push(first_error.message.clone());
+                        } else {
+                            errors.push("mutation rejected during import".to_owned());
+                        }
+                    }
+                }
+            }
+
+            Ok::<_, ApiError>(ImportStixResult {
+                processed_objects: object_queries.len(),
+                applied_mutations,
+                rejected_mutations,
+                errors,
+            })
+        }),
+    )
+    .await
+    .map_err(|_| ApiError::timeout("REQUEST_TIMEOUT", "stix import timeout"))?
+    .map_err(|error| ApiError::internal("TASK_JOIN_FAILED", error.to_string()))??;
+
+    Ok(result)
+}
+
+fn has_supported_stix_extension(filename: &str) -> bool {
+    let lower = filename.to_ascii_lowercase();
+    lower.ends_with(".json") || lower.ends_with(".stix")
+}
+
+fn build_queries_from_bundle(bundle: &Value) -> Result<Vec<String>, ApiError> {
+    let bundle_type = bundle
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if bundle_type != "bundle" {
+        return Err(ApiError::bad_request(
+            "INVALID_STIX_BUNDLE",
+            "bundle.type must be 'bundle'",
+        ));
+    }
+
+    let objects = bundle
+        .get("objects")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            ApiError::bad_request("INVALID_STIX_BUNDLE", "bundle.objects must be an array")
+        })?;
+
+    if objects.is_empty() {
+        return Err(ApiError::bad_request(
+            "INVALID_STIX_BUNDLE",
+            "bundle.objects cannot be empty",
+        ));
+    }
+
+    let mut queries = Vec::with_capacity(objects.len());
+    for object in objects {
+        queries.push(build_query_for_object(object)?);
+    }
+
+    Ok(queries)
+}
+
+fn build_query_for_object(object: &Value) -> Result<String, ApiError> {
+    let object_type = object
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::bad_request("INVALID_STIX_OBJECT", "object.type is required"))?;
+
+    if object_type.eq_ignore_ascii_case("relationship") {
+        let relationship_id = escape_cypher_string(required_str_field(object, "id")?);
+        let source_ref = escape_cypher_string(required_str_field(object, "source_ref")?);
+        let target_ref = escape_cypher_string(required_str_field(object, "target_ref")?);
+        let relationship_type = object
+            .get("relationship_type")
+            .and_then(Value::as_str)
+            .unwrap_or("related-to");
+        let relationship_label = sanitize_relationship_type(relationship_type);
+
+        return Ok(format!(
+            "MATCH (source {{stix_id: '{source_ref}'}}) MATCH (target {{stix_id: '{target_ref}'}}) MERGE (source)-[r:{relationship_label}]->(target) SET r.stix_id = '{relationship_id}' RETURN r"
+        ));
+    }
+
+    let stix_id = escape_cypher_string(required_str_field(object, "id")?);
+    let label = map_stix_type_to_label(object_type);
+    let mut query = format!("MERGE (n:{label} {{stix_id: '{stix_id}'}})");
+
+    if let Some(name) = object.get("name").and_then(Value::as_str) {
+        query.push_str(&format!(" SET n.name = '{}'", escape_cypher_string(name)));
+    }
+
+    query.push_str(" RETURN n");
+    Ok(query)
+}
+
+fn required_str_field<'a>(object: &'a Value, field: &'static str) -> Result<&'a str, ApiError> {
+    object.get(field).and_then(Value::as_str).ok_or_else(|| {
+        ApiError::bad_request("INVALID_STIX_OBJECT", format!("object.{field} is required"))
+    })
+}
+
+fn map_stix_type_to_label(object_type: &str) -> &'static str {
+    match object_type.to_ascii_lowercase().as_str() {
+        "threat-actor" | "intrusion-set" => "ThreatActor",
+        "indicator" => "Indicator",
+        "malware" => "Malware",
+        "tool" => "Tool",
+        "campaign" => "Campaign",
+        "infrastructure" => "Infrastructure",
+        "vulnerability" => "Vulnerability",
+        "identity" => "Identity",
+        "location" => "Location",
+        "report" => "Report",
+        _ => "Identity",
+    }
+}
+
+fn sanitize_relationship_type(value: &str) -> String {
+    let mut normalized = value
+        .to_ascii_uppercase()
+        .chars()
+        .map(|ch| match ch {
+            'A'..='Z' | '0'..='9' => ch,
+            _ => '_',
+        })
+        .collect::<String>();
+
+    if normalized.is_empty() {
+        normalized = "RELATED_TO".to_owned();
+    }
+
+    normalized
+}
+
+fn escape_cypher_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('\'', "\\'")
+}

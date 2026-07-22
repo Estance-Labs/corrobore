@@ -1,0 +1,69 @@
+name: Docs
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/**'
+      - 'scripts/docs-contract-guard.mjs'
+      - 'scripts/docs-contract-guard.test.mjs'
+      - 'mkdocs.yml'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: docs-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    uses: ./.github/workflows/unit-tests.yml
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: 3.x
+
+      - name: Install pinned Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26.4.0
+
+      - uses: actions/cache@v6
+        with:
+          key: mkdocs-material-${{ runner.os }}-${{ hashFiles('mkdocs.yml') }}
+          path: .cache
+          restore-keys: |
+            mkdocs-material-${{ runner.os }}-
+
+      - name: Install docs dependencies
+        run: pip install mkdocs-material
+
+      - name: Validate docs contracts against runtime code
+        run: |
+          node --test scripts/docs-contract-guard.test.mjs
+          node scripts/docs-contract-guard.mjs
+
+      - name: Build documentation site
+        run: mkdocs build --strict
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v6
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v5

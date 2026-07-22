@@ -1,0 +1,29 @@
+[package]
+name = "cypher-parser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+
+[lib]
+name = "cypher_parser"
+path = "src/lib.rs"
+
+[dependencies]
+nom = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+proptest = { workspace = true }
+
+[[bench]]
+name = "parse"
+harness = false
+
+[lints]
+workspace = true

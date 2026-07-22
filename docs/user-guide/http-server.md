@@ -1,0 +1,468 @@
+# HTTP Server
+
+`corrobore-http-server` is an Axum service exposing the runtime to agents and applications. It binds to `127.0.0.1:8080` by default.
+
+## Authentication and limits
+
+`GET /health` and `GET /metrics` are public. Every `/v1/*` route requires:
+
+```http
+Authorization: Bearer <CORROBORE_HTTP_AUTH_TOKEN>
+```
+
+Bearer values are compared in constant time. Protected routes share a global token-bucket rate limiter. Standard JSON routes and STIX import routes have separate body limits. Request tracing excludes headers so the token is not written to logs.
+
+Success responses generally use `{ "ok": true, "result": ... }`. Errors use:
+
+```json
+{ "ok": false, "error": { "code": "INVALID_REQUEST", "message": "..." } }
+```
+
+Application errors use the JSON envelope above. Transport middleware can reject a request before a handler runs: missing/invalid auth returns 401, rate limiting returns 429, oversized bodies return 413, and handler timeouts return 504 with code `REQUEST_TIMEOUT`.
+
+## Configuration
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `CORROBORE_HTTP_AUTH_TOKEN` | required | Non-empty Bearer token for protected routes. |
+| `CORROBORE_HTTP_ADMIN_AUTH_TOKEN` | unset | Optional dedicated Bearer token for admin-only endpoints (for example `/v1/admin/license/status`). |
+| `CORROBORE_HTTP_HOST` | `127.0.0.1` | Bind host. Set `0.0.0.0` deliberately for containers or remote access. |
+| `CORROBORE_HTTP_PORT` | `8080` | Bind port. |
+| `CORROBORE_HTTP_SESSION_STORE_DIR` | `.corrobore-runtime` | Durable session-state directory. |
+| `CORROBORE_HTTP_LOG_DIR` | `<session store>/logs` | Structured JSONL log directory. |
+| `CORROBORE_HTTP_REQUEST_TIMEOUT_MS` | `30000` | Query/import/export/validation timeout. |
+| `CORROBORE_HTTP_SHUTDOWN_TIMEOUT_MS` | `5000` | Configured graceful-shutdown budget. |
+| `CORROBORE_HTTP_SESSION_IDLE_TTL_MS` | `0` | Idle auto-stop TTL; `0` disables expiration. |
+| `CORROBORE_HTTP_MAX_BODY_BYTES` | `2097152` | Standard protected-route body limit (2 MiB). |
+| `CORROBORE_HTTP_IMPORT_MAX_BODY_BYTES` | `33554432` | STIX import body limit (32 MiB). |
+| `CORROBORE_HTTP_RATE_LIMIT_PER_SECOND` | `50` | Sustained global protected-route rate. |
+| `CORROBORE_HTTP_RATE_LIMIT_BURST` | `200` | Global burst allowance. |
+| `CORROBORE_HTTP_WEB_DIR` | unset | Optional directory containing the production explorer build. Unset keeps API-only mode. |
+| `CORROBORE_HTTP_LICENSE_PEM` | unset | Inline signed license PEM containing `client_uuid`, `client_email`, and `modules`. |
+| `CORROBORE_HTTP_LICENSE_PEM_FILE` | unset | Path to signed license PEM file (alternative to inline variable). |
+| `CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM` | unset | Inline Ed25519 public key PEM used to verify the license signature. |
+| `CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM_FILE` | unset | Path to Ed25519 public key PEM file (alternative to inline variable). |
+| `CORROBORE_HTTP_LICENSED_MODULES` | unset | Compatibility fallback: comma-separated module claims used only when no PEM license is provided. |
+| `CORROBORE_DOMAIN_PROVIDER_DIR` | unset | Trusted root containing native CTI, FIMI, and Crisis provider libraries. Must be configured with the manifest file. |
+| `CORROBORE_DOMAIN_PROVIDER_MANIFEST_FILE` | unset | Strict JSON manifest pinning provider domains, relative paths, SHA-256 digests, required policy, and capabilities. Must be configured with the provider directory. |
+| `CORROBORE_STORAGE_MODE` | `ephemeral` | Runtime graph storage mode (`ephemeral` or `persistent`). |
+| `CORROBORE_STORAGE_DIR` | unset | Required when `CORROBORE_STORAGE_MODE=persistent`; graph storage root path. |
+| `CORROBORE_STORAGE_REQUIRE_FSYNC` | `false` in `ephemeral`, `true` in `persistent` | Durability control for persistent writes. |
+| `CORROBORE_STORAGE_STRICT_RECOVERY` | `false` in `ephemeral`, `true` in `persistent` | Durability control for startup recovery validation strictness. |
+
+The binary loads `.env`, supports `-v`/`-vv` verbosity, and honors `RUST_LOG` as the logging-filter override. Provider configuration is fail-fast: a missing required library, path escape, digest mismatch, incompatible ABI, invalid metadata, missing capability, creation failure, or unhealthy response prevents the HTTP listener from starting. See [the manifest example](../examples/domain-providers.json).
+
+## `GET /health`
+
+Returns service name, crate version, uptime, cumulative/recent idle-session expiration metrics, and durability diagnostics (mode controls, WAL size/lag, checkpoint age, compaction backlog, recovery outcome).
+
+```json
+{
+  "status": "ok",
+  "service": "corrobore-http-server",
+  "version": "0.1.0",
+  "storage_mode": "ephemeral",
+  "uptime_ms": 1200,
+  "session_ttl_metrics": {
+    "total_expired_sessions": 0,
+    "expired_last_5m_sessions": 0
+  },
+  "domain_providers": {"configured": 3, "ready": 3},
+  "durability": {
+    "controls": {
+      "require_fsync": false,
+      "strict_recovery": false
+    },
+    "wal_bytes": 0,
+    "wal_lag_sequences": 0,
+    "checkpoint_sequence": null,
+    "checkpoint_age_seconds": null,
+    "compaction_backlog_bytes": 0,
+    "recovery": {
+      "outcome": "ephemeral",
+      "manifest_validated": false,
+      "required_components_validated": false,
+      "catalog_recovered": false,
+      "adjacency_storage_recovered": false,
+      "warning_count": 0,
+      "derived_state_rebuilt": false
+    }
+  }
+}
+```
+
+## `GET /metrics`
+
+Returns Prometheus text exposition (`0.0.4`) for `corrobore_build_info`, `corrobore_uptime_seconds`, `corrobore_sessions_expired_total`, `corrobore_sessions_expired_last_5m`, `corrobore_storage_mode`, `corrobore_storage_wal_bytes`, `corrobore_storage_wal_lag_sequences`, `corrobore_storage_checkpoint_age_seconds`, `corrobore_storage_compaction_backlog_bytes`, `corrobore_storage_recovery_warning_count`, `corrobore_domain_providers_configured`, and `corrobore_domain_providers_ready`.
+
+## `POST /v1/cypher/read`
+
+Executes a forced read-only request.
+
+```json
+{
+  "query": "MATCH (n:ThreatActor) RETURN n LIMIT 10",
+  "params": {},
+  "workspace_id": "workspace--demo",
+  "session_id": "<started-session-uuid>",
+  "budget_ref": "budget--interactive"
+}
+```
+
+Only `query` is required. When a real started session id is supplied, the server transitions it through `working`, `processing`, and `idle` (or `degraded` on failure).
+
+The response embeds the typed shared-runtime response, including `status`, `data`, mutation summary, validation errors, warnings, fix hints, budget usage, and audit references when present. `Rejected` and `ValidationFailed` are valid runtime results and can still arrive with HTTP 200; inspect the inner status.
+
+## `POST /v1/cypher/write`
+
+Executes a forced mutation request with the same body shape. Host runtime policy still controls whether mutations are permitted.
+
+## `POST /v1/cypher/execute`
+
+Compatibility endpoint accepting `mode: "read" | "write" | "validate" | "auto"`; default `auto` chooses by mutation keywords. Prefer explicit read/write routes for safety. Validate-only mode is affected by issue #228 and is not a mutation-safety boundary.
+
+## `POST /v1/seed/search`
+
+Resolves a natural-language objective into ranked graph seeds.
+
+```json
+{
+  "objective": "infrastructure linked to the phishing campaign",
+  "workspace_id": "workspace--demo",
+  "domain_profile": "cti",
+  "mode": "hybrid",
+  "top_k": 5,
+  "score_threshold": 0.2
+}
+```
+
+Defaults are cross-domain, hybrid retrieval, `top_k=10`, and threshold `0.0`. Profiles are `cti`, `fimi`, `crisis`, or `cross_domain`; modes are `hybrid`, `full_text`, `semantic`, or `vector`. Each candidate includes `node_id`, `score`, and an explanation with rationale, source refs, and boundary notes. Expected 422 errors include `NO_SEED`, `AMBIGUOUS_SEED`, and `OVERBROAD_OBJECTIVE`.
+
+Domain-scoped profiles (`cti`, `fimi`, `crisis`) are enterprise-gated:
+
+- Build-time gate: profile requests return `FEATURE_NOT_AVAILABLE` if the matching enterprise feature is not compiled.
+- Runtime license gate: profile requests return `LICENSE_MODULE_MISSING` if `CORROBORE_HTTP_LICENSED_MODULES` does not contain the requested module.
+- Provider gate: profile requests return `DOMAIN_PROVIDER_NOT_READY` unless the matching provider is loaded and healthy.
+
+## `POST /v1/domains/{domain}/validate`
+
+Invokes `node.validate/1` through the common provider registry for `cti`, `fimi`, or `crisis` after build, license, readiness, and capability gates.
+
+```json
+{
+  "request_id": "validation--123",
+  "workspace_id": "workspace--demo",
+  "snapshot_id": "snapshot--current",
+  "payload": {"id": "node--123", "labels": ["ThreatActor"]}
+}
+```
+
+The successful envelope preserves `request_id` and returns provider `status` (`accepted`, `rejected`, or `failed`), structured `issues`, and optional diagnostics. Stable gate errors are `INVALID_DOMAIN`, `FEATURE_NOT_AVAILABLE`, `LICENSE_MODULE_MISSING`, `DOMAIN_PROVIDER_NOT_READY`, and `DOMAIN_PROVIDER_CAPABILITY_MISSING`; invocation failures return `DOMAIN_PROVIDER_ERROR` and timeouts return `REQUEST_TIMEOUT`.
+
+## `GET /v1/admin/domain-providers/status`
+
+Uses the same dedicated admin Bearer boundary as the admin license route. It returns no paths, hashes, handles, or configuration secrets, only each loaded provider's `provider_id`, `provider_version`, `domain`, declared capabilities, and `ready` state.
+
+## `GET /v1/license/status`
+
+Returns the authenticated runtime view of enterprise licensing.
+
+```json
+{
+  "ok": true,
+  "result": {
+    "source": "signed_pem",
+    "client_uuid": "11111111-2222-4333-8444-555555555555",
+    "client_email": "security@example.com",
+    "modules": ["cti", "crisis"]
+  }
+}
+```
+
+`source` is one of:
+
+- `signed_pem`: modules and identity were loaded from a verified license PEM.
+- `legacy_env`: modules were loaded from `CORROBORE_HTTP_LICENSED_MODULES` fallback.
+- `none`: no active enterprise module claims.
+
+## `GET /v1/admin/license/status`
+
+Returns the same license summary as `/v1/license/status` but is protected by a secondary admin token configured in `CORROBORE_HTTP_ADMIN_AUTH_TOKEN`.
+
+This endpoint is independent from the standard `/v1/*` middleware token. It validates:
+
+- `Authorization: Bearer <CORROBORE_HTTP_ADMIN_AUTH_TOKEN>`
+
+Error behavior:
+
+- `401 AUTH_REQUIRED`: missing `Authorization` header.
+- `401 AUTH_INVALID`: invalid admin token.
+- `403 ADMIN_AUTH_NOT_CONFIGURED`: server has no `CORROBORE_HTTP_ADMIN_AUTH_TOKEN` configured.
+
+## `POST /v1/import/stix`
+
+Imports a STIX 2.1 bundle through one runtime mutation per object.
+
+```json
+{
+  "bundle": {
+    "type": "bundle",
+    "objects": [{"type": "identity", "id": "identity--demo", "name": "Demo"}]
+  },
+  "workspace_id": "workspace--demo",
+  "session_id": "session--import",
+  "budget_ref": "budget--import"
+}
+```
+
+The result reports `processed_objects`, `applied_mutations`, `rejected_mutations`, and `errors`.
+
+## `POST /v1/import/stix/file`
+
+Multipart import. `file` is required and its filename must end in `.json` or `.stix`. Optional text parts are `workspace_id`, `session_id`, and `budget_ref`.
+
+```bash
+curl -X POST http://127.0.0.1:8080/v1/import/stix/file \
+  -H 'Authorization: Bearer change-me' \
+  -F 'file=@bundle.stix;type=application/json' \
+  -F 'workspace_id=workspace--demo'
+```
+
+## `POST /v1/stix/validate`
+
+Validates either an explicit bundle (default) or current graph CTI nodes.
+
+```json
+{
+  "source": "bundle",
+  "bundle": {"type": "bundle", "objects": []},
+  "workspace_id": "workspace--demo",
+  "snapshot_id": "snapshot--current"
+}
+```
+
+The result contains `source_mode`, `valid`, `issues`, `playbooks_applied`, optional `corrections_summary`, optional import `persistence`, and `errors`. Bundle playbooks cover missing `identity.name`, `malware.is_family`, and required temporal fields for indicators, reports, and observed data. Graph mode reports readiness issues and does not auto-mutate nodes.
+
+Graph-native CTI validation has two explicit gates:
+
+- Build-time gate: when the server is compiled without enterprise CTI support, `source=graph` returns a forbidden error.
+- Runtime license gate: when enterprise CTI is compiled but `CORROBORE_HTTP_LICENSED_MODULES` does not contain `cti`, `source=graph` returns a forbidden error.
+- Provider gate: graph mode requires a ready CTI provider exposing `node.validate/1`; availability does not depend on whether the graph is empty.
+
+```json
+{
+  "ok": true,
+  "result": {
+    "source_mode": "bundle",
+    "valid": false,
+    "issues": [
+      {
+        "code": "STIX_IDENTITY_NAME_REQUIRED",
+        "message": "identity object requires 'name'",
+        "field": "name",
+        "severity": "error",
+        "node_id": "identity--abc"
+      }
+    ],
+    "playbooks_applied": [
+      {
+        "id": "PLAYBOOK_FIX_IDENTITY_NAME",
+        "description": "fill missing identity.name with placeholder",
+        "node_id": "identity--abc"
+      }
+    ],
+    "corrections_summary": {
+      "total_corrections": 1,
+      "by_field": {"name": 1},
+      "by_strategy": {"playbook_default": 1},
+      "by_playbook_id": {"PLAYBOOK_FIX_IDENTITY_NAME": 1}
+    },
+    "persistence": {
+      "processed_objects": 1,
+      "applied_mutations": 1,
+      "rejected_mutations": 0,
+      "errors": []
+    },
+    "errors": []
+  }
+}
+```
+
+`valid` is computed from issues found during the pass; it is not a post-fix revalidation. Corrected objects are imported when `playbooks_applied` is non-empty, so `valid: false` and non-null `persistence` can legitimately coexist. Revalidate if a post-correction verdict is required.
+
+| Error code | HTTP | Meaning |
+| :--- | :---: | :--- |
+| `MISSING_BUNDLE` | 400 | `source=bundle` without a bundle. |
+| `INVALID_STIX_BUNDLE` | 400 | The payload is not a STIX bundle object. |
+| `INVALID_SOURCE_MODE` | 400 | Unknown source value. |
+| `FEATURE_NOT_AVAILABLE` | 403 | `source=graph` requested when enterprise CTI support is not compiled in. |
+| `LICENSE_MODULE_MISSING` | 403 | `source=graph` requested without a valid `cti` runtime license claim. |
+
+## `GET /v1/export/stix`
+
+Exports a raw STIX bundle (not the standard envelope). Query parameters:
+
+| Parameter | Default |
+| :--- | :--- |
+| `snapshot_id` | `snapshot--current` |
+| `transaction_id` | `transaction--http-export` |
+| `exporter_version` | `corrobore-http-server-v0` |
+| `mode` | `strict` (`permissive` is also accepted) |
+| `profile` | `stix-mvp` |
+
+## `POST /v1/sessions/start`
+
+```json
+{
+  "workspace_id": "workspace--demo",
+  "actor_id": "actor--agent-01",
+  "actor_kind": "Agent",
+  "metadata": {"source": "report.pdf"}
+}
+```
+
+`actor_kind` defaults to `agent` and accepts `user`, `agent`, `orchestrator_agent`, `worker_agent`, `tool`, `system`, or `test_fixture` (hyphenated and compact aliases are also accepted for compound values). The response contains a server-generated UUID and `idle` status.
+
+```json
+{
+  "ok": true,
+  "result": {
+    "session_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+    "status": "idle"
+  }
+}
+```
+
+## Explorer read API
+
+The initial 3D explorer uses three authenticated, read-only routes. They share
+the standard request body and rate-limit policies even though the routes accept
+only path and query parameters.
+
+### `GET /v1/explorer/sessions`
+
+Returns sessions in stable identifier order for the explorer's left rail.
+Stopped sessions are excluded by default; pass `include_stopped=true` to include
+them. Each record contains session, workspace and actor identity, actor kind,
+status, and start/update times in epoch milliseconds.
+
+### `GET /v1/explorer/sessions/{session_id}/timeline`
+
+Returns the selected session's persisted snapshot/timeshot forest. Every node
+contains a stable boundary id, `snapshot` or `timeshot` kind, optional parent and
+transaction ids, an RFC 3339 timestamp, a label, and deterministically ordered
+children. Snapshots are derived from authoritative graph-core snapshot records;
+timeshots are read-only analysis boundaries and do not create graph branches.
+
+### `GET /v1/explorer/sessions/{session_id}/graph`
+
+Returns the bounded deterministic visualization projection. `boundary_kind`
+defaults to `current`; `snapshot` and `timeshot` require `boundary_id`. Optional
+budgets are `max_nodes`, `max_relationships`, `max_properties_per_record`,
+`max_payload_bytes`, and `max_computation_units`.
+
+Unknown sessions return `SESSION_NOT_FOUND`. Unknown, wrong-kind, and
+cross-session boundaries all return the leak-safe `TEMPORAL_BOUNDARY_NOT_FOUND`.
+Invalid selections return `INVALID_TEMPORAL_BOUNDARY`; invalid budgets return
+`INVALID_VISUALIZATION_PROJECTION`.
+
+## Explorer frontend split
+
+The browser explorer is maintained in a dedicated repository:
+`Noetance-Labs/corrobore-web`.
+
+This repository documents and validates the HTTP backend contract only. The
+frontend consumes these backend routes:
+
+- `GET /v1/explorer/sessions`
+- `GET /v1/explorer/sessions/{session_id}/timeline`
+- `GET /v1/explorer/sessions/{session_id}/graph`
+
+### API stack with Docker Compose
+
+The repository Compose stack runs the Rust HTTP service only, persists session
+state in a named volume, and waits for `GET /health` to pass. Docker Compose v2
+with support for `docker compose up --wait` is required.
+
+From the repository root:
+
+```bash
+cp .env.sample .env
+```
+
+Edit `.env` and replace `CORROBORE_HTTP_AUTH_TOKEN=change-me` with a non-empty local
+token. Do not add surrounding whitespace and never commit `.env`. Validate the
+resolved configuration before starting containers:
+
+```bash
+docker compose config
+```
+
+Then build, start, and wait for the service healthcheck:
+
+```bash
+docker compose up --build --wait
+```
+
+Open <http://localhost:8080>. The port is published on `127.0.0.1` by default,
+so the stack is not exposed to the local network. Change `CORROBORE_HTTP_PORT`
+in `.env` when port 8080 is unavailable, then open the matching localhost port.
+
+Inspect status and follow logs with:
+
+```bash
+docker compose ps
+docker compose logs -f corrobore-http-server
+```
+
+Restart or rebuild after local changes:
+
+```bash
+docker compose restart corrobore-http-server
+docker compose up --build --wait
+```
+
+Changing `CORROBORE_HTTP_AUTH_TOKEN` requires the following command so the
+server receives the new value:
+
+```bash
+docker compose up --force-recreate --wait
+```
+
+Stop the stack while preserving sessions and logs:
+
+```bash
+docker compose down
+```
+
+To remove all persisted sessions and logs, explicitly remove the named
+volumes:
+
+```bash
+docker compose down --volumes
+```
+
+The external frontend repository owns browser-specific build, end-to-end, and
+accessibility validation.
+
+## `GET /v1/sessions/{session_id}/health`
+
+Returns workspace, actor identity/kind, FSM status (`idle`, `working`, `processing`, `degraded`, `stopped`), start/update time, uptime, and optional `idle_ttl_expired` stop reason.
+
+Unknown session ids return `SESSION_NOT_FOUND` with HTTP 404. Invalid transitions return `INVALID_STATUS_TRANSITION` with HTTP 400.
+
+## `GET /v1/sessions/{session_id}/logs`
+
+Reads structured entries for a known session. Query parameters:
+
+- `limit`: 1–5000, default 500;
+- `from_ms`, `to_ms`: inclusive epoch-millisecond bounds;
+- `format`: `json` (default) or `ndjson`.
+
+JSON output includes matched counts, stop reason, entries, the log path, and audit parity (`input_events`, `output_events`, missing/orphan event ids, `parity_ok`). NDJSON returns the matching raw log lines.
+
+## `POST /v1/sessions/{session_id}/stop`
+
+Persists the session in `stopped` state and returns its id, status, and update time.
+
+The machine-readable definitions are in the [OpenAPI specification](../api/openapi.yaml).

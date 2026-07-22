@@ -1,0 +1,254 @@
+{
+  "format": "graph-core-error-scenarios/v1",
+  "matching_policy": "Use typed GraphError variants. Do not assert string-only errors.",
+  "scenarios": [
+    {
+      "id": "ERR-NODE-001",
+      "title": "Update missing node returns NodeNotFound",
+      "operation": {
+        "op": "update_node",
+        "node_id": "node--missing-update",
+        "patch": {
+          "status": "NeedsReview"
+        }
+      },
+      "expected_error": {
+        "variant": "GraphError::NodeNotFound",
+        "id": "node--missing-update"
+      },
+      "covers": [
+        "issue-5",
+        "issue-9"
+      ]
+    },
+    {
+      "id": "ERR-NODE-002",
+      "title": "Update tombstoned node returns RecordAlreadyTombstoned",
+      "setup": [
+        "create actor_apt28",
+        "tombstone actor_apt28"
+      ],
+      "operation": {
+        "op": "update_node",
+        "ref": "actor_apt28",
+        "patch": {
+          "status": "NeedsReview"
+        }
+      },
+      "expected_error": {
+        "variant": "GraphError::RecordAlreadyTombstoned",
+        "id_ref": "actor_apt28"
+      },
+      "covers": [
+        "issue-5",
+        "issue-9"
+      ]
+    },
+    {
+      "id": "ERR-NODE-003",
+      "title": "Tombstone missing node returns NodeNotFound",
+      "operation": {
+        "op": "tombstone_node",
+        "node_id": "node--missing-tombstone"
+      },
+      "expected_error": {
+        "variant": "GraphError::NodeNotFound",
+        "id": "node--missing-tombstone"
+      },
+      "covers": [
+        "issue-5",
+        "issue-9"
+      ]
+    },
+    {
+      "id": "ERR-NODE-004",
+      "title": "Tombstone already tombstoned node returns RecordAlreadyTombstoned",
+      "setup": [
+        "create actor_apt28",
+        "tombstone actor_apt28"
+      ],
+      "operation": {
+        "op": "tombstone_node",
+        "ref": "actor_apt28"
+      },
+      "expected_error": {
+        "variant": "GraphError::RecordAlreadyTombstoned",
+        "id_ref": "actor_apt28"
+      },
+      "covers": [
+        "issue-5",
+        "issue-9"
+      ]
+    },
+    {
+      "id": "ERR-REL-001",
+      "title": "Create relationship with missing source returns SourceNodeNotFound",
+      "setup": [
+        "create malware_xagent"
+      ],
+      "operation": {
+        "op": "create_relationship",
+        "source_node_id": "node--missing-actor",
+        "type": "USES",
+        "target_ref": "malware_xagent"
+      },
+      "expected_error": {
+        "variant": "GraphError::SourceNodeNotFound",
+        "id": "node--missing-actor"
+      },
+      "covers": [
+        "issue-6",
+        "issue-9"
+      ]
+    },
+    {
+      "id": "ERR-REL-002",
+      "title": "Create relationship with missing target returns TargetNodeNotFound",
+      "setup": [
+        "create actor_apt28"
+      ],
+      "operation": {
+        "op": "create_relationship",
+        "source_ref": "actor_apt28",
+        "type": "USES",
+        "target_node_id": "node--missing-malware"
+      },
+      "expected_error": {
+        "variant": "GraphError::TargetNodeNotFound",
+        "id": "node--missing-malware"
+      },
+      "covers": [
+        "issue-6",
+        "issue-9"
+      ]
+    },
+    {
+      "id": "ERR-REL-003",
+      "title": "Create relationship with tombstoned source returns SourceNodeNotFound",
+      "setup": [
+        "create actor_apt28",
+        "create malware_xagent",
+        "tombstone actor_apt28"
+      ],
+      "operation": {
+        "op": "create_relationship",
+        "source_ref": "actor_apt28",
+        "type": "USES",
+        "target_ref": "malware_xagent"
+      },
+      "expected_error": {
+        "variant": "GraphError::SourceNodeNotFound",
+        "id_ref": "actor_apt28"
+      },
+      "covers": [
+        "issue-6",
+        "issue-9"
+      ]
+    },
+    {
+      "id": "ERR-REL-004",
+      "title": "Create relationship with tombstoned target returns TargetNodeNotFound",
+      "setup": [
+        "create actor_apt28",
+        "create malware_xagent",
+        "tombstone malware_xagent"
+      ],
+      "operation": {
+        "op": "create_relationship",
+        "source_ref": "actor_apt28",
+        "type": "USES",
+        "target_ref": "malware_xagent"
+      },
+      "expected_error": {
+        "variant": "GraphError::TargetNodeNotFound",
+        "id_ref": "malware_xagent"
+      },
+      "covers": [
+        "issue-6",
+        "issue-9"
+      ]
+    },
+    {
+      "id": "ERR-REL-005",
+      "title": "Update missing relationship returns RelationshipNotFound",
+      "operation": {
+        "op": "update_relationship",
+        "relationship_id": "relationship--missing-update",
+        "patch": {
+          "status": "Validated"
+        }
+      },
+      "expected_error": {
+        "variant": "GraphError::RelationshipNotFound",
+        "id": "relationship--missing-update"
+      },
+      "covers": [
+        "issue-8",
+        "issue-9"
+      ]
+    },
+    {
+      "id": "ERR-REL-006",
+      "title": "Update tombstoned relationship returns RecordAlreadyTombstoned",
+      "setup": [
+        "create actor_apt28",
+        "create malware_xagent",
+        "create rel_apt28_uses_xagent",
+        "tombstone rel_apt28_uses_xagent"
+      ],
+      "operation": {
+        "op": "update_relationship",
+        "ref": "rel_apt28_uses_xagent",
+        "patch": {
+          "status": "Validated"
+        }
+      },
+      "expected_error": {
+        "variant": "GraphError::RecordAlreadyTombstoned",
+        "id_ref": "rel_apt28_uses_xagent"
+      },
+      "covers": [
+        "issue-8",
+        "issue-9"
+      ]
+    },
+    {
+      "id": "ERR-REL-007",
+      "title": "Tombstone missing relationship returns RelationshipNotFound",
+      "operation": {
+        "op": "tombstone_relationship",
+        "relationship_id": "relationship--missing-tombstone"
+      },
+      "expected_error": {
+        "variant": "GraphError::RelationshipNotFound",
+        "id": "relationship--missing-tombstone"
+      },
+      "covers": [
+        "issue-8",
+        "issue-9"
+      ]
+    },
+    {
+      "id": "ERR-REL-008",
+      "title": "Tombstone already tombstoned relationship returns RecordAlreadyTombstoned",
+      "setup": [
+        "create actor_apt28",
+        "create malware_xagent",
+        "create rel_apt28_uses_xagent",
+        "tombstone rel_apt28_uses_xagent"
+      ],
+      "operation": {
+        "op": "tombstone_relationship",
+        "ref": "rel_apt28_uses_xagent"
+      },
+      "expected_error": {
+        "variant": "GraphError::RecordAlreadyTombstoned",
+        "id_ref": "rel_apt28_uses_xagent"
+      },
+      "covers": [
+        "issue-8",
+        "issue-9"
+      ]
+    }
+  ]
+}

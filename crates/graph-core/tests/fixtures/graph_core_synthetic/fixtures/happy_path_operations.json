@@ -1,0 +1,167 @@
+{
+  "format": "graph-core-operation-sequence/v1",
+  "description": "Declarative happy-path sequence. A test harness should execute it through the public graph_core API only.",
+  "id_policy": "Use logical `ref` keys for test assertions. Do not assert generated ID strings.",
+  "operations": [
+    {
+      "op": "create_node",
+      "ref": "actor_apt28",
+      "from_fixture": "entities.nodes.actor_apt28",
+      "expect": {
+        "result": "ok",
+        "store_node_id_as": "actor_apt28"
+      }
+    },
+    {
+      "op": "create_node",
+      "ref": "actor_apt29",
+      "from_fixture": "entities.nodes.actor_apt29",
+      "expect": {
+        "result": "ok",
+        "store_node_id_as": "actor_apt29"
+      }
+    },
+    {
+      "op": "create_node",
+      "ref": "malware_xagent",
+      "from_fixture": "entities.nodes.malware_xagent",
+      "expect": {
+        "result": "ok",
+        "store_node_id_as": "malware_xagent"
+      }
+    },
+    {
+      "op": "create_node",
+      "ref": "indicator_ip",
+      "from_fixture": "entities.nodes.indicator_ip",
+      "expect": {
+        "result": "ok",
+        "store_node_id_as": "indicator_ip"
+      }
+    },
+    {
+      "op": "create_node",
+      "ref": "fimi_incident_ghostwriter",
+      "from_fixture": "entities.nodes.fimi_incident_ghostwriter",
+      "expect": {
+        "result": "ok",
+        "store_node_id_as": "fimi_incident_ghostwriter"
+      }
+    },
+    {
+      "op": "create_node",
+      "ref": "narrative_energy_prices",
+      "from_fixture": "entities.nodes.narrative_energy_prices",
+      "expect": {
+        "result": "ok",
+        "store_node_id_as": "narrative_energy_prices"
+      }
+    },
+    {
+      "op": "create_node",
+      "ref": "media_asset_video",
+      "from_fixture": "entities.nodes.media_asset_video",
+      "expect": {
+        "result": "ok",
+        "store_node_id_as": "media_asset_video"
+      }
+    },
+    {
+      "op": "create_relationship",
+      "ref": "rel_apt28_uses_xagent",
+      "from_fixture": "relationships.relationships.rel_apt28_uses_xagent",
+      "expect": {
+        "result": "ok",
+        "store_relationship_id_as": "rel_apt28_uses_xagent"
+      }
+    },
+    {
+      "op": "create_relationship",
+      "ref": "rel_xagent_uses_indicator",
+      "from_fixture": "relationships.relationships.rel_xagent_uses_indicator",
+      "expect": {
+        "result": "ok",
+        "store_relationship_id_as": "rel_xagent_uses_indicator"
+      }
+    },
+    {
+      "op": "create_relationship",
+      "ref": "rel_incident_amplifies_narrative",
+      "from_fixture": "relationships.relationships.rel_incident_amplifies_narrative",
+      "expect": {
+        "result": "ok",
+        "store_relationship_id_as": "rel_incident_amplifies_narrative"
+      }
+    },
+    {
+      "op": "create_relationship",
+      "ref": "rel_narrative_uses_media",
+      "from_fixture": "relationships.relationships.rel_narrative_uses_media",
+      "expect": {
+        "result": "ok",
+        "store_relationship_id_as": "rel_narrative_uses_media"
+      }
+    },
+    {
+      "op": "create_relationship",
+      "ref": "rel_apt29_uses_xagent_to_tombstone",
+      "from_fixture": "relationships.relationships.rel_apt29_uses_xagent_to_tombstone",
+      "expect": {
+        "result": "ok",
+        "store_relationship_id_as": "rel_apt29_uses_xagent_to_tombstone"
+      }
+    },
+    {
+      "op": "update_node",
+      "ref": "actor_apt28",
+      "patch": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "value": "Fancy Bear"
+          }
+        },
+        "status": "NeedsReview"
+      },
+      "expect": {
+        "result": "ok",
+        "current_version": 2,
+        "previous_version_readable": true
+      }
+    },
+    {
+      "op": "update_relationship",
+      "ref": "rel_apt28_uses_xagent",
+      "patch": {
+        "status": "Validated",
+        "confidence": 0.91
+      },
+      "expect": {
+        "result": "ok",
+        "current_version": 2,
+        "previous_version_readable": true
+      }
+    },
+    {
+      "op": "tombstone_node",
+      "ref": "actor_apt29",
+      "expect": {
+        "result": "ok",
+        "hidden_from_default_get": true,
+        "current_status": "Tombstoned",
+        "current_version": 2
+      }
+    },
+    {
+      "op": "tombstone_relationship",
+      "ref": "rel_apt29_uses_xagent_to_tombstone",
+      "expect": {
+        "result": "ok",
+        "hidden_from_default_get": true,
+        "hidden_from_default_adjacency": true,
+        "current_status": "Tombstoned",
+        "current_version": 2
+      }
+    }
+  ]
+}

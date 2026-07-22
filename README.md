@@ -1,0 +1,109 @@
+# Corrobore
+
+Corrobore is a Rust-native, Cypher-compatible graph runtime used as structured
+working memory for intelligence agents.
+
+It keeps entities, relationships, evidence, confidence, temporal metadata, and
+session audit history outside model context while exposing bounded graph reads
+and writes through embedded Rust and HTTP interfaces.
+
+## Choose an interface
+
+| Interface | Best for | Entry point |
+| :--- | :--- | :--- |
+| Embedded Rust | Applications that want an in-process engine | `docs/user-guide/embedded-engine.md` |
+| HTTP API | Agent tools, services, and remote integrations | `docs/user-guide/http-server.md` |
+| TAXII ingestion | Incremental STIX 2.1 collection polling through the public import boundary | `docs/user-guide/ingestion.md` |
+
+## Current baseline
+
+- Workspace version: `0.2.0`.
+- Public API contract: `docs/api/openapi.yaml`.
+- Runtime behavior documentation: `docs/user-guide/http-server.md`.
+- Release notes: `docs/release-notes/`.
+
+### Released capability snapshot
+
+- Authenticated HTTP runtime with explicit read and write Cypher boundaries.
+- Durable session lifecycle with status transitions and structured JSONL logs.
+- Operational observability through `/health`, `/metrics`, and session log export.
+- Deterministic STIX import, validation, and export surfaces.
+- Incremental TAXII 2.1 ingestion with persisted cursors.
+- Bounded seed-search and working-set retrieval primitives for agent loops.
+
+## Quick start (Docker Compose)
+
+Run the complete local stack (HTTP API + explorer) from repository root:
+
+```bash
+cp .env.sample .env
+# Replace CORROBORE_HTTP_AUTH_TOKEN=change-me with a local non-empty token.
+docker compose up --build --wait
+```
+
+Open <http://localhost:8080>.
+
+For lifecycle commands, token handling, and security boundaries, see the
+Docker section in `docs/user-guide/http-server.md`.
+
+## Quick start (native HTTP runtime)
+
+```bash
+CORROBORE_HTTP_AUTH_TOKEN=change-me cargo run -p corrobore-http-server --release
+```
+
+Health checks:
+
+```bash
+curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8080/metrics
+```
+
+Protected read query:
+
+```bash
+curl -X POST http://127.0.0.1:8080/v1/cypher/read \
+  -H 'Authorization: Bearer change-me' \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"MATCH (n) RETURN n LIMIT 10"}'
+```
+
+## Build and validate
+
+```bash
+cargo build --workspace --locked
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-targets --all-features --locked
+node --test scripts/docs-contract-guard.test.mjs
+node scripts/docs-contract-guard.mjs
+```
+
+The docs contract guard fails when HTTP routes or runtime env vars drift between
+server code and public docs.
+
+## Repository segmentation
+
+Corrobore follows a public runtime plus integration model:
+
+- this repository owns runtime behavior, API contracts, and user-facing docs;
+- integration code consumes stable runtime boundaries, mainly through HTTP;
+- candidate and forward-looking artifacts remain separate from implemented behavior.
+
+Use `docs/` and code on `main` as the source of truth for shipped functionality.
+
+## Documentation map
+
+- Product docs landing: `docs/index.md`
+- Getting started: `docs/getting-started.md`
+- Embedded Rust usage: `docs/user-guide/embedded-engine.md`
+- HTTP runtime and API behavior: `docs/user-guide/http-server.md`
+- TAXII connector: `docs/user-guide/ingestion.md`
+- Cypher subset: `docs/user-guide/cypher.md`
+- Architecture: `docs/architecture.md`
+- LLM operating guidance: `docs/for-llms.md`
+- Interactive API reference: `docs/api/index.html`
+
+## License
+
+MIT. See `LICENSE`.

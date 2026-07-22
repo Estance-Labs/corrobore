@@ -1,0 +1,98 @@
+{
+  "format": "graph-core-relationship-fixtures/v1",
+  "notes": [
+    "All source_ref and target_ref fields refer to nodes in fixtures/entities.json.",
+    "Relationship type validation is graph-core generic; the names below are domain-neutral strings from the core perspective."
+  ],
+  "relationships": [
+    {
+      "ref": "rel_apt28_uses_xagent",
+      "source_ref": "actor_apt28",
+      "type": "USES",
+      "target_ref": "malware_xagent",
+      "status": "Candidate",
+      "confidence": 0.82,
+      "properties": {
+        "source": {
+          "type": "string",
+          "value": "synthetic-fixture"
+        },
+        "first_observed": {
+          "type": "string",
+          "value": "2026-01-10T12:00:00Z"
+        }
+      }
+    },
+    {
+      "ref": "rel_xagent_uses_indicator",
+      "source_ref": "malware_xagent",
+      "type": "INDICATES",
+      "target_ref": "indicator_ip",
+      "status": "Candidate",
+      "confidence": 0.73,
+      "properties": {
+        "source": {
+          "type": "string",
+          "value": "synthetic-fixture"
+        },
+        "observed_count": {
+          "type": "integer",
+          "value": 4
+        }
+      }
+    },
+    {
+      "ref": "rel_incident_amplifies_narrative",
+      "source_ref": "fimi_incident_ghostwriter",
+      "type": "AMPLIFIES",
+      "target_ref": "narrative_energy_prices",
+      "status": "NeedsReview",
+      "confidence": 0.64,
+      "properties": {
+        "source": {
+          "type": "string",
+          "value": "synthetic-fixture"
+        },
+        "channels": {
+          "type": "string_list",
+          "value": [
+            "blog",
+            "telegram"
+          ]
+        }
+      }
+    },
+    {
+      "ref": "rel_narrative_uses_media",
+      "source_ref": "narrative_energy_prices",
+      "type": "USES_MEDIA",
+      "target_ref": "media_asset_video",
+      "status": "Candidate",
+      "confidence": 0.58,
+      "properties": {
+        "source": {
+          "type": "string",
+          "value": "synthetic-fixture"
+        }
+      }
+    },
+    {
+      "ref": "rel_apt29_uses_xagent_to_tombstone",
+      "source_ref": "actor_apt29",
+      "type": "USES",
+      "target_ref": "malware_xagent",
+      "status": "Candidate",
+      "confidence": 0.33,
+      "properties": {
+        "source": {
+          "type": "string",
+          "value": "synthetic-fixture"
+        },
+        "purpose": {
+          "type": "string",
+          "value": "relationship tombstone fixture"
+        }
+      }
+    }
+  ]
+}

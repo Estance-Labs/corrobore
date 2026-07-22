@@ -1,0 +1,41 @@
+{
+  "schema_version": "1",
+  "providers": [
+    {
+      "domain": "cti",
+      "library": "libcorrobore_domain_cti.dylib",
+      "sha256": "a914a5ea8772d2b6652bf75c73382595d8387ecffc2ae257c96c99771880954d",
+      "required": true,
+      "capabilities": [
+        {
+          "name": "node.validate",
+          "version": "1"
+        }
+      ]
+    },
+    {
+      "domain": "fimi",
+      "library": "libcorrobore_domain_fimi.dylib",
+      "sha256": "d04d4701b6b0179d64d68bfa0a56eee7f191e3c14c4e93199f23c2d19bf8a7a7",
+      "required": true,
+      "capabilities": [
+        {
+          "name": "node.validate",
+          "version": "1"
+        }
+      ]
+    },
+    {
+      "domain": "crisis",
+      "library": "libcorrobore_domain_crisis.dylib",
+      "sha256": "0e3835cee1b5250268fea74e187f8e92c6bb33b2f00d507030cac173c077b164",
+      "required": true,
+      "capabilities": [
+        {
+          "name": "node.validate",
+          "version": "1"
+        }
+      ]
+    }
+  ]
+}

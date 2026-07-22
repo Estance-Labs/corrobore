@@ -1,0 +1,20 @@
+[package]
+name = "cypher-planner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+
+[lib]
+name = "cypher_planner"
+path = "src/lib.rs"
+
+[dependencies]
+cypher-parser = { path = "../cypher-parser" }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

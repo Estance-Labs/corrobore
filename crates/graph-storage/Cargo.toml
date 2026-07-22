@@ -1,0 +1,31 @@
+[package]
+name = "graph-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+
+[lib]
+name = "graph_storage"
+path = "src/lib.rs"
+
+[dependencies]
+graph-core = { path = "../graph-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+proptest = { workspace = true }
+
+[[bench]]
+name = "page_in"
+harness = false
+
+[lints]
+workspace = true

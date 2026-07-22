@@ -1,0 +1,93 @@
+site_name: Corrobore
+site_description: A Rust-native, Cypher-compatible structured working memory for intelligence agents.
+site_url: https://docs.corrobore.org/
+repo_url: https://github.com/Noetance-Labs/corrobore
+edit_uri: edit/main/docs/
+
+copyright: "Copyright &copy; 2026 AreDee-Bangs &mdash; Licensed under MIT"
+
+theme:
+  name: material
+  custom_dir: overrides
+  logo: assets/corrobore-mark.svg
+  favicon: assets/corrobore-mark.svg
+  font: false
+  palette:
+    - scheme: corrobore-dark
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to light mode
+    - scheme: corrobore-light
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to dark mode
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - toc.integrate
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+
+extra_css:
+  - stylesheets/corrobore.css
+
+markdown_extensions:
+  - md_in_html
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      check_paths: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - admonition
+  - pymdownx.details
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Quick Start: getting-started.md
+    - Docker: getting-started-docker.md
+    - Python Integration: getting-started-python.md
+  - Embedded Engine: user-guide/embedded-engine.md
+  - TAXII Ingestion: user-guide/ingestion.md
+  - For LLM Agents: for-llms.md
+  - Skills:
+    - Agent Skill: agent-skill.md
+    - How to Use: skills/corrobore/how-to-use.md
+    - OpenCTI Harvester Agent: skills/corrobore/AGENT.md
+  - Architecture: architecture.md
+  - User Guide:
+    - Cypher Support: user-guide/cypher.md
+    - Intelligence Domains: user-guide/domains.md
+    - Domain Provider Operations: user-guide/domain-provider-operations.md
+    - Exporters & Validation: user-guide/exporters.md
+    - HTTP Server: user-guide/http-server.md
+    - Learned Working Set: user-guide/working-set.md
+  - API Reference:
+    - Interactive reference: api/index.html
+    - OpenAPI specification: api/openapi.yaml
+  - Developer Guide:
+    - Contributing: developer-guide/contributing.md
+    - Architecture Internals: developer-guide/internals.md
+    - Release Notes Process: developer-guide/release-notes-process.md
+  - Release Notes:
+    - v0.2.1: release-notes/v0.2.1.md
+    - v0.2.0: release-notes/v0.2.0.md
+    - v0.1.0: release-notes/v0.1.0.md
+    - v0.0.1: release-notes/v0.0.1.md

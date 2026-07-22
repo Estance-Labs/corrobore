@@ -1,0 +1,33 @@
+[package]
+name = "corrobore-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+# `cargo-fuzz` requires a nightly toolchain (libFuzzer). This crate is
+# deliberately isolated from the pinned-stable workspace via its own empty
+# `[workspace]` table so `cargo build --workspace` on stable never tries to
+# compile it. Run the targets explicitly with nightly (see README.md).
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+cypher-parser = { path = "../crates/cypher-parser" }
+graph-storage = { path = "../crates/graph-storage" }
+
+[[bin]]
+name = "parse_query"
+path = "fuzz_targets/parse_query.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_record"
+path = "fuzz_targets/decode_record.rs"
+test = false
+doc = false
+bench = false
