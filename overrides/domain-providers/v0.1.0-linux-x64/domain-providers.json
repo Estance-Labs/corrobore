@@ -1,0 +1,41 @@
+{
+  "schema_version": "1",
+  "providers": [
+    {
+      "domain": "cti",
+      "library": "libcorrobore_domain_cti.so",
+      "sha256": "4e21a8a0090c61ec6b3d7e65d193275c5078b9b053571d13517177fc202d74e5",
+      "required": true,
+      "capabilities": [
+        {
+          "name": "node.validate",
+          "version": "1"
+        }
+      ]
+    },
+    {
+      "domain": "fimi",
+      "library": "libcorrobore_domain_fimi.so",
+      "sha256": "fa518b7ef1cf9bdc9b17bccbbf956bd53b830cddd5e5f498a577b4616bb5b7a7",
+      "required": true,
+      "capabilities": [
+        {
+          "name": "node.validate",
+          "version": "1"
+        }
+      ]
+    },
+    {
+      "domain": "crisis",
+      "library": "libcorrobore_domain_crisis.so",
+      "sha256": "cd705a149b40a3868a1a0d3f231be2f04c3e1752cc5cb31692d8cf25dd733070",
+      "required": true,
+      "capabilities": [
+        {
+          "name": "node.validate",
+          "version": "1"
+        }
+      ]
+    }
+  ]
+}

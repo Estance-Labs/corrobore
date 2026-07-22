@@ -1,0 +1,69 @@
+[workspace]
+members = [
+    "crates/cypher-executor",
+    "crates/cypher-parser",
+    "crates/cypher-planner",
+    "crates/domain-provider-abi",
+    "crates/domain-common",
+    "crates/export-fimi",
+    "crates/export-stix",
+    "crates/function-registry",
+    "crates/graph-core",
+    "crates/graph-storage",
+    "crates/corrobore-engine",
+    "crates/corrobore-http-server",
+    "crates/corrobore-ingest",
+    "crates/shared-runtime",
+    "crates/storage-api",
+]
+resolver = "2"
+
+# Shared package metadata inherited by every workspace crate via
+# `field.workspace = true`. Keeping version/edition/license in one place stops
+# the manifests from drifting apart.
+[workspace.package]
+version = "0.2.2"
+edition = "2024"
+license = "MIT"
+publish = false
+repository = "https://github.com/Noetance-Labs/corrobore"
+homepage = "https://docs.corrobore.org/"
+documentation = "https://docs.corrobore.org/"
+
+# Centralized external dependency versions. Crates opt in with
+# `dep = { workspace = true }` and may add extra features locally (features are
+# additive across the workspace + crate declarations).
+[workspace.dependencies]
+axum = { version = "0.8", features = ["multipart"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+clap = { version = "4", features = ["derive"] }
+# Property-based and benchmark tooling used by the testing-depth crates. Kept in
+# the workspace table so versions stay aligned; each crate opts in as a
+# dev-dependency only where the tests/benches actually live.
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+dotenvy = "0.15"
+http-body-util = "0.1"
+nom = "8"
+proptest = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+# graph-storage relies on byte-stable JSON codec output (records are checksummed
+# on disk). The exact version is pinned by the committed Cargo.lock (used with
+# `--locked` in CI), so no per-crate `=` pin is needed here.
+serde_json = "1"
+subtle = "2"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.7", features = ["trace", "limit"] }
+tower_governor = "0.8"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+
+# Workspace-wide lints. `unwrap_used` is a warning so production code cannot
+# silently rely on `unwrap()`; test modules opt out with
+# `#![allow(clippy::unwrap_used)]` at the module/file level.
+[workspace.lints.clippy]
+unwrap_used = "warn"

@@ -1,0 +1,49 @@
+name: Domain Provider ABI Contract
+
+on:
+  pull_request:
+    paths:
+      - "crates/domain-provider-abi/**"
+      - ".github/workflows/ee-domain-binaries.yml"
+  push:
+    branches: [main]
+    paths:
+      - "crates/domain-provider-abi/**"
+      - ".github/workflows/ee-domain-binaries.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: domain-provider-abi-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    name: Rust and C ABI contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate Rust ABI and schemas
+        run: cargo test -p domain-provider-abi --locked
+
+      - name: Compile canonical header as C11
+        run: |
+          printf '%s\n' '#include "corrobore_domain_provider.h"' \
+            'int main(void) { return CORROBORE_DOMAIN_PROVIDER_ABI_MAJOR_V1 != 1; }' \
+            | cc -std=c11 -Wall -Wextra -Werror \
+                -I crates/domain-provider-abi/include -x c - -c -o /tmp/provider-abi-c.o
+
+      - name: Compile canonical header as C++17
+        run: |
+          printf '%s\n' '#include "corrobore_domain_provider.h"' \
+            'int main() { return CORROBORE_DOMAIN_PROVIDER_ABI_MAJOR_V1 != 1; }' \
+            | c++ -std=c++17 -Wall -Wextra -Werror \
+                -I crates/domain-provider-abi/include -x c++ - -c -o /tmp/provider-abi-cpp.o

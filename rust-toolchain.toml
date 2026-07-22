@@ -1,0 +1,6 @@
+[toolchain]
+# 3.5: pin the toolchain so a new stable release cannot break CI independently
+# of any code change. Bump deliberately in its own PR.
+channel = "1.96.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

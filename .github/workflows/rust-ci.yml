@@ -1,0 +1,146 @@
+name: Rust CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - 'docs/**'
+      - 'project-documents/**'
+      - 'site/**'
+      - '**/*.md'
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: rust-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      ci: ${{ steps.filter.outputs.ci }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Filter change scopes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            rust:
+              - '.cargo/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'deny.toml'
+              - 'crates/**'
+              - 'fuzz/**'
+            ci:
+              - '.github/workflows/rust-ci.yml'
+              - 'scripts/rust-ci-cache-contract.test.mjs'
+              - 'scripts/docs-contract-guard.mjs'
+              - 'scripts/docs-contract-guard.test.mjs'
+              - 'scripts/open-source-readiness.test.mjs'
+
+  quality:
+    name: Format, lint, and build
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # Keep this cache limited to registry metadata: build outputs are large,
+      # runner-specific, and guarded by scripts/rust-ci-cache-contract.test.mjs.
+      - name: Cache Cargo registry
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy with warnings denied
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Build workspace
+        run: cargo build --workspace --all-targets --locked
+
+      - name: Validate open-source readiness contracts
+        run: node --test scripts/open-source-readiness.test.mjs
+
+  cargo-deny:
+    name: Dependency and license audit
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Run cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories bans licenses sources
+
+  edition-contracts:
+    name: OSS and enterprise edition contracts
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: OSS edition contract - graph source gated
+        run: cargo test -p corrobore-http-server --no-default-features --locked stix_validate_contract_graph_source
+
+      - name: OSS edition contract - seed profiles gated
+        run: cargo test -p corrobore-http-server --no-default-features --locked seed_search_contract_rejects_
+
+      - name: Enterprise edition contract - graph source licensed
+        run: cargo test -p corrobore-http-server --locked stix_validate_contract_graph_source
+
+      - name: Enterprise edition contract - seed profiles licensed
+        run: cargo test -p corrobore-http-server --locked seed_search_contract_rejects_
+
+      - name: Enterprise binary contract - missing manifest fails closed
+        run: cargo test -p corrobore-http-server --locked app_state_fails_when_domain_provider_manifest_is_missing
+
+      - name: Enterprise binary contract - real C provider is invoked
+        run: cargo test -p corrobore-http-server --test http_contract --locked domain_validation_contract_invokes_real_c_provider

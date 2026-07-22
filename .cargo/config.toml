@@ -1,0 +1,2 @@
+[build]
+rustflags = ["-A", "clippy::default_constructed_unit_structs"]

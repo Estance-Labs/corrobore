@@ -1,0 +1,63 @@
+{
+  "format": "graph-core-property-roundtrip/v1",
+  "node_ref": "property_probe",
+  "labels": [
+    "Indicator"
+  ],
+  "status": "Candidate",
+  "properties": {
+    "string": {
+      "type": "string",
+      "value": "value"
+    },
+    "integer": {
+      "type": "integer",
+      "value": 42
+    },
+    "float": {
+      "type": "float",
+      "value": 42.5
+    },
+    "bool": {
+      "type": "bool",
+      "value": true
+    },
+    "null": {
+      "type": "null",
+      "value": null
+    },
+    "strings": {
+      "type": "string_list",
+      "value": [
+        "a",
+        "b"
+      ]
+    },
+    "integers": {
+      "type": "integer_list",
+      "value": [
+        1,
+        2
+      ]
+    },
+    "floats": {
+      "type": "float_list",
+      "value": [
+        1.0,
+        2.0
+      ]
+    },
+    "bools": {
+      "type": "bool_list",
+      "value": [
+        true,
+        false
+      ]
+    }
+  },
+  "expected": {
+    "all_values_preserved": true,
+    "lossy_conversion_allowed": false,
+    "unsupported_mixed_lists": "not included in Epic 0001 dataset"
+  }
+}

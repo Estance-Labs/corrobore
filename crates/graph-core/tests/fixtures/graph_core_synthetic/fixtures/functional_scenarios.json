@@ -1,0 +1,298 @@
+{
+  "format": "graph-core-functional-scenarios/v1",
+  "id_policy": "Scenario refs are logical dataset refs. Test harnesses must map them to generated NodeId/RelationshipId values.",
+  "scenarios": [
+    {
+      "id": "FC-NODE-001",
+      "title": "Create and retrieve a visible node by ID",
+      "given": [
+        "a fresh Graph",
+        "a valid ThreatActor node input"
+      ],
+      "when": [
+        "create_node(actor_apt28)",
+        "get_node(actor_apt28)"
+      ],
+      "then": [
+        "the node exists",
+        "version is 1",
+        "is_current is true",
+        "label ThreatActor is present",
+        "property name equals APT28",
+        "status equals Candidate"
+      ],
+      "fixtures": [
+        "actor_apt28"
+      ],
+      "covers": [
+        "issue-4"
+      ]
+    },
+    {
+      "id": "FC-NODE-002",
+      "title": "Missing node lookup is a successful empty read",
+      "given": [
+        "a fresh Graph",
+        "a syntactically valid unknown NodeId node--missing"
+      ],
+      "when": [
+        "get_node(node--missing)"
+      ],
+      "then": [
+        "the result is Ok(None), not an error"
+      ],
+      "covers": [
+        "issue-4",
+        "issue-9"
+      ]
+    },
+    {
+      "id": "FC-NODE-003",
+      "title": "List nodes returns only visible current nodes",
+      "given": [
+        "actor_apt28, malware_xagent, actor_apt29 created",
+        "actor_apt29 tombstoned"
+      ],
+      "when": [
+        "list_nodes()"
+      ],
+      "then": [
+        "actor_apt28 and malware_xagent are returned",
+        "actor_apt29 is not returned",
+        "ordering is not asserted"
+      ],
+      "fixtures": [
+        "actor_apt28",
+        "malware_xagent",
+        "actor_apt29"
+      ],
+      "covers": [
+        "issue-4",
+        "issue-5"
+      ]
+    },
+    {
+      "id": "FC-NODE-004",
+      "title": "Node update creates an immutable readable version",
+      "given": [
+        "actor_apt28 exists at version 1"
+      ],
+      "when": [
+        "update_node(actor_apt28, name=Fancy Bear, status=NeedsReview)"
+      ],
+      "then": [
+        "current version is 2",
+        "previous_version_id points to version 1",
+        "version 1 remains readable",
+        "exactly one node version is current"
+      ],
+      "fixtures": [
+        "actor_apt28"
+      ],
+      "covers": [
+        "issue-5"
+      ]
+    },
+    {
+      "id": "FC-NODE-005",
+      "title": "Tombstone node hides default read and exposes tombstone version",
+      "given": [
+        "actor_apt29 exists"
+      ],
+      "when": [
+        "tombstone_node(actor_apt29)",
+        "get_node(actor_apt29)",
+        "list_node_versions(actor_apt29)"
+      ],
+      "then": [
+        "get_node returns Ok(None)",
+        "version list contains two versions",
+        "current version has status Tombstoned and version 2"
+      ],
+      "fixtures": [
+        "actor_apt29"
+      ],
+      "covers": [
+        "issue-5"
+      ]
+    },
+    {
+      "id": "FC-REL-001",
+      "title": "Create relationship and read adjacency",
+      "given": [
+        "actor_apt28 and malware_xagent exist",
+        "relationship type USES",
+        "confidence 0.82"
+      ],
+      "when": [
+        "create_relationship(rel_apt28_uses_xagent)",
+        "get_relationship",
+        "outgoing(actor_apt28)",
+        "incoming(malware_xagent)",
+        "relationships_between(actor_apt28, malware_xagent)"
+      ],
+      "then": [
+        "relationship exists at version 1",
+        "source and target match created nodes",
+        "type equals USES",
+        "confidence equals 0.82",
+        "relationship appears in outgoing, incoming and pairwise adjacency"
+      ],
+      "fixtures": [
+        "actor_apt28",
+        "malware_xagent",
+        "rel_apt28_uses_xagent"
+      ],
+      "covers": [
+        "issue-6",
+        "issue-7"
+      ]
+    },
+    {
+      "id": "FC-REL-002",
+      "title": "Missing relationship lookup is a successful empty read",
+      "given": [
+        "a fresh Graph",
+        "a syntactically valid unknown RelationshipId relationship--missing"
+      ],
+      "when": [
+        "get_relationship(relationship--missing)"
+      ],
+      "then": [
+        "the result is Ok(None), not an error"
+      ],
+      "covers": [
+        "issue-6",
+        "issue-9"
+      ]
+    },
+    {
+      "id": "FC-REL-003",
+      "title": "Relationship update creates an immutable readable version",
+      "given": [
+        "rel_apt28_uses_xagent exists at version 1"
+      ],
+      "when": [
+        "update_relationship(rel_apt28_uses_xagent, status=Validated, confidence=0.91)"
+      ],
+      "then": [
+        "current version is 2",
+        "previous version remains readable",
+        "exactly one relationship version is current"
+      ],
+      "fixtures": [
+        "rel_apt28_uses_xagent"
+      ],
+      "covers": [
+        "issue-8"
+      ]
+    },
+    {
+      "id": "FC-REL-004",
+      "title": "Tombstone relationship hides default read and adjacency",
+      "given": [
+        "rel_apt29_uses_xagent_to_tombstone exists and is visible in adjacency"
+      ],
+      "when": [
+        "tombstone_relationship(rel_apt29_uses_xagent_to_tombstone)",
+        "get_relationship",
+        "outgoing(actor_apt29)",
+        "incoming(malware_xagent)",
+        "list_relationship_versions"
+      ],
+      "then": [
+        "get_relationship returns Ok(None)",
+        "default adjacency no longer returns the relationship",
+        "version list exposes current tombstone version 2"
+      ],
+      "fixtures": [
+        "actor_apt29",
+        "malware_xagent",
+        "rel_apt29_uses_xagent_to_tombstone"
+      ],
+      "covers": [
+        "issue-7",
+        "issue-8"
+      ]
+    },
+    {
+      "id": "FC-VERSION-001",
+      "title": "Missing version lists return empty vectors",
+      "given": [
+        "a fresh Graph",
+        "syntactically valid unknown NodeId and RelationshipId"
+      ],
+      "when": [
+        "list_node_versions(node--missing-versions)",
+        "list_relationship_versions(relationship--missing-versions)"
+      ],
+      "then": [
+        "both results are Ok(empty vector)"
+      ],
+      "covers": [
+        "issue-5",
+        "issue-8",
+        "issue-9"
+      ]
+    },
+    {
+      "id": "FC-PROP-001",
+      "title": "MVP property values round-trip without lossy conversion",
+      "given": [
+        "a node input containing scalar and list property values"
+      ],
+      "when": [
+        "create_node(property_probe)",
+        "get_node(property_probe)"
+      ],
+      "then": [
+        "string, integer, float, bool, null, and homogeneous list values are preserved"
+      ],
+      "fixtures": [
+        "property_probe"
+      ],
+      "covers": [
+        "issue-2",
+        "issue-10"
+      ]
+    },
+    {
+      "id": "FC-VALIDATION-001",
+      "title": "Confidence accepts only finite values in inclusive range",
+      "given": [
+        "values 0.0, 0.5, 1.0, -0.1, 1.1, NaN"
+      ],
+      "when": [
+        "Confidence::new(value)"
+      ],
+      "then": [
+        "0.0, 0.5 and 1.0 are accepted",
+        "-0.1, 1.1 and NaN are rejected"
+      ],
+      "covers": [
+        "issue-3",
+        "issue-10"
+      ]
+    },
+    {
+      "id": "FC-VALIDATION-002",
+      "title": "Labels and relationship types reject empty values",
+      "given": [
+        "valid labels/types and empty or whitespace-only labels/types"
+      ],
+      "when": [
+        "NodeInput::new(...).validate()",
+        "RelationshipType::new(...)"
+      ],
+      "then": [
+        "meaningful values are accepted",
+        "empty and whitespace-only values are rejected"
+      ],
+      "covers": [
+        "issue-2",
+        "issue-6",
+        "issue-10"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,123 @@
+{
+  "dataset_id": "epic001-rust-graph-core-functional-dataset",
+  "version": "0.1.0",
+  "generated_at": "2026-06-28T00:00:00+02:00",
+  "target": {
+    "repository": "Noetance-Labs/corrobore",
+    "epic": "Epic 0001: Rust Graph Core",
+    "crate": "crates/graph-core",
+    "primary_validation_command": "cargo test -p graph-core",
+    "public_api_only": true
+  },
+  "principles": [
+    "Use logical refs instead of assuming generated stable IDs.",
+    "Exercise observable public Graph behavior only.",
+    "Do not assert private storage layout or insertion ordering.",
+    "Keep CTI/FIMI/crisis semantics as labels and properties only; graph-core must not enforce domain-specific rules.",
+    "Treat tombstoned records as hidden from default reads and adjacency, but visible through version-history APIs."
+  ],
+  "coverage": [
+    {
+      "issue": 1,
+      "title": "typed identifiers",
+      "dataset_files": [
+        "fixtures/validation_cases.json"
+      ]
+    },
+    {
+      "issue": 2,
+      "title": "property and status primitives",
+      "dataset_files": [
+        "fixtures/property_roundtrip.json"
+      ]
+    },
+    {
+      "issue": 3,
+      "title": "bounded confidence value",
+      "dataset_files": [
+        "fixtures/validation_cases.json"
+      ]
+    },
+    {
+      "issue": 4,
+      "title": "node creation and retrieval",
+      "dataset_files": [
+        "fixtures/functional_scenarios.json"
+      ]
+    },
+    {
+      "issue": 5,
+      "title": "node versioning and tombstones",
+      "dataset_files": [
+        "fixtures/functional_scenarios.json",
+        "expected/expected_state_after_happy_path.json"
+      ]
+    },
+    {
+      "issue": 6,
+      "title": "relationship creation and retrieval",
+      "dataset_files": [
+        "fixtures/functional_scenarios.json"
+      ]
+    },
+    {
+      "issue": 7,
+      "title": "adjacency queries",
+      "dataset_files": [
+        "fixtures/functional_scenarios.json",
+        "expected/expected_state_after_happy_path.json"
+      ]
+    },
+    {
+      "issue": 8,
+      "title": "relationship versioning and tombstones",
+      "dataset_files": [
+        "fixtures/functional_scenarios.json",
+        "expected/expected_state_after_happy_path.json"
+      ]
+    },
+    {
+      "issue": 9,
+      "title": "graph error model",
+      "dataset_files": [
+        "fixtures/error_scenarios.json"
+      ]
+    },
+    {
+      "issue": 10,
+      "title": "unit coverage for primitives",
+      "dataset_files": [
+        "fixtures/property_roundtrip.json",
+        "fixtures/validation_cases.json"
+      ]
+    },
+    {
+      "issue": 11,
+      "title": "module boundaries",
+      "dataset_files": [
+        "docs/coverage_matrix.csv"
+      ]
+    },
+    {
+      "issue": 12,
+      "title": "Epic 0001 acceptance suite",
+      "dataset_files": [
+        "fixtures/functional_scenarios.json",
+        "templates/rust_dataset_harness_template.rs"
+      ]
+    }
+  ],
+  "files": [
+    "README.md",
+    "fixtures/entities.json",
+    "fixtures/relationships.json",
+    "fixtures/functional_scenarios.json",
+    "fixtures/error_scenarios.json",
+    "fixtures/property_roundtrip.json",
+    "fixtures/validation_cases.json",
+    "fixtures/happy_path_operations.json",
+    "expected/expected_state_after_happy_path.json",
+    "docs/coverage_matrix.csv",
+    "templates/rust_dataset_harness_template.rs"
+  ]
+}

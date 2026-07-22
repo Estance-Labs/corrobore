@@ -1,0 +1,13 @@
+Issue,Functional area,Dataset coverage,Primary file,Must not assert
+1,Typed identifiers,valid unknown IDs for missing-read and missing-error paths,fixtures/validation_cases.json,complete ID grammar
+2,Property/status primitives,all MVP scalar/list property variants and RecordStatus values used in lifecycle,fixtures/property_roundtrip.json,domain validation
+3,Confidence,"0.0, 0.5, 1.0 valid; -0.1, 1.1, NaN invalid",fixtures/validation_cases.json,confidence rounding beyond exact fixture values
+4,Node create/get/list,"create, retrieve, missing lookup, visible listing",fixtures/functional_scenarios.json,storage order
+5,Node version/tombstone,"update, version list, tombstone hide/default, double tombstone",fixtures/functional_scenarios.json,private version storage
+6,Relationship create/get,"valid edge between existing visible nodes, missing/tombstoned endpoint errors",fixtures/functional_scenarios.json,graph traversal algorithm
+7,Adjacency,"outgoing, incoming, relationships_between, tombstoned relationship hidden",expected/expected_state_after_happy_path.json,index implementation
+8,Relationship version/tombstone,"update, version list, tombstone hide/default, double tombstone",fixtures/functional_scenarios.json,private version storage
+9,GraphError,typed error variants for expected user errors,fixtures/error_scenarios.json,error message strings as primary contract
+10,Primitive unit coverage,property and validation fixtures usable for unit-level tests,fixtures/property_roundtrip.json,integration-only coverage
+11,Module boundaries,dataset documents public-API-only and no domain rules,README.md,private module imports
+12,Acceptance suite,scenario matrix mirrors acceptance contract with extended fixture set,fixtures/functional_scenarios.json,ignored tests or storage-specific behavior

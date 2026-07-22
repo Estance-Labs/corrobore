@@ -1,0 +1,49 @@
+# Reusable unit-test workflow (audit §3.3).
+# Single source of truth for the workspace test job, called by docs and release
+# workflows via `uses:`, and directly runnable from the Actions tab.
+name: Unit tests
+
+on:
+  workflow_call:
+    inputs:
+      timeout-minutes:
+        description: "Maximum runtime for the test job."
+        type: number
+        required: false
+        default: 20
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    name: Run unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes || 20 }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry and build outputs
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Run tests
+        run: cargo test --workspace --all-targets --locked

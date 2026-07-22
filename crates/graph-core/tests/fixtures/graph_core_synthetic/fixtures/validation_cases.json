@@ -1,0 +1,80 @@
+{
+  "format": "graph-core-validation-cases/v1",
+  "confidence": {
+    "valid": [
+      0.0,
+      0.5,
+      1.0
+    ],
+    "invalid": [
+      {
+        "display": "-0.1",
+        "value": -0.1,
+        "reason": "below lower bound"
+      },
+      {
+        "display": "1.1",
+        "value": 1.1,
+        "reason": "above upper bound"
+      },
+      {
+        "display": "NaN",
+        "value": "NaN",
+        "reason": "not finite; encode as f64::NAN in Rust"
+      }
+    ]
+  },
+  "node_ids": {
+    "syntactically_valid_unknown": [
+      "node--missing",
+      "node--missing-update",
+      "node--missing-tombstone",
+      "node--missing-versions"
+    ],
+    "assertion_policy": "These are only for missing-record behavior. Do not infer a complete NodeId grammar from this dataset."
+  },
+  "relationship_ids": {
+    "syntactically_valid_unknown": [
+      "relationship--missing",
+      "relationship--missing-update",
+      "relationship--missing-tombstone",
+      "relationship--missing-versions"
+    ],
+    "assertion_policy": "These are only for missing-record behavior. Do not infer a complete RelationshipId grammar from this dataset."
+  },
+  "labels": {
+    "valid": [
+      [
+        "ThreatActor"
+      ],
+      [
+        "Indicator"
+      ],
+      [
+        "FIMIIncident",
+        "Case"
+      ]
+    ],
+    "invalid": [
+      [],
+      [
+        ""
+      ],
+      [
+        " \t\n"
+      ]
+    ]
+  },
+  "relationship_types": {
+    "valid": [
+      "USES",
+      "INDICATES",
+      "AMPLIFIES",
+      "USES_MEDIA"
+    ],
+    "invalid": [
+      "",
+      " \t\n"
+    ]
+  }
+}
