@@ -23,7 +23,6 @@
 *~
 
 # macOS
-.DS_Store
 .AppleDouble
 .LSOverride
 
@@ -82,3 +81,6 @@ __pycache__/
 .corrobore-runtime/
 .corrobore-runtime/sessions.json
 
+
+
+.DS_Store
