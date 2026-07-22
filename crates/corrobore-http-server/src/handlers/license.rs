@@ -34,6 +34,8 @@ pub struct LicenseStatusResult {
     pub source: String,
     pub client_uuid: Option<String>,
     pub client_email: Option<String>,
+    pub valid_until: Option<String>,
+    pub is_nfr: Option<bool>,
     pub modules: Vec<String>,
 }
 
@@ -59,6 +61,8 @@ pub async fn admin_license_status(
 fn license_status_result(state: &AppState) -> LicenseStatusResult {
     let source = if state.config.license_client_uuid.is_some()
         && state.config.license_client_email.is_some()
+        && state.config.license_valid_until.is_some()
+        && state.config.license_is_nfr.is_some()
     {
         "signed_pem"
     } else {
@@ -69,6 +73,8 @@ fn license_status_result(state: &AppState) -> LicenseStatusResult {
         source: source.to_owned(),
         client_uuid: state.config.license_client_uuid.clone(),
         client_email: state.config.license_client_email.clone(),
+        valid_until: state.config.license_valid_until.clone(),
+        is_nfr: state.config.license_is_nfr,
         modules: state.config.licensed_modules.clone(),
     }
 }

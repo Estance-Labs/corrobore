@@ -21,6 +21,7 @@
 use std::{collections::HashMap, env, fs};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use chrono::{DateTime, Utc};
 use ed25519_dalek::pkcs8::DecodePublicKey;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
@@ -70,6 +71,10 @@ pub struct ServerConfig {
     pub license_client_uuid: Option<String>,
     /// Optional validated client email extracted from a signed license PEM.
     pub license_client_email: Option<String>,
+    /// Optional validated RFC3339 expiration timestamp extracted from a signed license PEM.
+    pub license_valid_until: Option<String>,
+    /// Optional marker indicating the signed license is tagged as NFR.
+    pub license_is_nfr: Option<bool>,
     /// Runtime graph storage mode.
     pub storage_mode: StorageMode,
     /// Graph storage directory configured for persistent mode.
@@ -215,13 +220,21 @@ impl ServerConfig {
             Self::parse_domain_provider_config(vars)?;
 
         let license_bundle = resolve_license_bundle(vars)?;
-        let (licensed_modules, license_client_uuid, license_client_email) =
+        let (
+            licensed_modules,
+            license_client_uuid,
+            license_client_email,
+            license_valid_until,
+            license_is_nfr,
+        ) =
             if let Some(bundle) = license_bundle {
                 let claims = validate_signed_license(&bundle.license_pem, &bundle.public_key_pem)?;
                 (
                     claims.modules,
                     Some(claims.client_uuid),
                     Some(claims.client_email),
+                    Some(claims.valid_until),
+                    Some(claims.is_nfr),
                 )
             } else {
                 if vars.contains_key("CORROBORE_HTTP_LICENSED_MODULES") {
@@ -233,7 +246,7 @@ impl ServerConfig {
                 });
                 }
 
-                (Vec::new(), None, None)
+                (Vec::new(), None, None, None, None)
             };
 
         Ok(Self {
@@ -254,6 +267,8 @@ impl ServerConfig {
             licensed_modules,
             license_client_uuid,
             license_client_email,
+            license_valid_until,
+            license_is_nfr,
             storage_mode,
             storage_dir,
             storage_require_fsync,
@@ -361,6 +376,8 @@ struct LicenseClaims {
     client_uuid: String,
     client_email: String,
     modules: Vec<String>,
+    valid_until: String,
+    is_nfr: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -368,6 +385,9 @@ struct SignedLicenseClaims {
     client_uuid: String,
     client_email: String,
     modules: Vec<String>,
+    valid_until: String,
+    #[serde(default)]
+    tags: Vec<String>,
     signature: String,
 }
 
@@ -376,6 +396,8 @@ struct UnsignedLicenseClaims<'a> {
     client_uuid: &'a str,
     client_email: &'a str,
     modules: &'a [String],
+    valid_until: &'a str,
+    tags: &'a [String],
 }
 
 fn resolve_license_bundle(
@@ -474,10 +496,14 @@ fn validate_signed_license(
     }
 
     let modules = normalize_modules(signed.modules);
+    let valid_until = parse_and_validate_license_expiry(&signed.valid_until)?;
+    let tags = normalize_tags(signed.tags);
     let canonical = UnsignedLicenseClaims {
         client_uuid: &client_uuid,
         client_email: &client_email,
         modules: &modules,
+        valid_until: &valid_until,
+        tags: &tags,
     };
     let canonical_bytes =
         serde_json::to_vec(&canonical).map_err(|error| ConfigError::InvalidEnv {
@@ -527,6 +553,8 @@ fn validate_signed_license(
         client_uuid,
         client_email,
         modules,
+        valid_until,
+        is_nfr: tags.iter().any(|tag| tag == "nfr"),
     })
 }
 
@@ -575,6 +603,34 @@ fn normalize_modules(modules: Vec<String>) -> Vec<String> {
     modules.sort();
     modules.dedup();
     modules
+}
+
+fn normalize_tags(tags: Vec<String>) -> Vec<String> {
+    let mut tags = tags
+        .into_iter()
+        .map(|entry| entry.trim().to_ascii_lowercase())
+        .filter(|entry| !entry.is_empty())
+        .collect::<Vec<_>>();
+    tags.sort();
+    tags.dedup();
+    tags
+}
+
+fn parse_and_validate_license_expiry(value: &str) -> Result<String, ConfigError> {
+    let raw = value.trim();
+    let parsed = DateTime::parse_from_rfc3339(raw).map_err(|error| ConfigError::InvalidEnv {
+        name: "CORROBORE_HTTP_LICENSE_PEM",
+        value: format!("invalid valid_until: {error}"),
+    })?;
+    let valid_until = parsed.with_timezone(&Utc);
+    if valid_until <= Utc::now() {
+        return Err(ConfigError::InvalidEnv {
+            name: "CORROBORE_HTTP_LICENSE_PEM",
+            value: format!("license expired at {}", valid_until.to_rfc3339()),
+        });
+    }
+
+    Ok(raw.to_owned())
 }
 
 fn parse_u16(name: &'static str, value: &str) -> Result<u16, ConfigError> {
@@ -652,6 +708,8 @@ mod tests {
         assert!(config.licensed_modules.is_empty());
         assert_eq!(config.license_client_uuid, None);
         assert_eq!(config.license_client_email, None);
+        assert_eq!(config.license_valid_until, None);
+        assert_eq!(config.license_is_nfr, None);
         assert_eq!(config.storage_mode, StorageMode::Ephemeral);
         assert_eq!(config.storage_dir, None);
         assert_eq!(config.domain_provider_dir, None);
@@ -839,6 +897,8 @@ mod tests {
             "11111111-2222-4333-8444-555555555555",
             "security@example.com",
             vec!["fimi".to_owned(), "cti".to_owned(), "cti".to_owned()],
+            "2099-01-01T00:00:00Z",
+            vec!["NFR".to_owned()],
         );
         let signature = signing.sign(&canonical);
 
@@ -846,6 +906,8 @@ mod tests {
             "client_uuid": "11111111-2222-4333-8444-555555555555",
             "client_email": "security@example.com",
             "modules": ["fimi", "cti", "cti"],
+            "valid_until": "2099-01-01T00:00:00Z",
+            "tags": ["NFR"],
             "signature": STANDARD.encode(signature.to_bytes())
         });
 
@@ -877,6 +939,8 @@ mod tests {
             config.license_client_email.as_deref(),
             Some("security@example.com")
         );
+        assert_eq!(config.license_valid_until.as_deref(), Some("2099-01-01T00:00:00Z"));
+        assert_eq!(config.license_is_nfr, Some(true));
     }
 
     #[test]
@@ -888,6 +952,8 @@ mod tests {
             "client_uuid": "11111111-2222-4333-8444-555555555555",
             "client_email": "security@example.com",
             "modules": ["cti"],
+            "valid_until": "2099-01-01T00:00:00Z",
+            "tags": [],
             "signature": STANDARD.encode([0_u8; 64])
         });
 
@@ -950,6 +1016,8 @@ mod tests {
             "66666666-7777-4888-9999-aaaaaaaaaaaa",
             "ops@example.com",
             vec!["crisis".to_owned()],
+            "2099-06-01T00:00:00Z",
+            vec![],
         );
         let signature = signing.sign(&canonical);
 
@@ -957,6 +1025,8 @@ mod tests {
             "client_uuid": "66666666-7777-4888-9999-aaaaaaaaaaaa",
             "client_email": "ops@example.com",
             "modules": ["crisis"],
+            "valid_until": "2099-06-01T00:00:00Z",
+            "tags": [],
             "signature": STANDARD.encode(signature.to_bytes())
         });
         let license_json = serde_json::to_vec(&signed).expect("license json should serialize");
@@ -999,9 +1069,61 @@ mod tests {
             config.license_client_email.as_deref(),
             Some("ops@example.com")
         );
+        assert_eq!(config.license_valid_until.as_deref(), Some("2099-06-01T00:00:00Z"));
+        assert_eq!(config.license_is_nfr, Some(false));
 
         let _ = fs::remove_file(license_path);
         let _ = fs::remove_file(public_key_path);
+    }
+
+    #[test]
+    fn config_contract_rejects_expired_signed_license() {
+        let signing = SigningKey::from_bytes(&[13_u8; 32]);
+        let verifying_pem = public_key_pem(&signing.verifying_key());
+
+        let canonical = signable_payload(
+            "11111111-2222-4333-8444-555555555555",
+            "security@example.com",
+            vec!["cti".to_owned()],
+            "2000-01-01T00:00:00Z",
+            vec![],
+        );
+        let signature = signing.sign(&canonical);
+
+        let signed = json!({
+            "client_uuid": "11111111-2222-4333-8444-555555555555",
+            "client_email": "security@example.com",
+            "modules": ["cti"],
+            "valid_until": "2000-01-01T00:00:00Z",
+            "tags": [],
+            "signature": STANDARD.encode(signature.to_bytes())
+        });
+        let license_json = serde_json::to_vec(&signed).expect("license json should serialize");
+        let license_pem = format!(
+            "-----BEGIN CORROBORE LICENSE-----\n{}\n-----END CORROBORE LICENSE-----",
+            STANDARD.encode(license_json)
+        );
+
+        let vars = HashMap::from([
+            (
+                "CORROBORE_HTTP_AUTH_TOKEN".to_owned(),
+                "token-123".to_owned(),
+            ),
+            ("CORROBORE_HTTP_LICENSE_PEM".to_owned(), license_pem),
+            (
+                "CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM".to_owned(),
+                verifying_pem,
+            ),
+        ]);
+
+        let error = ServerConfig::from_map(&vars).expect_err("expired license should fail");
+        assert_eq!(
+            error,
+            ConfigError::InvalidEnv {
+                name: "CORROBORE_HTTP_LICENSE_PEM",
+                value: "license expired at 2000-01-01T00:00:00+00:00".to_owned(),
+            }
+        );
     }
 
     #[test]
@@ -1167,12 +1289,21 @@ mod tests {
         )
     }
 
-    fn signable_payload(client_uuid: &str, client_email: &str, modules: Vec<String>) -> Vec<u8> {
+    fn signable_payload(
+        client_uuid: &str,
+        client_email: &str,
+        modules: Vec<String>,
+        valid_until: &str,
+        tags: Vec<String>,
+    ) -> Vec<u8> {
         let modules = super::normalize_modules(modules);
+        let tags = super::normalize_tags(tags);
         serde_json::to_vec(&super::UnsignedLicenseClaims {
             client_uuid,
             client_email,
             modules: &modules,
+            valid_until,
+            tags: &tags,
         })
         .expect("signable payload should serialize")
     }

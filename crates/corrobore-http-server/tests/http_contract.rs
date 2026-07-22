@@ -45,6 +45,8 @@ struct TestUnsignedLicenseClaims<'a> {
     client_uuid: &'a str,
     client_email: &'a str,
     modules: &'a [String],
+    valid_until: &'a str,
+    tags: &'a [String],
 }
 
 fn test_app() -> axum::Router {
@@ -115,10 +117,20 @@ fn test_signed_license_env(modules_csv: &str) -> HashMap<String, String> {
     modules.sort();
     modules.dedup();
 
+    let mut tags = vec!["NFR".to_owned()]
+        .into_iter()
+        .map(|entry| entry.trim().to_ascii_lowercase())
+        .filter(|entry| !entry.is_empty())
+        .collect::<Vec<_>>();
+    tags.sort();
+    tags.dedup();
+
     let canonical = serde_json::to_vec(&TestUnsignedLicenseClaims {
         client_uuid: "11111111-2222-4333-8444-555555555555",
         client_email: "tests@corrobore.dev",
         modules: &modules,
+        valid_until: "2099-01-01T00:00:00Z",
+        tags: &tags,
     })
     .expect("canonical payload should serialize");
     let signature = signing.sign(&canonical);
@@ -127,6 +139,8 @@ fn test_signed_license_env(modules_csv: &str) -> HashMap<String, String> {
         "client_uuid": "11111111-2222-4333-8444-555555555555",
         "client_email": "tests@corrobore.dev",
         "modules": modules,
+        "valid_until": "2099-01-01T00:00:00Z",
+        "tags": ["NFR"],
         "signature": STANDARD.encode(signature.to_bytes()),
     }))
     .expect("license payload should serialize");
@@ -688,6 +702,11 @@ async fn license_status_contract_returns_runtime_license_summary() {
         payload["result"]["client_email"],
         json!("tests@corrobore.dev")
     );
+    assert_eq!(
+        payload["result"]["valid_until"],
+        json!("2099-01-01T00:00:00Z")
+    );
+    assert_eq!(payload["result"]["is_nfr"], json!(true));
     assert_eq!(payload["result"]["modules"], json!(["cti"]));
 }
 
@@ -784,6 +803,11 @@ async fn admin_license_status_contract_returns_license_summary_with_admin_token(
         payload["result"]["client_email"],
         json!("tests@corrobore.dev")
     );
+    assert_eq!(
+        payload["result"]["valid_until"],
+        json!("2099-01-01T00:00:00Z")
+    );
+    assert_eq!(payload["result"]["is_nfr"], json!(true));
     assert_eq!(payload["result"]["modules"], json!(["cti"]));
 }
 

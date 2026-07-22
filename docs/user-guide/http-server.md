@@ -38,7 +38,7 @@ Application errors use the JSON envelope above. Transport middleware can reject 
 | `CORROBORE_HTTP_RATE_LIMIT_PER_SECOND` | `50` | Sustained global protected-route rate. |
 | `CORROBORE_HTTP_RATE_LIMIT_BURST` | `200` | Global burst allowance. |
 | `CORROBORE_HTTP_WEB_DIR` | unset | Optional directory containing the production explorer build. Unset keeps API-only mode. |
-| `CORROBORE_HTTP_LICENSE_PEM` | unset | Inline signed license PEM containing `client_uuid`, `client_email`, and `modules`. |
+| `CORROBORE_HTTP_LICENSE_PEM` | unset | Inline signed license PEM containing `client_uuid`, `client_email`, `modules`, `valid_until` (RFC3339), optional `tags`, and `signature`. |
 | `CORROBORE_HTTP_LICENSE_PEM_FILE` | unset | Path to signed license PEM file (alternative to inline variable). |
 | `CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM` | unset | Inline Ed25519 public key PEM used to verify the license signature. |
 | `CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM_FILE` | unset | Path to Ed25519 public key PEM file (alternative to inline variable). |
@@ -174,10 +174,14 @@ Returns the authenticated runtime view of enterprise licensing.
     "source": "signed_pem",
     "client_uuid": "11111111-2222-4333-8444-555555555555",
     "client_email": "security@example.com",
+    "valid_until": "2099-01-01T00:00:00+00:00",
+    "is_nfr": true,
     "modules": ["cti", "crisis"]
   }
 }
 ```
+
+The runtime rejects a signed license when `valid_until` is expired. `is_nfr` is derived from the case-insensitive presence of the `nfr` tag in `tags`.
 
 `source` is one of:
 

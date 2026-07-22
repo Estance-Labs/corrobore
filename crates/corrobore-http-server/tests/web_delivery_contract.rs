@@ -54,6 +54,8 @@ fn config(web_dir: Option<String>) -> ServerConfig {
         licensed_modules: vec!["cti".to_owned()],
         license_client_uuid: None,
         license_client_email: None,
+        license_valid_until: None,
+        license_is_nfr: None,
         storage_mode: StorageMode::Ephemeral,
         storage_dir: None,
         storage_require_fsync: false,
