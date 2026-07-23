@@ -86,6 +86,72 @@ const DEFAULT_WORKSPACE_ID: &str = "workspace--embedded-default";
 const DEFAULT_SESSION_ID: &str = "session--embedded-default";
 const DEFAULT_BUDGET_REF: &str = "budget--embedded-default";
 
+/// Execution mode selected at the public engine boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EngineRequestMode {
+    /// Infer read or mutation mode from the Cypher query.
+    Auto,
+    /// Execute with read-only validation.
+    ReadOnly,
+    /// Execute with mutation permission validation.
+    Mutation,
+    /// Validate the query without executing it.
+    ValidateOnly,
+}
+
+/// A contextual Cypher request accepted by the public engine boundary.
+///
+/// Protocol adapters should translate transport payloads into this type rather
+/// than constructing shared-runtime requests themselves. Missing context fields
+/// inherit the engine defaults configured by [`CorroboreEngineBuilder`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EngineRequest {
+    query: String,
+    parameters: HashMap<String, String>,
+    mode: EngineRequestMode,
+    workspace_id: Option<String>,
+    session_id: Option<String>,
+    budget_ref: Option<String>,
+}
+
+impl EngineRequest {
+    /// Creates a public engine request with no context overrides.
+    pub fn new(query: impl Into<String>, mode: EngineRequestMode) -> Self {
+        Self {
+            query: query.into(),
+            parameters: HashMap::new(),
+            mode,
+            workspace_id: None,
+            session_id: None,
+            budget_ref: None,
+        }
+    }
+
+    /// Sets string parameters for the request.
+    pub fn with_parameters(mut self, parameters: HashMap<String, String>) -> Self {
+        self.parameters = parameters;
+        self
+    }
+
+    /// Overrides the engine workspace identifier for this request.
+    pub fn with_workspace_id(mut self, workspace_id: impl Into<String>) -> Self {
+        self.workspace_id = Some(workspace_id.into());
+        self
+    }
+
+    /// Overrides the engine session identifier for this request.
+    pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = Some(session_id.into());
+        self
+    }
+
+    /// Overrides the engine budget reference for this request.
+    pub fn with_budget_ref(mut self, budget_ref: impl Into<String>) -> Self {
+        self.budget_ref = Some(budget_ref.into());
+        self
+    }
+}
+
 /// Error surface for embedded engine callers.
 #[derive(Debug, Error)]
 pub enum EngineError {
@@ -266,6 +332,60 @@ impl CorroboreEngine {
         CorroboreEngineBuilder::default()
     }
 
+    /// Executes one contextual request through the public engine boundary.
+    pub fn execute_request(
+        &mut self,
+        request: EngineRequest,
+    ) -> Result<CypherResponse, EngineError> {
+        let workspace_id = match request.workspace_id {
+            Some(value) => {
+                WorkspaceId::new(value).map_err(|error| EngineError::InvalidConfiguration {
+                    field: "workspace_id",
+                    reason: error.to_string(),
+                })?
+            }
+            None => self.workspace_id.clone(),
+        };
+        let session_id = match request.session_id {
+            Some(value) => {
+                SessionId::new(value).map_err(|error| EngineError::InvalidConfiguration {
+                    field: "session_id",
+                    reason: error.to_string(),
+                })?
+            }
+            None => self.session_id.clone(),
+        };
+        let budget_ref = match request.budget_ref {
+            Some(value) => {
+                CypherBudgetRef::new(value).map_err(|error| EngineError::InvalidConfiguration {
+                    field: "budget_ref",
+                    reason: error.to_string(),
+                })?
+            }
+            None => self.budget_ref.clone(),
+        };
+        let mode = match request.mode {
+            EngineRequestMode::Auto if contains_mutation_keywords(&request.query) => {
+                shared_runtime::CypherRequestMode::Mutation
+            }
+            EngineRequestMode::Auto | EngineRequestMode::ReadOnly => {
+                shared_runtime::CypherRequestMode::ReadOnly
+            }
+            EngineRequestMode::Mutation => shared_runtime::CypherRequestMode::Mutation,
+            EngineRequestMode::ValidateOnly => shared_runtime::CypherRequestMode::ValidateOnly,
+        };
+        let runtime_request = CypherRequest::new(
+            request.query,
+            CypherParameters::new(request.parameters),
+            mode,
+            workspace_id,
+            session_id,
+            budget_ref,
+        )?;
+
+        Ok(self.gateway.execute(&runtime_request)?)
+    }
+
     /// Executes a query, auto-detecting read or mutation mode.
     pub fn execute(&mut self, query: &str) -> Result<CypherResponse, EngineError> {
         self.execute_with_params(query, HashMap::new())
@@ -277,11 +397,9 @@ impl CorroboreEngine {
         query: &str,
         params: HashMap<String, String>,
     ) -> Result<CypherResponse, EngineError> {
-        if contains_mutation_keywords(query) {
-            self.write_with_params(query, params)
-        } else {
-            self.read_with_params(query, params)
-        }
+        self.execute_request(
+            EngineRequest::new(query, EngineRequestMode::Auto).with_parameters(params),
+        )
     }
 
     /// Executes a query in read-only mode.
@@ -295,15 +413,9 @@ impl CorroboreEngine {
         query: &str,
         params: HashMap<String, String>,
     ) -> Result<CypherResponse, EngineError> {
-        let request = CypherRequest::build_read_only_request(
-            query,
-            CypherParameters::new(params),
-            self.workspace_id.clone(),
-            self.session_id.clone(),
-            self.budget_ref.clone(),
-        )?;
-
-        Ok(self.gateway.execute(&request)?)
+        self.execute_request(
+            EngineRequest::new(query, EngineRequestMode::ReadOnly).with_parameters(params),
+        )
     }
 
     /// Executes a query in mutation mode.
@@ -317,15 +429,9 @@ impl CorroboreEngine {
         query: &str,
         params: HashMap<String, String>,
     ) -> Result<CypherResponse, EngineError> {
-        let request = CypherRequest::build_mutation_request(
-            query,
-            CypherParameters::new(params),
-            self.workspace_id.clone(),
-            self.session_id.clone(),
-            self.budget_ref.clone(),
-        )?;
-
-        Ok(self.gateway.execute(&request)?)
+        self.execute_request(
+            EngineRequest::new(query, EngineRequestMode::Mutation).with_parameters(params),
+        )
     }
 
     /// Returns an immutable view of the runtime graph.

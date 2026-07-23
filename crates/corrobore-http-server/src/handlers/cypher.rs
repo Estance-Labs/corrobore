@@ -22,13 +22,11 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use axum::{Json, extract::State};
-use graph_core::{SessionId, WorkspaceId};
+use corrobore_engine::{
+    CypherResponse, CypherResponseData, EngineError, EngineRequest, EngineRequestMode,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use shared_runtime::{
-    CypherBudgetRef, CypherParameters, CypherRequest, CypherRequestMode, CypherResponse,
-    CypherResponseData,
-};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -65,20 +63,20 @@ pub async fn execute_read_cypher(
     State(state): State<AppState>,
     Json(payload): Json<ExecuteCypherRequest>,
 ) -> Result<Json<ExecuteCypherResponse>, ApiError> {
-    execute_cypher_inner(state, payload, Some(CypherRequestMode::ReadOnly)).await
+    execute_cypher_inner(state, payload, Some(EngineRequestMode::ReadOnly)).await
 }
 
 pub async fn execute_write_cypher(
     State(state): State<AppState>,
     Json(payload): Json<ExecuteCypherRequest>,
 ) -> Result<Json<ExecuteCypherResponse>, ApiError> {
-    execute_cypher_inner(state, payload, Some(CypherRequestMode::Mutation)).await
+    execute_cypher_inner(state, payload, Some(EngineRequestMode::Mutation)).await
 }
 
 async fn execute_cypher_inner(
     state: AppState,
     mut payload: ExecuteCypherRequest,
-    forced_mode: Option<CypherRequestMode>,
+    forced_mode: Option<EngineRequestMode>,
 ) -> Result<Json<ExecuteCypherResponse>, ApiError> {
     let audit_event_id = Uuid::new_v4().to_string();
     let query_len = payload.query.len();
@@ -134,23 +132,20 @@ async fn execute_cypher_inner(
             .map_err(map_session_error)?;
     }
 
-    let outcome = match to_runtime_request(payload, forced_mode) {
-        Ok(runtime_request) => {
+    let outcome = match to_engine_request(payload, forced_mode) {
+        Ok(engine_request) => {
             let timeout = Duration::from_millis(state.config.request_timeout_ms);
-            let gateway = state.gateway.clone();
+            let engine = state.engine.clone();
             let execution_result = tokio::time::timeout(
                 timeout,
                 tokio::task::spawn_blocking(move || {
-                    let mut locked = gateway.lock().map_err(|_| {
-                        ApiError::internal("STATE_LOCK_FAILED", "cypher gateway lock poisoned")
+                    let mut locked = engine.lock().map_err(|_| {
+                        ApiError::internal("STATE_LOCK_FAILED", "engine lock poisoned")
                     })?;
 
-                    locked.execute(&runtime_request).map_err(|error| {
-                        ApiError::bad_request(
-                            "RUNTIME_ERROR",
-                            format!("cypher execution failed: {error}"),
-                        )
-                    })
+                    locked
+                        .execute_request(engine_request)
+                        .map_err(map_engine_error)
                 }),
             )
             .await;
@@ -299,10 +294,10 @@ fn response_audit_summary(response: &CypherResponse) -> (&'static str, usize, Op
     }
 }
 
-fn to_runtime_request(
+fn to_engine_request(
     payload: ExecuteCypherRequest,
-    forced_mode: Option<CypherRequestMode>,
-) -> Result<CypherRequest, ApiError> {
+    forced_mode: Option<EngineRequestMode>,
+) -> Result<EngineRequest, ApiError> {
     let query = payload.query;
     if query.trim().is_empty() {
         return Err(ApiError::bad_request(
@@ -311,70 +306,30 @@ fn to_runtime_request(
         ));
     }
 
-    let workspace_id = WorkspaceId::new(
-        payload
-            .workspace_id
-            .unwrap_or_else(|| "workspace--http-default".to_owned()),
-    )
-    .map_err(|error| ApiError::bad_request("INVALID_WORKSPACE_ID", error.to_string()))?;
-
-    let session_id = SessionId::new(
-        payload
-            .session_id
-            .unwrap_or_else(|| "session--http-default".to_owned()),
-    )
-    .map_err(|error| ApiError::bad_request("INVALID_SESSION_ID", error.to_string()))?;
-
-    let budget_ref = CypherBudgetRef::new(
-        payload
-            .budget_ref
-            .unwrap_or_else(|| "budget--http-default".to_owned()),
-    )
-    .map_err(|error| ApiError::bad_request("INVALID_BUDGET_REF", error.to_string()))?;
-
     let mode = forced_mode.unwrap_or_else(|| parse_mode(payload.mode.as_deref(), &query));
-    let parameters = CypherParameters::new(stringify_params(payload.params));
-
-    match mode {
-        CypherRequestMode::ReadOnly => CypherRequest::build_read_only_request(
-            query,
-            parameters,
-            workspace_id,
-            session_id,
-            budget_ref,
-        )
-        .map_err(|error| ApiError::bad_request("INVALID_REQUEST", error.to_string())),
-        CypherRequestMode::Mutation => CypherRequest::build_mutation_request(
-            query,
-            parameters,
-            workspace_id,
-            session_id,
-            budget_ref,
-        )
-        .map_err(|error| ApiError::bad_request("INVALID_REQUEST", error.to_string())),
-        CypherRequestMode::ValidateOnly => CypherRequest::build_validate_only_request(
-            query,
-            parameters,
-            workspace_id,
-            session_id,
-            budget_ref,
-        )
-        .map_err(|error| ApiError::bad_request("INVALID_REQUEST", error.to_string())),
-        CypherRequestMode::Explain => Err(ApiError::bad_request(
-            "UNSUPPORTED_MODE",
-            "mode explain is not supported for execution",
-        )),
+    let mut request =
+        EngineRequest::new(query, mode).with_parameters(stringify_params(payload.params));
+    if let Some(workspace_id) = payload.workspace_id {
+        request = request.with_workspace_id(workspace_id);
     }
+    if let Some(session_id) = payload.session_id {
+        request = request.with_session_id(session_id);
+    }
+    if let Some(budget_ref) = payload.budget_ref {
+        request = request.with_budget_ref(budget_ref);
+    }
+
+    Ok(request)
 }
 
-fn parse_mode(mode: Option<&str>, query: &str) -> CypherRequestMode {
+fn parse_mode(mode: Option<&str>, query: &str) -> EngineRequestMode {
     match mode.map(|value| value.trim().to_ascii_lowercase()) {
         Some(value) if value == "read" || value == "readonly" || value == "read_only" => {
-            CypherRequestMode::ReadOnly
+            EngineRequestMode::ReadOnly
         }
-        Some(value) if value == "write" || value == "mutation" => CypherRequestMode::Mutation,
+        Some(value) if value == "write" || value == "mutation" => EngineRequestMode::Mutation,
         Some(value) if value == "validate" || value == "validate_only" => {
-            CypherRequestMode::ValidateOnly
+            EngineRequestMode::ValidateOnly
         }
         Some(value) if value == "auto" => auto_mode(query),
         Some(_) => auto_mode(query),
@@ -382,17 +337,24 @@ fn parse_mode(mode: Option<&str>, query: &str) -> CypherRequestMode {
     }
 }
 
-fn auto_mode(query: &str) -> CypherRequestMode {
-    let upper = query.to_ascii_uppercase();
-    if [
-        " CREATE ", " MERGE ", " SET ", " DELETE ", " REMOVE ", " DROP ",
-    ]
-    .iter()
-    .any(|keyword| upper.contains(keyword))
-    {
-        CypherRequestMode::Mutation
-    } else {
-        CypherRequestMode::ReadOnly
+fn auto_mode(_query: &str) -> EngineRequestMode {
+    EngineRequestMode::Auto
+}
+
+fn map_engine_error(error: EngineError) -> ApiError {
+    match error {
+        EngineError::InvalidConfiguration { field, reason } => {
+            let code = match field {
+                "workspace_id" => "INVALID_WORKSPACE_ID",
+                "session_id" => "INVALID_SESSION_ID",
+                "budget_ref" => "INVALID_BUDGET_REF",
+                _ => "INVALID_REQUEST",
+            };
+            ApiError::bad_request(code, reason)
+        }
+        other => {
+            ApiError::bad_request("RUNTIME_ERROR", format!("cypher execution failed: {other}"))
+        }
     }
 }
 

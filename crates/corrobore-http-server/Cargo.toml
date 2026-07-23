@@ -28,10 +28,10 @@ axum = { workspace = true }
 base64 = "0.22"
 chrono = { workspace = true }
 clap = { workspace = true }
+corrobore-engine = { path = "../corrobore-engine" }
 dotenvy = { workspace = true }
 domain-provider-abi = { path = "../domain-provider-abi" }
 ed25519-dalek = { version = "2.2", features = ["pkcs8"] }
-export-stix = { path = "../export-stix" }
 graph-core = { path = "../graph-core" }
 graph-storage = { path = "../graph-storage" }
 libloading = "0.8"

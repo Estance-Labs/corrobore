@@ -160,11 +160,11 @@ pub async fn explorer_graph(
     )
     .map_err(map_projection_error)?;
     let request = VisualizationProjectionRequest::new(boundary, budget);
-    let gateway = state
-        .gateway
+    let engine = state
+        .engine
         .lock()
-        .map_err(|_| ApiError::internal("STATE_LOCK_FAILED", "gateway lock poisoned"))?;
-    let result = project_resolved_graph(gateway.graph(), &request, &BTreeMap::new())
+        .map_err(|_| ApiError::internal("STATE_LOCK_FAILED", "engine lock poisoned"))?;
+    let result = project_resolved_graph(engine.graph(), &request, &BTreeMap::new())
         .map_err(map_projection_error)?;
     Ok(Json(ExplorerGraphResponse { ok: true, result }))
 }
