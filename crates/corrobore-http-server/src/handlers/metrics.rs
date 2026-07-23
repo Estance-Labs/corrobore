@@ -68,6 +68,11 @@ pub async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
         .unwrap_or((0, 0));
 
     let version = env!("CARGO_PKG_VERSION");
+    let lifecycle_state = state.lifecycle.state().as_str();
+    let ready = u8::from(state.lifecycle.state() == crate::LifecycleState::Ready);
+    let active_requests = state.lifecycle.active_requests();
+    let shutdown_started = state.lifecycle.shutdown_started();
+    let shutdown_failures = state.lifecycle.shutdown_failures();
     let (providers_configured, providers_ready) = state
         .domain_providers
         .as_deref()
@@ -112,6 +117,21 @@ pub async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
             "# HELP corrobore_domain_providers_ready Native domain providers that passed startup health checks.\n",
             "# TYPE corrobore_domain_providers_ready gauge\n",
             "corrobore_domain_providers_ready {providers_ready}\n",
+            "# HELP corrobore_lifecycle_state Current lifecycle state represented as a labeled one-hot gauge.\n",
+            "# TYPE corrobore_lifecycle_state gauge\n",
+            "corrobore_lifecycle_state{{state=\"{lifecycle_state}\"}} 1\n",
+            "# HELP corrobore_ready Whether the server currently accepts application requests.\n",
+            "# TYPE corrobore_ready gauge\n",
+            "corrobore_ready {ready}\n",
+            "# HELP corrobore_active_requests Application requests currently in flight.\n",
+            "# TYPE corrobore_active_requests gauge\n",
+            "corrobore_active_requests {active_requests}\n",
+            "# HELP corrobore_shutdown_started_total Graceful shutdown sequences started.\n",
+            "# TYPE corrobore_shutdown_started_total counter\n",
+            "corrobore_shutdown_started_total {shutdown_started}\n",
+            "# HELP corrobore_shutdown_failures_total Shutdown sequences that timed out or failed.\n",
+            "# TYPE corrobore_shutdown_failures_total counter\n",
+            "corrobore_shutdown_failures_total {shutdown_failures}\n",
         ),
         version = version,
         uptime_seconds = uptime_seconds,
@@ -127,6 +147,11 @@ pub async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
         recovery_warning_count = durability.recovery.warning_count,
         providers_configured = providers_configured,
         providers_ready = providers_ready,
+        lifecycle_state = lifecycle_state,
+        ready = ready,
+        active_requests = active_requests,
+        shutdown_started = shutdown_started,
+        shutdown_failures = shutdown_failures,
     );
 
     ([(header::CONTENT_TYPE, PROMETHEUS_CONTENT_TYPE)], body)

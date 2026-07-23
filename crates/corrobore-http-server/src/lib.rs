@@ -21,6 +21,7 @@
 pub mod app;
 pub mod auth;
 pub mod config;
+pub mod correlation;
 mod durability;
 mod enterprise;
 pub mod error;

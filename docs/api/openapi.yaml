@@ -3,8 +3,10 @@ info:
   title: Corrobore HTTP API
   version: 0.1.0
   description: |
-    Agent-facing Corrobore API. `/health` and `/metrics` are public; every `/v1/*`
-    operation requires a Bearer token.
+    Agent-facing Corrobore API. `/health/live`, `/health/ready`, `/version`,
+    legacy `/health`, and `/metrics` are public; every `/v1/*` operation
+    requires a Bearer token. Every response carries the request correlation
+    identifier in `X-Request-Id`; a valid client-provided value is preserved.
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
@@ -26,31 +28,59 @@ components:
       in: path
       required: true
       schema: {type: string}
+  headers:
+    RequestId:
+      description: Request correlation identifier, preserved when the client supplies a valid X-Request-Id.
+      schema: {type: string, maxLength: 128}
   responses:
     BadRequest:
       description: Invalid query selection or projection budget
+      headers:
+        X-Request-Id: {$ref: '#/components/headers/RequestId'}
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorEnvelope'
     Unauthorized:
       description: Missing or invalid Bearer token
+      headers:
+        X-Request-Id: {$ref: '#/components/headers/RequestId'}
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorEnvelope'
     NotFound:
       description: Resource not found
+      headers:
+        X-Request-Id: {$ref: '#/components/headers/RequestId'}
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorEnvelope'
   schemas:
+    ReadinessResponse:
+      type: object
+      required: [status, ready, service, lifecycle_state, checks]
+      properties:
+        status: {type: string, enum: [ready, not_ready]}
+        ready: {type: boolean}
+        service: {type: string, const: corrobore-http-server}
+        lifecycle_state:
+          type: string
+          enum: [initializing, ready, draining, stopped, failed]
+        checks:
+          type: object
+          required: [engine_initialized, storage_recovered, accepting_requests]
+          properties:
+            engine_initialized: {type: boolean}
+            storage_recovered: {type: boolean}
+            accepting_requests: {type: boolean}
     ErrorEnvelope:
       type: object
-      required: [ok, error]
+      required: [ok, correlation_id, error]
       properties:
         ok: {type: boolean, const: false}
+        correlation_id: {type: string, maxLength: 128}
         error:
           type: object
           required: [code, message]
@@ -149,11 +179,19 @@ paths:
     get:
       operationId: getHealth
       summary: Service health, version, uptime, and session expiration metrics
+      deprecated: true
+      description: Deprecated composite diagnostic. Use `/health/live` for liveness and `/health/ready` for readiness.
       tags: [Operations]
       security: []
       responses:
         '200':
           description: Healthy process
+          headers:
+            X-Request-Id: {$ref: '#/components/headers/RequestId'}
+            Deprecation:
+              schema: {type: string, const: 'true'}
+            Link:
+              schema: {type: string}
           content:
             application/json:
               schema:
@@ -220,6 +258,86 @@ paths:
                           warning_count: {type: integer, minimum: 0}
                           derived_state_rebuilt: {type: boolean}
 
+  /health/live:
+    get:
+      operationId: getLiveness
+      summary: Process liveness without a readiness claim
+      tags: [Operations]
+      security: []
+      responses:
+        '200':
+          description: HTTP event loop is serving responses
+          headers:
+            X-Request-Id: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, live, service, lifecycle_state]
+                properties:
+                  status: {type: string, const: live}
+                  live: {type: boolean, const: true}
+                  service: {type: string, const: corrobore-http-server}
+                  lifecycle_state:
+                    type: string
+                    enum: [initializing, ready, draining, stopped, failed]
+
+  /health/ready:
+    get:
+      operationId: getReadiness
+      summary: Runtime, storage-recovery, and lifecycle readiness
+      tags: [Operations]
+      security: []
+      responses:
+        '200':
+          description: Runtime is initialized, storage is recovered, and requests are accepted
+          headers:
+            X-Request-Id: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ReadinessResponse'}
+        '503':
+          description: Runtime is initializing, draining, stopped, or failed
+          headers:
+            X-Request-Id: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ReadinessResponse'}
+
+  /version:
+    get:
+      operationId: getVersion
+      summary: Reproducible build and storage-format compatibility metadata
+      tags: [Operations]
+      security: []
+      responses:
+        '200':
+          description: Non-secret build and compatibility metadata
+          headers:
+            X-Request-Id: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [service, version, commit, build_target, storage_compatibility]
+                properties:
+                  service: {type: string, const: corrobore-http-server}
+                  version: {type: string}
+                  commit: {type: string}
+                  build_target: {type: string}
+                  storage_compatibility:
+                    type: object
+                    required: [supported_versions, supported_record_formats, active_storage_version, active_record_format]
+                    properties:
+                      supported_versions:
+                        type: array
+                        items: {type: string, enum: [V1]}
+                      supported_record_formats:
+                        type: array
+                        items: {type: string, enum: [JsonLinesV1]}
+                      active_storage_version: {type: [string, 'null']}
+                      active_record_format: {type: [string, 'null']}
+
   /metrics:
     get:
       operationId: getMetrics
@@ -229,6 +347,8 @@ paths:
       responses:
         '200':
           description: Prometheus exposition
+          headers:
+            X-Request-Id: {$ref: '#/components/headers/RequestId'}
           content:
             text/plain:
               schema: {type: string}

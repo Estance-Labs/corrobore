@@ -4,6 +4,7 @@
 use std::{
     collections::HashMap,
     fs,
+    io::{Read, Write},
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
@@ -49,12 +50,133 @@ fn unified_cli_exposes_the_server_command_surface() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success());
-    for command in ["start", "validate-config", "version"] {
+    for command in ["start", "validate-config", "version", "status"] {
         assert!(
             stdout.contains(command),
             "missing server command: {command}"
         );
     }
+}
+
+#[test]
+fn status_is_bounded_and_reports_unavailable_with_a_stable_exit_code() {
+    const STATUS_UNAVAILABLE_EXIT_CODE: i32 = 8;
+    let reservation = TcpListener::bind("127.0.0.1:0").expect("test port should be reserved");
+    let port = reservation.local_addr().expect("local address").port();
+    drop(reservation);
+    let started = std::time::Instant::now();
+
+    let output = corrobore()
+        .args([
+            "server",
+            "status",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            &port.to_string(),
+            "--auth-token",
+            "status-secret",
+            "--query-timeout-ms",
+            "100",
+        ])
+        .env_clear()
+        .output()
+        .expect("status command should execute");
+
+    assert_eq!(output.status.code(), Some(STATUS_UNAVAILABLE_EXIT_CODE));
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "status probe must remain bounded"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unavailable"));
+}
+
+fn spawn_operational_fixture(
+    listener: TcpListener,
+    version_payload: &'static str,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().expect("fixture should accept a probe");
+            let mut request = [0_u8; 2048];
+            let size = stream
+                .read(&mut request)
+                .expect("fixture should read a probe");
+            let request = String::from_utf8_lossy(&request[..size]);
+            let body = if request.starts_with("GET /health/ready ") {
+                r#"{"status":"ready","ready":true,"lifecycle_state":"ready"}"#
+            } else if request.starts_with("GET /version ") {
+                version_payload
+            } else {
+                panic!("unexpected operational probe: {request}");
+            };
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("fixture should write a response");
+        }
+    })
+}
+
+fn status_command(port: u16) -> Output {
+    corrobore()
+        .args([
+            "server",
+            "status",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            &port.to_string(),
+            "--auth-token",
+            "status-secret",
+            "--query-timeout-ms",
+            "500",
+        ])
+        .env_clear()
+        .output()
+        .expect("status command should execute")
+}
+
+#[test]
+fn status_reports_ready_when_operational_contract_is_compatible() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("fixture should bind");
+    let port = listener.local_addr().expect("fixture address").port();
+    let fixture = spawn_operational_fixture(
+        listener,
+        r#"{"service":"corrobore-http-server","version":"0.2.2","commit":"fixture","build_target":"test","storage_compatibility":{"supported_versions":["V1"],"supported_record_formats":["JsonLinesV1"],"active_storage_version":null,"active_record_format":null}}"#,
+    );
+
+    let output = status_command(port);
+    fixture.join().expect("fixture should finish");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("ready"));
+    assert!(stdout.contains("version=0.2.2"));
+}
+
+#[test]
+fn status_reports_incompatible_storage_with_a_stable_exit_code() {
+    const STATUS_INCOMPATIBLE_EXIT_CODE: i32 = 9;
+    let listener = TcpListener::bind("127.0.0.1:0").expect("fixture should bind");
+    let port = listener.local_addr().expect("fixture address").port();
+    let fixture = spawn_operational_fixture(
+        listener,
+        r#"{"service":"corrobore-http-server","version":"9.0.0","commit":"fixture","build_target":"test","storage_compatibility":{"supported_versions":["V9"],"supported_record_formats":["BinaryV9"],"active_storage_version":"V9","active_record_format":"BinaryV9"}}"#,
+    );
+
+    let output = status_command(port);
+    fixture.join().expect("fixture should finish");
+
+    assert_eq!(output.status.code(), Some(STATUS_INCOMPATIBLE_EXIT_CODE));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("incompatible"));
 }
 
 #[test]

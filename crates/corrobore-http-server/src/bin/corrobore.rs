@@ -24,6 +24,8 @@ const OWNERSHIP_CONFLICT_EXIT_CODE: u8 = 4;
 const STORAGE_INCOMPATIBLE_EXIT_CODE: u8 = 5;
 const STORAGE_RECOVERY_EXIT_CODE: u8 = 6;
 const FORCED_SHUTDOWN_EXIT_CODE: u8 = 7;
+const STATUS_UNAVAILABLE_EXIT_CODE: u8 = 8;
+const STATUS_INCOMPATIBLE_EXIT_CODE: u8 = 9;
 
 #[derive(Parser)]
 #[command(name = "corrobore", about = "Operate a Corrobore standalone server")]
@@ -52,6 +54,8 @@ enum ServerCommand {
     ValidateConfig(ValidateConfigArgs),
     /// Print reproducible build metadata.
     Version,
+    /// Probe the configured operational endpoints with a bounded timeout.
+    Status(ConfigArgs),
 }
 
 #[derive(Args)]
@@ -253,6 +257,26 @@ struct OperationalConfig {
     tls: FileTls,
 }
 
+#[derive(Deserialize)]
+struct StatusReadinessResponse {
+    ready: bool,
+    lifecycle_state: String,
+}
+
+#[derive(Deserialize)]
+struct StatusVersionResponse {
+    version: String,
+    storage_compatibility: StatusStorageCompatibility,
+}
+
+#[derive(Deserialize)]
+struct StatusStorageCompatibility {
+    supported_versions: Vec<String>,
+    supported_record_formats: Vec<String>,
+    active_storage_version: Option<String>,
+    active_record_format: Option<String>,
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -292,6 +316,146 @@ async fn main() -> ExitCode {
             );
             ExitCode::SUCCESS
         }
+        Command::Server(ServerArgs {
+            command: ServerCommand::Status(args),
+        }) => match load_config(&args) {
+            Ok(config) => status_probe(config).await,
+            Err(error) => config_failure(error),
+        },
+    }
+}
+
+/// Probe readiness and version compatibility, returning stable operational
+/// exit codes for automation.
+async fn status_probe(config: OperationalConfig) -> ExitCode {
+    let timeout = std::time::Duration::from_millis(config.server.request_timeout_ms);
+    match tokio::time::timeout(timeout, probe_operational_endpoints(&config)).await {
+        Ok(Ok(version)) => {
+            println!("server status=ready version={version}");
+            ExitCode::SUCCESS
+        }
+        Ok(Err(StatusProbeError::Incompatible(reason))) => {
+            eprintln!("server status=incompatible: {reason}");
+            ExitCode::from(STATUS_INCOMPATIBLE_EXIT_CODE)
+        }
+        Ok(Err(StatusProbeError::Unavailable(reason))) => {
+            eprintln!("server status=unavailable: {reason}");
+            ExitCode::from(STATUS_UNAVAILABLE_EXIT_CODE)
+        }
+        Err(_) => {
+            eprintln!(
+                "server status=unavailable: probe timed out after {} ms",
+                config.server.request_timeout_ms
+            );
+            ExitCode::from(STATUS_UNAVAILABLE_EXIT_CODE)
+        }
+    }
+}
+
+enum StatusProbeError {
+    Unavailable(String),
+    Incompatible(String),
+}
+
+async fn probe_operational_endpoints(
+    config: &OperationalConfig,
+) -> Result<String, StatusProbeError> {
+    let host = match config.server.host.as_str() {
+        "0.0.0.0" => "127.0.0.1".to_owned(),
+        "::" => "[::1]".to_owned(),
+        host if host.contains(':') && !host.starts_with('[') => format!("[{host}]"),
+        host => host.to_owned(),
+    };
+    let base_url = format!("http://{host}:{}", config.server.port);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(
+            config.server.request_timeout_ms,
+        ))
+        .build()
+        .map_err(|error| StatusProbeError::Unavailable(error.to_string()))?;
+
+    let readiness_response = client
+        .get(format!("{base_url}/health/ready"))
+        .send()
+        .await
+        .map_err(|error| StatusProbeError::Unavailable(error.to_string()))?;
+    if !readiness_response.status().is_success() {
+        return Err(StatusProbeError::Unavailable(format!(
+            "readiness endpoint returned HTTP {}",
+            readiness_response.status().as_u16()
+        )));
+    }
+    let readiness = readiness_response
+        .json::<StatusReadinessResponse>()
+        .await
+        .map_err(|error| {
+            StatusProbeError::Incompatible(format!(
+                "readiness endpoint returned an invalid contract: {error}"
+            ))
+        })?;
+    if !readiness.ready {
+        return Err(StatusProbeError::Unavailable(format!(
+            "server lifecycle is {}",
+            readiness.lifecycle_state
+        )));
+    }
+
+    let version_response = client
+        .get(format!("{base_url}/version"))
+        .send()
+        .await
+        .map_err(|error| StatusProbeError::Unavailable(error.to_string()))?;
+    if !version_response.status().is_success() {
+        return Err(StatusProbeError::Unavailable(format!(
+            "version endpoint returned HTTP {}",
+            version_response.status().as_u16()
+        )));
+    }
+    let version = version_response
+        .json::<StatusVersionResponse>()
+        .await
+        .map_err(|error| {
+            StatusProbeError::Incompatible(format!(
+                "version endpoint returned an invalid contract: {error}"
+            ))
+        })?;
+    validate_status_compatibility(&version.storage_compatibility)?;
+    Ok(version.version)
+}
+
+fn validate_status_compatibility(
+    compatibility: &StatusStorageCompatibility,
+) -> Result<(), StatusProbeError> {
+    let supports_version = compatibility
+        .supported_versions
+        .iter()
+        .any(|version| version == "V1");
+    let supports_record_format = compatibility
+        .supported_record_formats
+        .iter()
+        .any(|format| format == "JsonLinesV1");
+    let active_version_compatible = compatibility
+        .active_storage_version
+        .as_deref()
+        .is_none_or(|version| version == "V1");
+    let active_format_compatible = compatibility
+        .active_record_format
+        .as_deref()
+        .is_none_or(|format| format == "JsonLinesV1");
+    if supports_version
+        && supports_record_format
+        && active_version_compatible
+        && active_format_compatible
+    {
+        Ok(())
+    } else {
+        Err(StatusProbeError::Incompatible(format!(
+            "storage versions {:?}, record formats {:?}, active version {:?}, active format {:?}",
+            compatibility.supported_versions,
+            compatibility.supported_record_formats,
+            compatibility.active_storage_version,
+            compatibility.active_record_format,
+        )))
     }
 }
 

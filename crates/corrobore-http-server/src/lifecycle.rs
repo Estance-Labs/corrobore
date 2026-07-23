@@ -8,7 +8,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc,
-        atomic::{AtomicU8, AtomicUsize, Ordering},
+        atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -33,6 +33,8 @@ pub enum LifecycleState {
 pub struct ServerLifecycle {
     state: AtomicU8,
     active_requests: AtomicUsize,
+    shutdown_started: AtomicU64,
+    shutdown_failures: AtomicU64,
 }
 
 #[derive(Debug)]
@@ -72,6 +74,8 @@ impl ServerLifecycle {
         Self {
             state: AtomicU8::new(LifecycleState::Initializing as u8),
             active_requests: AtomicUsize::new(0),
+            shutdown_started: AtomicU64::new(0),
+            shutdown_failures: AtomicU64::new(0),
         }
     }
 
@@ -113,15 +117,32 @@ impl ServerLifecycle {
     }
 
     pub fn begin_draining(&self) {
-        let _ = self.state.compare_exchange(
-            LifecycleState::Ready as u8,
-            LifecycleState::Draining as u8,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        );
+        if self
+            .state
+            .compare_exchange(
+                LifecycleState::Ready as u8,
+                LifecycleState::Draining as u8,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+        {
+            self.shutdown_started.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    pub fn shutdown_started(&self) -> u64 {
+        self.shutdown_started.load(Ordering::Acquire)
+    }
+
+    pub fn shutdown_failures(&self) -> u64 {
+        self.shutdown_failures.load(Ordering::Acquire)
     }
 
     fn finish(&self, failed: bool) {
+        if failed {
+            self.shutdown_failures.fetch_add(1, Ordering::AcqRel);
+        }
         self.state.store(
             if failed {
                 LifecycleState::Failed as u8
@@ -130,6 +151,18 @@ impl ServerLifecycle {
             },
             Ordering::Release,
         );
+    }
+}
+
+impl LifecycleState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Initializing => "initializing",
+            Self::Ready => "ready",
+            Self::Draining => "draining",
+            Self::Stopped => "stopped",
+            Self::Failed => "failed",
+        }
     }
 }
 

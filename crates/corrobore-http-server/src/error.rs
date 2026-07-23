@@ -105,6 +105,8 @@ impl ApiError {
 #[derive(Serialize)]
 struct ErrorEnvelope {
     ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    correlation_id: Option<String>,
     error: ErrorBody,
 }
 
@@ -120,6 +122,7 @@ impl IntoResponse for ApiError {
             self.status,
             Json(ErrorEnvelope {
                 ok: false,
+                correlation_id: crate::correlation::current_correlation_id(),
                 error: ErrorBody {
                     code: self.code,
                     message: self.message,
