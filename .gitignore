@@ -9,6 +9,7 @@
 /web/test-results/
 /web/*.tsbuildinfo
 /web/public/runtime-config.local.js
+/.playwright-mcp/
 
 # Rust tooling
 **/*.rs.bk
