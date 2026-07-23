@@ -33,7 +33,7 @@ use axum::{
 };
 use corrobore_engine::CorroboreEngine;
 use graph_storage::{
-    FileBackedGraphStore, GraphId, GraphStoreOpenMode, GraphStoreOpenOptions,
+    FileBackedGraphStore, GraphId, GraphStorageError, GraphStoreOpenMode, GraphStoreOpenOptions,
     GraphStoreRecoveryReport, RecordFormat, StorageManifest, StorageTimestamp, StorageVersion,
     create_storage_root, open_existing_file_backed_graph_store,
 };
@@ -67,6 +67,7 @@ use crate::{
         stix_validate::validate_stix,
     },
     session_runtime::SessionRuntime,
+    storage_ownership::{DataDirectoryOwnership, DataDirectoryOwnershipError},
     web::attach_web_delivery,
 };
 
@@ -81,6 +82,8 @@ pub struct PersistentRuntimeStore {
     pub root_path: PathBuf,
     pub store: FileBackedGraphStore,
     pub recovery_report: GraphStoreRecoveryReport,
+    pub manifest: StorageManifest,
+    _ownership: Arc<DataDirectoryOwnership>,
 }
 
 #[derive(Debug, Error)]
@@ -89,6 +92,14 @@ pub enum AppStateInitError {
     MissingPersistentStorageDir,
     #[error("failed to initialize persistent storage at {path}: {reason}")]
     PersistentStorageInitFailed { path: String, reason: String },
+    #[error("persistent storage ownership conflict at {path}: {reason}")]
+    PersistentStorageOwnershipConflict { path: String, reason: String },
+    #[error("failed to initialize persistent storage ownership at {path}: {reason}")]
+    PersistentStorageOwnershipFailed { path: String, reason: String },
+    #[error("persistent storage is incompatible at {path}: {reason}")]
+    PersistentStorageIncompatible { path: String, reason: String },
+    #[error("persistent storage recovery failed at {path}: {reason}")]
+    PersistentStorageRecoveryFailed { path: String, reason: String },
     #[error("failed to initialize enterprise domain providers: {reason}")]
     DomainProviderInitFailed { reason: String },
 }
@@ -157,7 +168,7 @@ fn initialize_runtime_store(
                 .as_deref()
                 .ok_or(AppStateInitError::MissingPersistentStorageDir)?;
             let root_path = PathBuf::from(storage_dir);
-            initialize_persistent_runtime_store(root_path)
+            initialize_persistent_runtime_store(root_path, config.storage_strict_recovery)
                 .map(|store| RuntimeStoreProvider::Persistent(Box::new(store)))
         }
     }
@@ -165,7 +176,26 @@ fn initialize_runtime_store(
 
 fn initialize_persistent_runtime_store(
     root_path: PathBuf,
+    strict_recovery: bool,
 ) -> Result<PersistentRuntimeStore, AppStateInitError> {
+    // Ownership must be acquired before manifest creation, recovery, or any
+    // writable handle is exposed. The Arc retains it across AppState clones.
+    let ownership = Arc::new(
+        DataDirectoryOwnership::acquire(&root_path).map_err(|error| match error {
+            DataDirectoryOwnershipError::Conflict { .. } => {
+                AppStateInitError::PersistentStorageOwnershipConflict {
+                    path: root_path.display().to_string(),
+                    reason: error.to_string(),
+                }
+            }
+            DataDirectoryOwnershipError::Unavailable { .. } => {
+                AppStateInitError::PersistentStorageOwnershipFailed {
+                    path: root_path.display().to_string(),
+                    reason: error.to_string(),
+                }
+            }
+        })?,
+    );
     if !root_path.exists() {
         let manifest = runtime_manifest();
         create_storage_root(root_path.clone(), manifest).map_err(|error| {
@@ -177,23 +207,47 @@ fn initialize_persistent_runtime_store(
         initialize_required_record_logs(&root_path)?;
     }
 
-    let outcome = open_existing_file_backed_graph_store(
+    let mut outcome = open_existing_file_backed_graph_store(
         root_path.clone(),
         GraphStoreOpenOptions {
-            mode: GraphStoreOpenMode::LoadCatalogWhenAvailable,
+            mode: if strict_recovery {
+                GraphStoreOpenMode::RebuildCatalogFromAppendLogs
+            } else {
+                GraphStoreOpenMode::LoadCatalogWhenAvailable
+            },
             ..GraphStoreOpenOptions::default()
         },
     )
-    .map_err(|error| AppStateInitError::PersistentStorageInitFailed {
-        path: root_path.display().to_string(),
-        reason: error.to_string(),
-    })?;
+    .map_err(|error| classify_storage_open_error(&root_path, error))?;
+
+    if ownership.recovered_stale_owner() {
+        outcome.recovery_report.warnings.push(format!(
+            "recovered stale ownership metadata from {} for {}",
+            ownership.lock_path().display(),
+            ownership.root_path().display()
+        ));
+    }
 
     Ok(PersistentRuntimeStore {
         root_path,
         store: outcome.store,
         recovery_report: outcome.recovery_report,
+        manifest: outcome.manifest,
+        _ownership: ownership,
     })
+}
+
+fn classify_storage_open_error(root_path: &Path, error: GraphStorageError) -> AppStateInitError {
+    let path = root_path.display().to_string();
+    let reason = error.to_string();
+    match error {
+        GraphStorageError::UnsupportedStorageVersion { .. }
+        | GraphStorageError::UnsupportedRecordFormat { .. }
+        | GraphStorageError::InvalidManifest { .. } => {
+            AppStateInitError::PersistentStorageIncompatible { path, reason }
+        }
+        _ => AppStateInitError::PersistentStorageRecoveryFailed { path, reason },
+    }
 }
 
 fn initialize_required_record_logs(root_path: &Path) -> Result<(), AppStateInitError> {

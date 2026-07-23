@@ -25,7 +25,9 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use graph_storage::{DurableWalEntry, DurableWalEntryKind, GraphStoreRecoveryReport};
+use graph_storage::{
+    DurableWalEntry, DurableWalEntryKind, GraphStoreRecoveryReport, RecordFormat, StorageVersion,
+};
 use serde::Serialize;
 
 use crate::{
@@ -53,6 +55,8 @@ pub struct DurabilityRecoverySnapshot {
 #[derive(Clone, Debug, Serialize)]
 pub struct DurabilityObservabilitySnapshot {
     pub controls: DurabilityControlsSnapshot,
+    pub storage_version: Option<&'static str>,
+    pub record_format: Option<&'static str>,
     pub wal_bytes: u64,
     pub wal_lag_sequences: u64,
     pub checkpoint_sequence: Option<u64>,
@@ -70,6 +74,8 @@ pub fn collect_durability_snapshot(state: &AppState) -> DurabilityObservabilityS
     match &state.runtime_store {
         RuntimeStoreProvider::Ephemeral => DurabilityObservabilitySnapshot {
             controls,
+            storage_version: None,
+            record_format: None,
             wal_bytes: 0,
             wal_lag_sequences: 0,
             checkpoint_sequence: None,
@@ -95,6 +101,8 @@ pub fn collect_durability_snapshot(state: &AppState) -> DurabilityObservabilityS
 
             DurabilityObservabilitySnapshot {
                 controls,
+                storage_version: Some(storage_version_label(&runtime.manifest.storage_version)),
+                record_format: Some(record_format_label(&runtime.manifest.record_format)),
                 wal_bytes,
                 wal_lag_sequences,
                 checkpoint_sequence: latest_checkpoint.sequence,
@@ -106,6 +114,20 @@ pub fn collect_durability_snapshot(state: &AppState) -> DurabilityObservabilityS
                 ),
             }
         }
+    }
+}
+
+fn storage_version_label(version: &StorageVersion) -> &'static str {
+    match version {
+        StorageVersion::V1 => "V1",
+        StorageVersion::Unsupported(_) => "unsupported",
+    }
+}
+
+fn record_format_label(format: &RecordFormat) -> &'static str {
+    match format {
+        RecordFormat::JsonLinesV1 => "JsonLinesV1",
+        RecordFormat::Unsupported(_) => "unsupported",
     }
 }
 
