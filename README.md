@@ -12,12 +12,13 @@ and writes through embedded Rust and HTTP interfaces.
 | Interface | Best for | Entry point |
 | :--- | :--- | :--- |
 | Embedded Rust | Applications that want an in-process engine | `docs/user-guide/embedded-engine.md` |
+| Standalone server | Native service operation and layered configuration | `docs/user-guide/standalone-server.md` |
 | HTTP API | Agent tools, services, and remote integrations | `docs/user-guide/http-server.md` |
 | TAXII ingestion | Incremental STIX 2.1 collection polling through the public import boundary | `docs/user-guide/ingestion.md` |
 
 ## Current baseline
 
-- Workspace version: `0.2.0`.
+- Workspace version: `0.2.2`.
 - Public API contract: `docs/api/openapi.yaml`.
 - Runtime behavior documentation: `docs/user-guide/http-server.md`.
 - Release notes: `docs/release-notes/`.
@@ -49,7 +50,8 @@ Docker section in `docs/user-guide/http-server.md`.
 ## Quick start (native HTTP runtime)
 
 ```bash
-CORROBORE_HTTP_AUTH_TOKEN=change-me cargo run -p corrobore-http-server --release
+CORROBORE_HTTP_AUTH_TOKEN=change-me \
+  cargo run -p corrobore-http-server --release --bin corrobore -- server start
 ```
 
 Health checks:
@@ -97,6 +99,7 @@ Use `docs/` and code on `main` as the source of truth for shipped functionality.
 - Product docs landing: `docs/index.md`
 - Getting started: `docs/getting-started.md`
 - Embedded Rust usage: `docs/user-guide/embedded-engine.md`
+- Standalone server CLI: `docs/user-guide/standalone-server.md`
 - HTTP runtime and API behavior: `docs/user-guide/http-server.md`
 - TAXII connector: `docs/user-guide/ingestion.md`
 - Cypher subset: `docs/user-guide/cypher.md`

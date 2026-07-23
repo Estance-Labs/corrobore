@@ -1,6 +1,6 @@
 # Getting Started
 
-This guide targets the current `0.1.x` release.
+This guide targets the current `0.2.x` release.
 
 ## Startup mode overview
 
@@ -38,14 +38,14 @@ Download the archive for your platform from the [latest release](https://github.
 | macOS arm64       | `corrobore-macos-aarch64.tar.gz`        |
 | Windows x64       | `corrobore-windows-x86_64.zip`          |
 
-Extract the archive and run the `corrobore-http-server` binary directly.
+Extract the archive and run the unified `corrobore` binary directly.
 
 ## Run the HTTP server
 
 The only required setting is a non-empty Bearer token. The server binds to loopback (`127.0.0.1:8080`) by default.
 
 ```bash
-CORROBORE_HTTP_AUTH_TOKEN=change-me ./corrobore-http-server
+CORROBORE_HTTP_AUTH_TOKEN=change-me ./corrobore server start
 ```
 
 Check the public endpoints:
@@ -100,7 +100,9 @@ curl -X POST "http://127.0.0.1:8080/v1/sessions/${SESSION_ID}/stop" \
   -H 'Authorization: Bearer change-me'
 ```
 
-The server reads a root `.env` file automatically. See the [HTTP Server guide](user-guide/http-server.md) for all routes and settings.
+See the [Standalone Server CLI guide](user-guide/standalone-server.md) for TOML,
+environment, and command-line configuration. The [HTTP Server
+guide](user-guide/http-server.md) documents all routes and runtime settings.
 
 ## Use Corrobore in process
 

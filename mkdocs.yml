@@ -73,6 +73,7 @@ nav:
     - OpenCTI Harvester Agent: skills/corrobore/AGENT.md
   - Architecture: architecture.md
   - User Guide:
+    - Standalone Server CLI: user-guide/standalone-server.md
     - Cypher Support: user-guide/cypher.md
     - Intelligence Domains: user-guide/domains.md
     - Domain Provider Operations: user-guide/domain-provider-operations.md
