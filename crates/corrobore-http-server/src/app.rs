@@ -22,13 +22,17 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use axum::{
     Router,
+    body::Body,
     extract::DefaultBodyLimit,
+    http::Request,
     middleware,
+    middleware::Next,
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use corrobore_engine::CorroboreEngine;
@@ -49,8 +53,10 @@ use tracing::Level;
 use uuid::Uuid;
 
 use crate::{
+    ServerLifecycle,
     auth::require_bearer_auth,
     config::{ServerConfig, StorageMode},
+    error::ApiError,
     explorer_timeline::ExplorerTimelineStore,
     handlers::{
         cypher::{execute_cypher, execute_read_cypher, execute_write_cypher},
@@ -112,6 +118,7 @@ pub struct AppState {
     pub sessions: Arc<Mutex<SessionRuntime>>,
     pub timeline: Arc<Mutex<ExplorerTimelineStore>>,
     pub config: Arc<ServerConfig>,
+    pub lifecycle: Arc<ServerLifecycle>,
     pub(crate) domain_providers: Option<Arc<crate::enterprise::registry::DomainProviderRegistry>>,
     pub started_at: Instant,
 }
@@ -121,7 +128,8 @@ impl AppState {
         let runtime_store = initialize_runtime_store(&config)?;
         let domain_providers = initialize_domain_providers(&config)?;
         let timeline = ExplorerTimelineStore::new(&config.session_store_dir);
-        Ok(Self {
+        let lifecycle = Arc::new(ServerLifecycle::initializing());
+        let state = Self {
             engine: Arc::new(Mutex::new(CorroboreEngine::strict_default())),
             runtime_store,
             sessions: Arc::new(Mutex::new(SessionRuntime::new(
@@ -130,9 +138,12 @@ impl AppState {
             ))),
             timeline: Arc::new(Mutex::new(timeline)),
             config: Arc::new(config),
+            lifecycle: Arc::clone(&lifecycle),
             domain_providers,
             started_at: Instant::now(),
-        })
+        };
+        lifecycle.mark_ready();
+        Ok(state)
     }
 }
 
@@ -377,10 +388,44 @@ pub fn build_router(state: AppState) -> Router {
             get(admin_domain_provider_status),
         )
         .merge(protected)
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            lifecycle_request_gate,
+        ))
         .layer(http_trace)
         .with_state(state);
 
     attach_web_delivery(router, web_dir.as_deref())
+}
+
+async fn lifecycle_request_gate(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    if matches!(request.uri().path(), "/health" | "/metrics") {
+        return next.run(request).await;
+    }
+    let Ok(_activity) = state.lifecycle.try_begin_request() else {
+        return ApiError::service_unavailable(
+            "SERVICE_DRAINING",
+            "server is draining and is not accepting new work",
+        )
+        .into_response();
+    };
+    match tokio::time::timeout(
+        Duration::from_millis(state.config.request_timeout_ms),
+        next.run(request),
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(_) => ApiError::timeout(
+            "REQUEST_TIMEOUT",
+            "request exceeded the configured execution timeout",
+        )
+        .into_response(),
+    }
 }
 
 #[cfg(test)]

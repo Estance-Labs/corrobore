@@ -60,13 +60,14 @@ contract](standalone-server.md#persistent-directory-ownership-and-recovery).
 
 ## `GET /health`
 
-Returns service name, crate version, uptime, cumulative/recent idle-session expiration metrics, and durability diagnostics (mode controls, validated storage version and record format, WAL size/lag, checkpoint age, compaction backlog, recovery outcome). Compatibility fields are `null` in ephemeral mode.
+Returns service name, crate version, lifecycle state, uptime, cumulative/recent idle-session expiration metrics, and durability diagnostics (mode controls, validated storage version and record format, WAL size/lag, checkpoint age, compaction backlog, recovery outcome). Compatibility fields are `null` in ephemeral mode. Health and metrics remain observable during draining; new non-operational requests receive `SERVICE_DRAINING`.
 
 ```json
 {
   "status": "ok",
   "service": "corrobore-http-server",
   "version": "0.1.0",
+  "lifecycle_state": "ready",
   "storage_mode": "ephemeral",
   "uptime_ms": 1200,
   "session_ttl_metrics": {

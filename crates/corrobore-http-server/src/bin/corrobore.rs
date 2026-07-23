@@ -11,7 +11,8 @@ use std::{
 
 use clap::{Args, Parser, Subcommand};
 use corrobore_http_server::{
-    AppState, AppStateInitError, ServerConfig, build_router, logging::init_logging,
+    AppState, AppStateInitError, ServerConfig, ServerLifecycleError, build_router,
+    install_shutdown_signal, logging::init_logging, serve_with_lifecycle,
 };
 use serde::Deserialize;
 use tokio::net::TcpListener;
@@ -22,6 +23,7 @@ const STARTUP_EXIT_CODE: u8 = 3;
 const OWNERSHIP_CONFLICT_EXIT_CODE: u8 = 4;
 const STORAGE_INCOMPATIBLE_EXIT_CODE: u8 = 5;
 const STORAGE_RECOVERY_EXIT_CODE: u8 = 6;
+const FORCED_SHUTDOWN_EXIT_CODE: u8 = 7;
 
 #[derive(Parser)]
 #[command(name = "corrobore", about = "Operate a Corrobore standalone server")]
@@ -710,18 +712,24 @@ fn config_failure(error: String) -> ExitCode {
 
 fn startup_failure(error: &(dyn std::error::Error + 'static)) -> ExitCode {
     eprintln!("startup error: {error}");
-    let code = error
-        .downcast_ref::<AppStateInitError>()
-        .map_or(STARTUP_EXIT_CODE, |error| match error {
-            AppStateInitError::PersistentStorageOwnershipConflict { .. } => {
-                OWNERSHIP_CONFLICT_EXIT_CODE
-            }
-            AppStateInitError::PersistentStorageIncompatible { .. } => {
-                STORAGE_INCOMPATIBLE_EXIT_CODE
-            }
-            AppStateInitError::PersistentStorageRecoveryFailed { .. } => STORAGE_RECOVERY_EXIT_CODE,
-            _ => STARTUP_EXIT_CODE,
-        });
+    let code = if error.downcast_ref::<ServerLifecycleError>().is_some() {
+        FORCED_SHUTDOWN_EXIT_CODE
+    } else {
+        error
+            .downcast_ref::<AppStateInitError>()
+            .map_or(STARTUP_EXIT_CODE, |error| match error {
+                AppStateInitError::PersistentStorageOwnershipConflict { .. } => {
+                    OWNERSHIP_CONFLICT_EXIT_CODE
+                }
+                AppStateInitError::PersistentStorageIncompatible { .. } => {
+                    STORAGE_INCOMPATIBLE_EXIT_CODE
+                }
+                AppStateInitError::PersistentStorageRecoveryFailed { .. } => {
+                    STORAGE_RECOVERY_EXIT_CODE
+                }
+                _ => STARTUP_EXIT_CODE,
+            })
+    };
     ExitCode::from(code)
 }
 
@@ -812,6 +820,7 @@ async fn start_server(config: OperationalConfig) -> Result<(), Box<dyn std::erro
     let _logging_guard = logging_runtime.guard;
     let addr: SocketAddr = format!("{}:{}", server.host, server.port).parse()?;
     let state = AppState::new(server)?;
+    let shutdown_signal = install_shutdown_signal()?;
     let listener = TcpListener::bind(addr).await?;
     info!(
         %addr,
@@ -819,10 +828,12 @@ async fn start_server(config: OperationalConfig) -> Result<(), Box<dyn std::erro
         maintenance_interval_ms = config.maintenance.interval_ms,
         "corrobore server listening"
     );
-    axum::serve(listener, build_router(state))
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
-        .await?;
+    serve_with_lifecycle(
+        listener,
+        build_router(state.clone()),
+        state,
+        shutdown_signal,
+    )
+    .await?;
     Ok(())
 }

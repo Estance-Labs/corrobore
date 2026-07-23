@@ -158,11 +158,14 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [status, service, version, uptime_ms, session_ttl_metrics, durability]
+                required: [status, service, version, lifecycle_state, uptime_ms, session_ttl_metrics, durability]
                 properties:
                   status: {type: string, const: ok}
                   service: {type: string, const: corrobore-http-server}
                   version: {type: string}
+                  lifecycle_state:
+                    type: string
+                    enum: [initializing, ready, draining, stopped, failed]
                   storage_mode:
                     type: string
                     enum: [ephemeral, persistent]
