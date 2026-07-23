@@ -18,16 +18,15 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
-use std::{collections::HashMap, time::Duration};
+use std::time::Duration;
 
 use axum::{
     Json,
     extract::{Multipart, State},
 };
-use graph_core::{SessionId, WorkspaceId};
+use corrobore_engine::{CypherResponseStatus, EngineError, EngineRequest, EngineRequestMode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use shared_runtime::{CypherBudgetRef, CypherParameters, CypherRequest, CypherResponseStatus};
 
 use crate::{app::AppState, error::ApiError};
 
@@ -153,48 +152,31 @@ pub(crate) async fn import_bundle_with_context(
 ) -> Result<ImportStixResult, ApiError> {
     let object_queries = build_queries_from_bundle(&bundle)?;
 
-    let workspace_id =
-        WorkspaceId::new(workspace_id.unwrap_or_else(|| "workspace--http-default".to_owned()))
-            .map_err(|error| ApiError::bad_request("INVALID_WORKSPACE_ID", error.to_string()))?;
-
-    let session_id =
-        SessionId::new(session_id.unwrap_or_else(|| "session--http-import-stix".to_owned()))
-            .map_err(|error| ApiError::bad_request("INVALID_SESSION_ID", error.to_string()))?;
-
-    let budget_ref =
-        CypherBudgetRef::new(budget_ref.unwrap_or_else(|| "budget--http-import-stix".to_owned()))
-            .map_err(|error| ApiError::bad_request("INVALID_BUDGET_REF", error.to_string()))?;
+    let workspace_id = workspace_id.unwrap_or_else(|| "workspace--http-default".to_owned());
+    let session_id = session_id.unwrap_or_else(|| "session--http-import-stix".to_owned());
+    let budget_ref = budget_ref.unwrap_or_else(|| "budget--http-import-stix".to_owned());
 
     let timeout = Duration::from_millis(state.config.request_timeout_ms);
-    let gateway = state.gateway.clone();
+    let engine = state.engine.clone();
 
     let result = tokio::time::timeout(
         timeout,
         tokio::task::spawn_blocking(move || {
-            let mut locked = gateway.lock().map_err(|_| {
-                ApiError::internal("STATE_LOCK_FAILED", "cypher gateway lock poisoned")
-            })?;
+            let mut locked = engine
+                .lock()
+                .map_err(|_| ApiError::internal("STATE_LOCK_FAILED", "engine lock poisoned"))?;
 
             let mut applied_mutations = 0usize;
             let mut rejected_mutations = 0usize;
             let mut errors = Vec::new();
 
             for query in &object_queries {
-                let request = CypherRequest::build_mutation_request(
-                    query.clone(),
-                    CypherParameters::new(HashMap::new()),
-                    workspace_id.clone(),
-                    session_id.clone(),
-                    budget_ref.clone(),
-                )
-                .map_err(|error| ApiError::bad_request("INVALID_REQUEST", error.to_string()))?;
+                let request = EngineRequest::new(query, EngineRequestMode::Mutation)
+                    .with_workspace_id(workspace_id.clone())
+                    .with_session_id(session_id.clone())
+                    .with_budget_ref(budget_ref.clone());
 
-                let response = locked.execute(&request).map_err(|error| {
-                    ApiError::bad_request(
-                        "RUNTIME_ERROR",
-                        format!("stix import mutation failed: {error}"),
-                    )
-                })?;
+                let response = locked.execute_request(request).map_err(map_engine_error)?;
 
                 match response.status {
                     CypherResponseStatus::Success => {
@@ -224,6 +206,24 @@ pub(crate) async fn import_bundle_with_context(
     .map_err(|error| ApiError::internal("TASK_JOIN_FAILED", error.to_string()))??;
 
     Ok(result)
+}
+
+fn map_engine_error(error: EngineError) -> ApiError {
+    match error {
+        EngineError::InvalidConfiguration { field, reason } => {
+            let code = match field {
+                "workspace_id" => "INVALID_WORKSPACE_ID",
+                "session_id" => "INVALID_SESSION_ID",
+                "budget_ref" => "INVALID_BUDGET_REF",
+                _ => "INVALID_REQUEST",
+            };
+            ApiError::bad_request(code, reason)
+        }
+        other => ApiError::bad_request(
+            "RUNTIME_ERROR",
+            format!("stix import mutation failed: {other}"),
+        ),
+    }
 }
 
 fn has_supported_stix_extension(filename: &str) -> bool {

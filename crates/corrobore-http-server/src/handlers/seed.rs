@@ -21,10 +21,11 @@
 use std::time::Duration;
 
 use axum::{Json, extract::State};
+use corrobore_engine::EngineError;
 use domain_provider_abi::DomainName;
 use graph_core::{
-    GraphError, GraphSemanticSeedResolver, SemanticDomainProfile, SemanticSeedQueryRequest,
-    SemanticSeedResolutionErrorCode, SemanticSeedResolver, SemanticSeedRetrievalMode, WorkspaceId,
+    GraphError, SemanticDomainProfile, SemanticSeedQueryRequest, SemanticSeedResolutionErrorCode,
+    SemanticSeedRetrievalMode, WorkspaceId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -111,17 +112,18 @@ pub async fn seed_search(
     .map_err(|error| ApiError::bad_request("INVALID_SEED_REQUEST", error.to_string()))?;
 
     let timeout = Duration::from_millis(state.config.request_timeout_ms);
-    let gateway = state.gateway.clone();
+    let engine = state.engine.clone();
 
     let candidates = tokio::time::timeout(
         timeout,
         tokio::task::spawn_blocking(move || {
-            let locked = gateway.lock().map_err(|_| {
-                ApiError::internal("STATE_LOCK_FAILED", "cypher gateway lock poisoned")
-            })?;
+            let locked = engine
+                .lock()
+                .map_err(|_| ApiError::internal("STATE_LOCK_FAILED", "engine lock poisoned"))?;
 
-            let resolver = GraphSemanticSeedResolver::new(locked.graph());
-            let response = resolver.resolve(&request).map_err(map_seed_error)?;
+            let response = locked
+                .seed_search_with_request(&request)
+                .map_err(map_seed_engine_error)?;
 
             let views = response
                 .seed_candidates()
@@ -148,6 +150,13 @@ pub async fn seed_search(
         ok: true,
         result: SeedSearchResult { candidates },
     }))
+}
+
+fn map_seed_engine_error(error: EngineError) -> ApiError {
+    match error {
+        EngineError::Graph(error) => map_seed_error(error),
+        other => ApiError::internal("SEED_RESOLUTION_FAILED", other.to_string()),
+    }
 }
 
 fn enforce_profile_availability(

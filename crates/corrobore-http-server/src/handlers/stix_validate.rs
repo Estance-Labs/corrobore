@@ -22,13 +22,10 @@ use std::time::Duration;
 
 use axum::{Json, extract::State};
 use chrono::{SecondsFormat, Utc};
+use corrobore_engine::{EngineError, ExportMode, ExportProfile, StixExportOptions};
 #[cfg(feature = "enterprise-cti")]
 use domain_provider_abi::{
     DomainName, InvokeRequest, IssueSeverity, ProviderResponseStatus, SCHEMA_V1,
-};
-use export_stix::export_stix_subset_bundle;
-use graph_core::{
-    ExportMetadata, ExportMode, ExportProfile, TransactionId, build_deterministic_export_plan,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -140,7 +137,7 @@ pub async fn validate_stix(
     }
 
     let timeout = Duration::from_millis(state.config.request_timeout_ms);
-    let gateway = state.gateway.clone();
+    let engine = state.engine.clone();
     let domain_providers = state.domain_providers.clone();
 
     let workspace_id = payload.workspace_id.clone();
@@ -155,10 +152,6 @@ pub async fn validate_stix(
     let (issues, playbooks, corrections) = tokio::time::timeout(
         timeout,
         tokio::task::spawn_blocking(move || {
-            let gateway = gateway.lock().map_err(|_| {
-                ApiError::internal("STATE_LOCK_FAILED", "cypher gateway lock poisoned")
-            })?;
-
             if source_mode_clone == "bundle" {
                 // --- source=bundle: lightweight structural + field validation ---
                 let bundle = bundle_payload.ok_or_else(|| {
@@ -171,8 +164,11 @@ pub async fn validate_stix(
                 Ok::<_, ApiError>((issues, playbooks, Some(corrected_objects)))
             } else {
                 // --- source=graph: native domain validation ---
+                let engine = engine
+                    .lock()
+                    .map_err(|_| ApiError::internal("STATE_LOCK_FAILED", "engine lock poisoned"))?;
                 let (issues, playbooks) = validate_graph_nodes(
-                    gateway.graph(),
+                    engine.graph(),
                     snapshot_id.as_deref(),
                     domain_providers.as_deref(),
                 )?;
@@ -734,31 +730,26 @@ pub async fn build_bundle_from_graph(
     snapshot_id: Option<String>,
 ) -> Result<Value, ApiError> {
     let timeout = Duration::from_millis(state.config.request_timeout_ms);
-    let gateway = state.gateway.clone();
+    let engine = state.engine.clone();
 
     tokio::time::timeout(
         timeout,
         tokio::task::spawn_blocking(move || {
-            let gateway = gateway.lock().map_err(|_| {
-                ApiError::internal("STATE_LOCK_FAILED", "cypher gateway lock poisoned")
-            })?;
+            let engine = engine
+                .lock()
+                .map_err(|_| ApiError::internal("STATE_LOCK_FAILED", "engine lock poisoned"))?;
 
-            let metadata = ExportMetadata::new(
-                snapshot_id.unwrap_or_else(|| "snapshot--current".to_owned()),
-                TransactionId::new("transaction--stix-validate-graph".to_owned()).map_err(
-                    |error| ApiError::bad_request("INVALID_TRANSACTION_ID", error.to_string()),
-                )?,
-                "corrobore-http-server-validate-v0".to_owned(),
-                ExportProfile::StixMvp,
-                ExportMode::Strict,
-                None,
-            )
-            .map_err(|error| ApiError::bad_request("INVALID_EXPORT_METADATA", error.to_string()))?;
+            let options = StixExportOptions {
+                snapshot_id: snapshot_id.unwrap_or_else(|| "snapshot--current".to_owned()),
+                transaction_id: "transaction--stix-validate-graph".to_owned(),
+                exporter_version: "corrobore-http-server-validate-v0".to_owned(),
+                profile: ExportProfile::StixMvp,
+                mode: ExportMode::Strict,
+            };
 
-            let plan = build_deterministic_export_plan(gateway.graph(), metadata, &[])
-                .map_err(|error| ApiError::bad_request("EXPORT_PLAN_FAILED", error.to_string()))?;
-
-            let bundle = export_stix_subset_bundle(gateway.graph(), &plan);
+            let bundle = engine
+                .export_stix_bundle(&options)
+                .map_err(map_engine_export_error)?;
             serde_json::to_value(bundle)
                 .map_err(|error| ApiError::internal("SERIALIZATION_FAILED", error.to_string()))
         }),
@@ -766,6 +757,20 @@ pub async fn build_bundle_from_graph(
     .await
     .map_err(|_| ApiError::timeout("REQUEST_TIMEOUT", "graph to stix conversion timeout"))?
     .map_err(|error| ApiError::internal("TASK_JOIN_FAILED", error.to_string()))?
+}
+
+fn map_engine_export_error(error: EngineError) -> ApiError {
+    match error {
+        EngineError::InvalidConfiguration {
+            field: "transaction_id",
+            reason,
+        } => ApiError::bad_request("INVALID_TRANSACTION_ID", reason),
+        EngineError::InvalidConfiguration { reason, .. } => {
+            ApiError::bad_request("INVALID_EXPORT_METADATA", reason)
+        }
+        EngineError::Export(reason) => ApiError::bad_request("EXPORT_PLAN_FAILED", reason),
+        other => ApiError::internal("EXPORT_FAILED", other.to_string()),
+    }
 }
 
 #[cfg(test)]

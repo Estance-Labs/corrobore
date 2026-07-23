@@ -24,10 +24,7 @@ use axum::{
     Json,
     extract::{Query, State},
 };
-use export_stix::export_stix_subset_bundle;
-use graph_core::{
-    ExportMetadata, ExportMode, ExportProfile, TransactionId, build_deterministic_export_plan,
-};
+use corrobore_engine::{EngineError, ExportMode, ExportProfile, StixExportOptions};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -47,27 +44,24 @@ pub async fn export_stix(
     Query(query): Query<ExportQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let timeout = Duration::from_millis(state.config.request_timeout_ms);
-    let gateway = state.gateway.clone();
+    let engine = state.engine.clone();
 
     let bundle = tokio::time::timeout(
         timeout,
         tokio::task::spawn_blocking(move || {
-            let gateway = gateway.lock().map_err(|_| {
-                ApiError::internal("STATE_LOCK_FAILED", "cypher gateway lock poisoned")
-            })?;
+            let engine = engine
+                .lock()
+                .map_err(|_| ApiError::internal("STATE_LOCK_FAILED", "engine lock poisoned"))?;
 
             let snapshot_id = query
                 .snapshot_id
                 .clone()
                 .unwrap_or_else(|| "snapshot--current".to_owned());
 
-            let transaction_id = TransactionId::new(
-                query
-                    .transaction_id
-                    .clone()
-                    .unwrap_or_else(|| "transaction--http-export".to_owned()),
-            )
-            .map_err(|error| ApiError::bad_request("INVALID_TRANSACTION_ID", error.to_string()))?;
+            let transaction_id = query
+                .transaction_id
+                .clone()
+                .unwrap_or_else(|| "transaction--http-export".to_owned());
 
             let exporter_version = query
                 .exporter_version
@@ -77,20 +71,17 @@ pub async fn export_stix(
             let mode = parse_mode(query.mode.as_deref())?;
             let profile = parse_profile(query.profile.as_deref())?;
 
-            let metadata = ExportMetadata::new(
+            let options = StixExportOptions {
                 snapshot_id,
                 transaction_id,
                 exporter_version,
                 profile,
                 mode,
-                None,
-            )
-            .map_err(|error| ApiError::bad_request("INVALID_EXPORT_METADATA", error.to_string()))?;
+            };
 
-            let plan = build_deterministic_export_plan(gateway.graph(), metadata, &[])
-                .map_err(|error| ApiError::bad_request("EXPORT_PLAN_FAILED", error.to_string()))?;
-
-            Ok::<_, ApiError>(export_stix_subset_bundle(gateway.graph(), &plan))
+            engine
+                .export_stix_bundle(&options)
+                .map_err(map_engine_export_error)
         }),
     )
     .await
@@ -101,6 +92,20 @@ pub async fn export_stix(
         .map_err(|error| ApiError::internal("SERIALIZATION_FAILED", error.to_string()))?;
 
     Ok(Json(json))
+}
+
+fn map_engine_export_error(error: EngineError) -> ApiError {
+    match error {
+        EngineError::InvalidConfiguration {
+            field: "transaction_id",
+            reason,
+        } => ApiError::bad_request("INVALID_TRANSACTION_ID", reason),
+        EngineError::InvalidConfiguration { reason, .. } => {
+            ApiError::bad_request("INVALID_EXPORT_METADATA", reason)
+        }
+        EngineError::Export(reason) => ApiError::bad_request("EXPORT_PLAN_FAILED", reason),
+        other => ApiError::internal("EXPORT_FAILED", other.to_string()),
+    }
 }
 
 fn parse_mode(value: Option<&str>) -> Result<ExportMode, ApiError> {

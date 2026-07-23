@@ -31,12 +31,12 @@ use axum::{
     middleware,
     routing::{get, post},
 };
+use corrobore_engine::CorroboreEngine;
 use graph_storage::{
     FileBackedGraphStore, GraphId, GraphStoreOpenMode, GraphStoreOpenOptions,
     GraphStoreRecoveryReport, RecordFormat, StorageManifest, StorageTimestamp, StorageVersion,
     create_storage_root, open_existing_file_backed_graph_store,
 };
-use shared_runtime::CypherGateway;
 use thiserror::Error;
 use tower_governor::{
     GovernorLayer, governor::GovernorConfigBuilder, key_extractor::GlobalKeyExtractor,
@@ -95,7 +95,8 @@ pub enum AppStateInitError {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub gateway: Arc<Mutex<CypherGateway>>,
+    /// Public engine shared by embedded and protocol entry points.
+    pub engine: Arc<Mutex<CorroboreEngine>>,
     pub runtime_store: RuntimeStoreProvider,
     pub sessions: Arc<Mutex<SessionRuntime>>,
     pub timeline: Arc<Mutex<ExplorerTimelineStore>>,
@@ -110,7 +111,7 @@ impl AppState {
         let domain_providers = initialize_domain_providers(&config)?;
         let timeline = ExplorerTimelineStore::new(&config.session_store_dir);
         Ok(Self {
-            gateway: Arc::new(Mutex::new(CypherGateway::strict_default())),
+            engine: Arc::new(Mutex::new(CorroboreEngine::strict_default())),
             runtime_store,
             sessions: Arc::new(Mutex::new(SessionRuntime::new(
                 config.session_store_dir.clone(),

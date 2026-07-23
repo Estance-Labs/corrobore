@@ -21,8 +21,8 @@
 use std::collections::HashMap;
 
 use corrobore_engine::{
-    CorroboreEngine, CypherResponseData, CypherResponseStatus, EngineError, ExportMode,
-    StixExportOptions,
+    CorroboreEngine, CypherResponseData, CypherResponseStatus, EngineError, EngineRequest,
+    EngineRequestMode, ExportMode, StixExportOptions,
 };
 
 #[test]
@@ -198,6 +198,29 @@ fn engine_contract_accepts_string_parameters() {
         .expect("parameterized read should execute");
 
     assert_eq!(response.status, CypherResponseStatus::Success);
+}
+
+#[test]
+fn engine_contract_contextual_request_uses_the_public_execution_boundary() {
+    let mut engine = CorroboreEngine::strict_default();
+    let request = EngineRequest::new(
+        "CREATE (n:Indicator {name: 'contextual-boundary'})",
+        EngineRequestMode::Auto,
+    )
+    .with_workspace_id("workspace--contextual-boundary")
+    .with_session_id("session--contextual-boundary")
+    .with_budget_ref("budget--contextual-boundary");
+
+    let response = engine
+        .execute_request(request)
+        .expect("contextual request should execute through the public engine");
+
+    assert_eq!(response.status, CypherResponseStatus::Success);
+    let nodes = engine
+        .graph()
+        .list_nodes()
+        .expect("contextual mutation should update the engine graph");
+    assert_eq!(nodes.len(), 1);
 }
 
 #[test]
