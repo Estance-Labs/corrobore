@@ -29,7 +29,7 @@ in [docs/examples/domain-providers.json](../examples/domain-providers.json).
 
 ## Provider retrieval automation
 
-Use [scripts/fetch-ee-domain-binaries.mjs](../../scripts/fetch-ee-domain-binaries.mjs)
+Use [scripts/fetch-ee-domain-binaries.mjs](https://raw.githubusercontent.com/Noetance-Labs/corrobore/main/scripts/fetch-ee-domain-binaries.mjs)
 to assemble runtime-ready provider libraries and manifest entries from EE release
 archives.
 
