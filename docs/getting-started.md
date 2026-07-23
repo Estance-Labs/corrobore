@@ -51,7 +51,9 @@ CORROBORE_HTTP_AUTH_TOKEN=change-me ./corrobore server start
 Check the public endpoints:
 
 ```bash
-curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8080/health/live
+curl http://127.0.0.1:8080/health/ready
+curl http://127.0.0.1:8080/version
 curl http://127.0.0.1:8080/metrics
 ```
 

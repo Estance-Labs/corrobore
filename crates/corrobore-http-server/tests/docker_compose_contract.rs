@@ -37,7 +37,7 @@ fn compose_stack_wires_runtime_auth_health_and_persistence() {
     for expected in [
         "CORROBORE_HTTP_AUTH_TOKEN: ${CORROBORE_HTTP_AUTH_TOKEN:?",
         "healthcheck:",
-        "http://127.0.0.1:8080/health",
+        "http://127.0.0.1:8080/health/ready",
         "corrobore-data:/data",
     ] {
         assert!(

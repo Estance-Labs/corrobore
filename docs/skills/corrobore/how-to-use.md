@@ -23,7 +23,9 @@ Corrobore stores entities, relationships, evidence, confidence, time, and audit 
 
 ## HTTP mapping
 
-- `GET /health`: liveness.
+- `GET /health/live`: liveness only.
+- `GET /health/ready`: engine, storage-recovery, and lifecycle readiness.
+- `GET /version`: build and storage-format compatibility.
 - `GET /metrics`: Prometheus metrics.
 - `POST /v1/seed/search`: ranked seed candidates with explanations.
 - `POST /v1/cypher/read`: read-only Cypher.

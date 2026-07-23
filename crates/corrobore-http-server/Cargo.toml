@@ -41,7 +41,7 @@ graph-storage = { path = "../graph-storage" }
 libloading = "0.8"
 serde = { workspace = true }
 serde_json = { workspace = true }
-reqwest = { workspace = true, optional = true }
+reqwest = { workspace = true }
 sha2 = "0.10"
 shared-runtime = { path = "../shared-runtime" }
 subtle = { workspace = true }

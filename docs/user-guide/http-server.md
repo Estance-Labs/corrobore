@@ -4,7 +4,8 @@
 
 ## Authentication and limits
 
-`GET /health` and `GET /metrics` are public. Every `/v1/*` route requires:
+`GET /health/live`, `GET /health/ready`, `GET /version`, legacy `GET /health`,
+and `GET /metrics` are public. Every `/v1/*` route requires:
 
 ```http
 Authorization: Bearer <CORROBORE_HTTP_AUTH_TOKEN>
@@ -12,10 +13,15 @@ Authorization: Bearer <CORROBORE_HTTP_AUTH_TOKEN>
 
 Bearer values are compared in constant time. Protected routes share a global token-bucket rate limiter. Standard JSON routes and STIX import routes have separate body limits. Request tracing excludes headers so the token is not written to logs.
 
+Every response includes `X-Request-Id` and `X-Correlation-Id`. A client may
+provide a log-safe `X-Request-Id` of at most 128 characters; otherwise the
+server generates a UUID. Structured request logs and JSON error envelopes carry
+that same identifier.
+
 Success responses generally use `{ "ok": true, "result": ... }`. Errors use:
 
 ```json
-{ "ok": false, "error": { "code": "INVALID_REQUEST", "message": "..." } }
+{ "ok": false, "correlation_id": "5bf2...", "error": { "code": "INVALID_REQUEST", "message": "..." } }
 ```
 
 Application errors use the JSON envelope above. Transport middleware can reject a request before a handler runs: missing/invalid auth returns 401, rate limiting returns 429, oversized bodies return 413, and handler timeouts return 504 with code `REQUEST_TIMEOUT`.
@@ -58,9 +64,44 @@ time. Manifest incompatibility and unsafe recovery state prevent the listener
 from becoming ready; see the [standalone server ownership and recovery
 contract](standalone-server.md#persistent-directory-ownership-and-recovery).
 
-## `GET /health`
+## `GET /health/live`
+
+Returns `200` whenever the HTTP event loop can answer. It deliberately does not
+claim that storage or application dependencies are ready.
+
+## `GET /health/ready`
+
+Returns `200` with `ready: true` only after engine initialization and storage
+recovery complete and while the lifecycle accepts requests. It returns `503`
+before initialization and during draining, stopped, or failed states.
+
+```json
+{
+  "status": "ready",
+  "ready": true,
+  "service": "corrobore-http-server",
+  "lifecycle_state": "ready",
+  "checks": {
+    "engine_initialized": true,
+    "storage_recovered": true,
+    "accepting_requests": true
+  }
+}
+```
+
+## `GET /version`
+
+Returns the crate version, source revision, build target, supported storage
+versions and record formats, and the active persistent format when applicable.
+The response is deterministic for a build and never includes configuration or
+secrets.
+
+## `GET /health` (deprecated)
 
 Returns service name, crate version, lifecycle state, uptime, cumulative/recent idle-session expiration metrics, and durability diagnostics (mode controls, validated storage version and record format, WAL size/lag, checkpoint age, compaction backlog, recovery outcome). Compatibility fields are `null` in ephemeral mode. Health and metrics remain observable during draining; new non-operational requests receive `SERVICE_DRAINING`.
+
+This compatibility endpoint includes `Deprecation: true` and a successor link
+to `/health/ready`.
 
 ```json
 {
@@ -102,7 +143,16 @@ Returns service name, crate version, lifecycle state, uptime, cumulative/recent 
 
 ## `GET /metrics`
 
-Returns Prometheus text exposition (`0.0.4`) for `corrobore_build_info`, `corrobore_uptime_seconds`, `corrobore_sessions_expired_total`, `corrobore_sessions_expired_last_5m`, `corrobore_storage_mode`, `corrobore_storage_wal_bytes`, `corrobore_storage_wal_lag_sequences`, `corrobore_storage_checkpoint_age_seconds`, `corrobore_storage_compaction_backlog_bytes`, `corrobore_storage_recovery_warning_count`, `corrobore_domain_providers_configured`, and `corrobore_domain_providers_ready`.
+Returns Prometheus text exposition (`0.0.4`) for build, uptime, sessions,
+storage, providers, lifecycle, readiness, active requests, and shutdown
+counters.
+
+## Bounded CLI status probe
+
+`corrobore server status` loads the same host, port, and timeout configuration
+as `server start`, then probes `/health/ready` and `/version`. Exit code `0`
+means ready and compatible, `8` means unavailable or not ready, and `9` means
+the operational or storage-compatibility contract is incompatible.
 
 ## `POST /v1/cypher/read`
 

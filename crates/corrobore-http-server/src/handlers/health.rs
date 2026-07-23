@@ -18,7 +18,12 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
-use axum::{Json, extract::State};
+use axum::{
+    Json,
+    extract::State,
+    http::{HeaderValue, header},
+    response::{IntoResponse, Response},
+};
 use serde::Serialize;
 
 use crate::app::AppState;
@@ -49,7 +54,7 @@ pub struct HealthResponse {
     durability: DurabilityObservabilitySnapshot,
 }
 
-pub async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
+pub async fn health(State(state): State<AppState>) -> Response {
     let session_ttl_metrics = state
         .sessions
         .lock()
@@ -64,17 +69,11 @@ pub async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
             expired_last_5m_sessions: 0,
         });
 
-    Json(HealthResponse {
+    let mut response = Json(HealthResponse {
         status: "ok",
         service: "corrobore-http-server",
         version: env!("CARGO_PKG_VERSION"),
-        lifecycle_state: match state.lifecycle.state() {
-            crate::LifecycleState::Initializing => "initializing",
-            crate::LifecycleState::Ready => "ready",
-            crate::LifecycleState::Draining => "draining",
-            crate::LifecycleState::Stopped => "stopped",
-            crate::LifecycleState::Failed => "failed",
-        },
+        lifecycle_state: state.lifecycle.state().as_str(),
         storage_mode: state.config.storage_mode.as_str(),
         uptime_ms: state.started_at.elapsed().as_millis(),
         session_ttl_metrics,
@@ -91,4 +90,13 @@ pub async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
             }),
         durability: collect_durability_snapshot(&state),
     })
+    .into_response();
+    response
+        .headers_mut()
+        .insert("deprecation", HeaderValue::from_static("true"));
+    response.headers_mut().insert(
+        header::LINK,
+        HeaderValue::from_static("</health/ready>; rel=\"successor-version\""),
+    );
+    response
 }

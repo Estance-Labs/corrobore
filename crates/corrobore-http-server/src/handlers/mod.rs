@@ -27,6 +27,7 @@ pub mod health;
 pub mod import;
 pub mod license;
 pub mod metrics;
+pub mod operational;
 pub mod seed;
 pub mod session;
 pub mod stix_validate;

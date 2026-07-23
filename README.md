@@ -27,7 +27,8 @@ and writes through embedded Rust and HTTP interfaces.
 
 - Authenticated HTTP runtime with explicit read and write Cypher boundaries.
 - Durable session lifecycle with status transitions and structured JSONL logs.
-- Operational observability through `/health`, `/metrics`, and session log export.
+- Operational observability through distinct liveness/readiness, `/version`,
+  `/metrics`, correlated requests, and session log export.
 - Deterministic STIX import, validation, and export surfaces.
 - Incremental TAXII 2.1 ingestion with persisted cursors.
 - Bounded seed-search and working-set retrieval primitives for agent loops.
@@ -57,8 +58,11 @@ CORROBORE_HTTP_AUTH_TOKEN=change-me \
 Health checks:
 
 ```bash
-curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8080/health/ready
+curl http://127.0.0.1:8080/version
 curl http://127.0.0.1:8080/metrics
+cargo run -p corrobore-http-server --bin corrobore -- server status \
+  --auth-token change-me
 ```
 
 Protected read query:

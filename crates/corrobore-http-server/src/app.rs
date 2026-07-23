@@ -47,7 +47,7 @@ use tower_governor::{
 };
 use tower_http::{
     LatencyUnit,
-    trace::{DefaultMakeSpan, DefaultOnFailure, DefaultOnRequest, DefaultOnResponse, TraceLayer},
+    trace::{DefaultOnFailure, DefaultOnRequest, DefaultOnResponse, TraceLayer},
 };
 use tracing::Level;
 use uuid::Uuid;
@@ -56,6 +56,7 @@ use crate::{
     ServerLifecycle,
     auth::require_bearer_auth,
     config::{ServerConfig, StorageMode},
+    correlation::{RequestCorrelationId, correlate_request},
     error::ApiError,
     explorer_timeline::ExplorerTimelineStore,
     handlers::{
@@ -68,6 +69,7 @@ use crate::{
         import::{import_stix_bundle, import_stix_bundle_file},
         license::{admin_license_status, license_status},
         metrics::metrics,
+        operational::{liveness, readiness, version},
         seed::seed_search,
         session::{session_health, session_logs, start_session, stop_session},
         stix_validate::validate_stix,
@@ -311,11 +313,20 @@ fn runtime_manifest() -> StorageManifest {
 
 pub fn build_router(state: AppState) -> Router {
     let http_trace = TraceLayer::new_for_http()
-        .make_span_with(
-            DefaultMakeSpan::new()
-                .level(Level::INFO)
-                .include_headers(false),
-        )
+        .make_span_with(|request: &Request<Body>| {
+            let correlation_id = request
+                .extensions()
+                .get::<RequestCorrelationId>()
+                .map_or("unknown", |value| value.0.as_str());
+            tracing::span!(
+                Level::INFO,
+                "http_request",
+                correlation_id,
+                method = %request.method(),
+                uri = %request.uri(),
+                version = ?request.version(),
+            )
+        })
         .on_request(DefaultOnRequest::new().level(Level::INFO))
         .on_response(
             DefaultOnResponse::new()
@@ -380,6 +391,9 @@ pub fn build_router(state: AppState) -> Router {
     let web_dir = state.config.web_dir.clone();
     let router = Router::new()
         .route("/health", get(health))
+        .route("/health/live", get(liveness))
+        .route("/health/ready", get(readiness))
+        .route("/version", get(version))
         // 7: unauthenticated Prometheus scrape endpoint, next to `/health`.
         .route("/metrics", get(metrics))
         .route("/v1/admin/license/status", get(admin_license_status))
@@ -388,14 +402,15 @@ pub fn build_router(state: AppState) -> Router {
             get(admin_domain_provider_status),
         )
         .merge(protected)
+        .with_state(state.clone());
+
+    attach_web_delivery(router, web_dir.as_deref())
         .layer(middleware::from_fn_with_state(
-            state.clone(),
+            state,
             lifecycle_request_gate,
         ))
         .layer(http_trace)
-        .with_state(state);
-
-    attach_web_delivery(router, web_dir.as_deref())
+        .layer(middleware::from_fn(correlate_request))
 }
 
 async fn lifecycle_request_gate(
@@ -403,7 +418,10 @@ async fn lifecycle_request_gate(
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    if matches!(request.uri().path(), "/health" | "/metrics") {
+    if matches!(
+        request.uri().path(),
+        "/health" | "/health/live" | "/health/ready" | "/version" | "/metrics"
+    ) {
         return next.run(request).await;
     }
     let Ok(_activity) = state.lifecycle.try_begin_request() else {
