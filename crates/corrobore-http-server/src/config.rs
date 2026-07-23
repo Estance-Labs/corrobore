@@ -18,7 +18,7 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
-use std::{collections::HashMap, env, fs};
+use std::{collections::HashMap, env, fmt, fs};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::{DateTime, Utc};
@@ -44,7 +44,7 @@ impl StorageMode {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
@@ -87,6 +87,45 @@ pub struct ServerConfig {
     pub domain_provider_dir: Option<String>,
     /// Deployment manifest describing required provider libraries and hashes.
     pub domain_provider_manifest_file: Option<String>,
+}
+
+impl fmt::Debug for ServerConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ServerConfig")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("auth_token", &"<redacted>")
+            .field(
+                "admin_auth_token",
+                &self.admin_auth_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("session_store_dir", &self.session_store_dir)
+            .field("log_dir", &self.log_dir)
+            .field("request_timeout_ms", &self.request_timeout_ms)
+            .field("shutdown_timeout_ms", &self.shutdown_timeout_ms)
+            .field("session_idle_ttl_ms", &self.session_idle_ttl_ms)
+            .field("max_body_bytes", &self.max_body_bytes)
+            .field("import_max_body_bytes", &self.import_max_body_bytes)
+            .field("rate_limit_per_second", &self.rate_limit_per_second)
+            .field("rate_limit_burst", &self.rate_limit_burst)
+            .field("web_dir", &self.web_dir)
+            .field("licensed_modules", &self.licensed_modules)
+            .field("license_client_uuid", &self.license_client_uuid)
+            .field("license_client_email", &self.license_client_email)
+            .field("license_valid_until", &self.license_valid_until)
+            .field("license_is_nfr", &self.license_is_nfr)
+            .field("storage_mode", &self.storage_mode)
+            .field("storage_dir", &self.storage_dir)
+            .field("storage_require_fsync", &self.storage_require_fsync)
+            .field("storage_strict_recovery", &self.storage_strict_recovery)
+            .field("domain_provider_dir", &self.domain_provider_dir)
+            .field(
+                "domain_provider_manifest_file",
+                &self.domain_provider_manifest_file,
+            )
+            .finish()
+    }
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]

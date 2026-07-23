@@ -60,6 +60,7 @@ tower_governor = "0.8"
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+toml = "0.8"
 uuid = { version = "1", features = ["v4"] }
 
 # Workspace-wide lints. `unwrap_used` is a warning so production code cannot

@@ -96,13 +96,15 @@ jobs:
 
       - name: Build public release binaries
         run: cargo build --release --locked --offline -p corrobore-http-server -p corrobore-ingest --bins
+        env:
+          CORROBORE_BUILD_REVISION: ${{ github.sha }}
 
       - name: Archive release binaries (Unix)
         if: runner.os != 'Windows'
         run: |
           mkdir -p release-artifacts
-          cp target/release/corrobore-http-server target/release/corrobore-ingest release-artifacts/
-          (cd release-artifacts && shasum -a 256 corrobore-http-server corrobore-ingest > SHA256SUMS)
+          cp target/release/corrobore target/release/corrobore-http-server target/release/corrobore-ingest release-artifacts/
+          (cd release-artifacts && shasum -a 256 corrobore corrobore-http-server corrobore-ingest > SHA256SUMS)
           tar -czf release-artifacts-${{ github.ref_name }}-${{ matrix.artifact_suffix }}.tar.gz -C release-artifacts .
 
       - name: Archive release binaries (Windows)
@@ -110,7 +112,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force release-artifacts | Out-Null
-          Copy-Item target/release/corrobore-http-server.exe,target/release/corrobore-ingest.exe -Destination release-artifacts
+          Copy-Item target/release/corrobore.exe,target/release/corrobore-http-server.exe,target/release/corrobore-ingest.exe -Destination release-artifacts
           Get-FileHash release-artifacts/*.exe -Algorithm SHA256 |
             ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } |
             Set-Content release-artifacts/SHA256SUMS

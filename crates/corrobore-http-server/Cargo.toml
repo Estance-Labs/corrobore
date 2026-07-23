@@ -16,6 +16,10 @@ path = "src/lib.rs"
 name = "corrobore-http-server"
 path = "src/main.rs"
 
+[[bin]]
+name = "corrobore"
+path = "src/bin/corrobore.rs"
+
 [features]
 default = ["enterprise-cti-binary", "enterprise-crisis", "enterprise-fimi"]
 enterprise-cti = []
@@ -49,6 +53,7 @@ tower_governor = { workspace = true }
 tracing = { workspace = true }
 tracing-appender = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["json"] }
+toml = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
