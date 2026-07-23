@@ -26,6 +26,7 @@ mod enterprise;
 pub mod error;
 pub mod explorer_timeline;
 pub mod handlers;
+pub mod lifecycle;
 pub mod logging;
 pub mod session_runtime;
 mod storage_ownership;
@@ -36,3 +37,7 @@ pub use app::{
     AppState, AppStateInitError, PersistentRuntimeStore, RuntimeStoreProvider, build_router,
 };
 pub use config::{ServerConfig, StorageMode};
+pub use lifecycle::{
+    LifecycleState, ServerLifecycle, ServerLifecycleError, install_shutdown_signal,
+    serve_with_lifecycle,
+};

@@ -124,6 +124,19 @@ before readiness. Unsupported storage versions or record formats are rejected
 before recovery. Corrupted or incomplete durable state is never opened as a
 writable store.
 
+## Graceful shutdown
+
+The server installs `SIGINT` and `SIGTERM` handlers before opening its listener.
+Either signal moves the process from `ready` to `draining`, rejects new
+non-operational requests with HTTP 503 and code `SERVICE_DRAINING`, and lets
+accepted work finish within `server.shutdown_timeout_ms`. When the bound
+expires, remaining work is cancelled before persistent files are flushed.
+
+Persistent files and directory metadata are synchronized before the
+data-directory ownership lock is released. A clean drain exits with code `0`.
+A forced shutdown or flush failure exits non-zero and remains observable in
+stderr without including credentials.
+
 ## Validate without side effects
 
 Use the same resolution and validation path without opening storage, creating
@@ -154,6 +167,7 @@ not echo source lines, so a malformed secret setting is not copied to stderr.
 | `4` | The persistent storage directory is owned by another process. |
 | `5` | The storage manifest declares an incompatible version or record format. |
 | `6` | Persistent storage recovery or integrity validation failed. |
+| `7` | Graceful shutdown exceeded its bound or the final durability flush failed. |
 
 Validation errors identify the affected field. General startup errors cover
 conditions such as an invalid bind address, an occupied port, or a requested

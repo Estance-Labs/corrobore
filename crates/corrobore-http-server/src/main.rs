@@ -21,7 +21,10 @@
 use std::net::SocketAddr;
 
 use clap::{ArgAction, Parser};
-use corrobore_http_server::{AppState, ServerConfig, build_router, logging::init_logging};
+use corrobore_http_server::{
+    AppState, ServerConfig, build_router, install_shutdown_signal, logging::init_logging,
+    serve_with_lifecycle,
+};
 use tokio::net::TcpListener;
 use tracing::info;
 
@@ -56,19 +59,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "logging initialized"
     );
     let state = AppState::new(config.clone())?;
-    let app = build_router(state);
+    let app = build_router(state.clone());
 
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
+    let shutdown_signal = install_shutdown_signal()?;
     let listener = TcpListener::bind(addr).await?;
     info!("corrobore-http-server listening on http://{}", addr);
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    serve_with_lifecycle(listener, app, state, shutdown_signal).await?;
 
     Ok(())
-}
-
-async fn shutdown_signal() {
-    let _ = tokio::signal::ctrl_c().await;
 }

@@ -368,6 +368,7 @@ async fn health_contract_returns_ok_payload() {
 
     assert_eq!(payload["status"], "ok");
     assert_eq!(payload["service"], "corrobore-http-server");
+    assert_eq!(payload["lifecycle_state"], "ready");
     assert_eq!(payload["storage_mode"], "ephemeral");
     assert_eq!(payload["durability"]["recovery"]["outcome"], "ephemeral");
     assert_eq!(payload["durability"]["controls"]["require_fsync"], false);
