@@ -226,28 +226,27 @@ impl ServerConfig {
             license_client_email,
             license_valid_until,
             license_is_nfr,
-        ) =
-            if let Some(bundle) = license_bundle {
-                let claims = validate_signed_license(&bundle.license_pem, &bundle.public_key_pem)?;
-                (
-                    claims.modules,
-                    Some(claims.client_uuid),
-                    Some(claims.client_email),
-                    Some(claims.valid_until),
-                    Some(claims.is_nfr),
-                )
-            } else {
-                if vars.contains_key("CORROBORE_HTTP_LICENSED_MODULES") {
-                    return Err(ConfigError::InvalidEnv {
+        ) = if let Some(bundle) = license_bundle {
+            let claims = validate_signed_license(&bundle.license_pem, &bundle.public_key_pem)?;
+            (
+                claims.modules,
+                Some(claims.client_uuid),
+                Some(claims.client_email),
+                Some(claims.valid_until),
+                Some(claims.is_nfr),
+            )
+        } else {
+            if vars.contains_key("CORROBORE_HTTP_LICENSED_MODULES") {
+                return Err(ConfigError::InvalidEnv {
                     name: "CORROBORE_HTTP_LICENSED_MODULES",
                     value:
                         "deprecated fallback disabled; provide signed license PEM and public key"
                             .to_owned(),
                 });
-                }
+            }
 
-                (Vec::new(), None, None, None, None)
-            };
+            (Vec::new(), None, None, None, None)
+        };
 
         Ok(Self {
             host,
@@ -939,7 +938,10 @@ mod tests {
             config.license_client_email.as_deref(),
             Some("security@example.com")
         );
-        assert_eq!(config.license_valid_until.as_deref(), Some("2099-01-01T00:00:00Z"));
+        assert_eq!(
+            config.license_valid_until.as_deref(),
+            Some("2099-01-01T00:00:00Z")
+        );
         assert_eq!(config.license_is_nfr, Some(true));
     }
 
@@ -1069,7 +1071,10 @@ mod tests {
             config.license_client_email.as_deref(),
             Some("ops@example.com")
         );
-        assert_eq!(config.license_valid_until.as_deref(), Some("2099-06-01T00:00:00Z"));
+        assert_eq!(
+            config.license_valid_until.as_deref(),
+            Some("2099-06-01T00:00:00Z")
+        );
         assert_eq!(config.license_is_nfr, Some(false));
 
         let _ = fs::remove_file(license_path);
