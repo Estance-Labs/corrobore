@@ -48,13 +48,19 @@ Application errors use the JSON envelope above. Transport middleware can reject 
 | `CORROBORE_STORAGE_MODE` | `ephemeral` | Runtime graph storage mode (`ephemeral` or `persistent`). |
 | `CORROBORE_STORAGE_DIR` | unset | Required when `CORROBORE_STORAGE_MODE=persistent`; graph storage root path. |
 | `CORROBORE_STORAGE_REQUIRE_FSYNC` | `false` in `ephemeral`, `true` in `persistent` | Durability control for persistent writes. |
-| `CORROBORE_STORAGE_STRICT_RECOVERY` | `false` in `ephemeral`, `true` in `persistent` | Durability control for startup recovery validation strictness. |
+| `CORROBORE_STORAGE_STRICT_RECOVERY` | `false` in `ephemeral`, `true` in `persistent` | When enabled, validates all required append logs and rebuilds derived catalog metadata before readiness. |
 
 The binary loads `.env`, supports `-v`/`-vv` verbosity, and honors `RUST_LOG` as the logging-filter override. Provider configuration is fail-fast: a missing required library, path escape, digest mismatch, incompatible ABI, invalid metadata, missing capability, creation failure, or unhealthy response prevents the HTTP listener from starting. See [the manifest example](../examples/domain-providers.json).
 
+Persistent mode acquires an exclusive process-lifetime filesystem lock before
+storage creation or recovery. Only one server can own a storage directory at a
+time. Manifest incompatibility and unsafe recovery state prevent the listener
+from becoming ready; see the [standalone server ownership and recovery
+contract](standalone-server.md#persistent-directory-ownership-and-recovery).
+
 ## `GET /health`
 
-Returns service name, crate version, uptime, cumulative/recent idle-session expiration metrics, and durability diagnostics (mode controls, WAL size/lag, checkpoint age, compaction backlog, recovery outcome).
+Returns service name, crate version, uptime, cumulative/recent idle-session expiration metrics, and durability diagnostics (mode controls, validated storage version and record format, WAL size/lag, checkpoint age, compaction backlog, recovery outcome). Compatibility fields are `null` in ephemeral mode.
 
 ```json
 {
@@ -73,6 +79,8 @@ Returns service name, crate version, uptime, cumulative/recent idle-session expi
       "require_fsync": false,
       "strict_recovery": false
     },
+    "storage_version": null,
+    "record_format": null,
     "wal_bytes": 0,
     "wal_lag_sequences": 0,
     "checkpoint_sequence": null,

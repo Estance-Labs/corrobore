@@ -103,6 +103,27 @@ TLS configuration is validated, but the TLS listener is intentionally not
 available in this release. `server start` refuses TLS-enabled configuration
 instead of silently serving plaintext.
 
+## Persistent directory ownership and recovery
+
+Persistent mode gives one server process exclusive ownership of the configured
+storage directory for its full lifetime. Before creating a manifest, rebuilding
+catalog metadata, or exposing a writable store, the server locks a hidden
+sibling file named `.<directory-name>.corrobore.lock`. For example,
+`/srv/corrobore/graph` uses `/srv/corrobore/.graph.corrobore.lock`.
+
+A second server targeting the same directory fails immediately. The lock is
+released when the server state is dropped or the process terminates, including
+an abrupt process termination. The lock file itself can remain on disk; its
+non-secret process and package-version metadata is diagnostic only, and stale
+metadata is replaced after the operating system confirms that no process still
+owns the lock.
+
+With `storage.strict_recovery = true`, startup validates the manifest and all
+required append logs, then deterministically rebuilds derived catalog metadata
+before readiness. Unsupported storage versions or record formats are rejected
+before recovery. Corrupted or incomplete durable state is never opened as a
+writable store.
+
 ## Validate without side effects
 
 Use the same resolution and validation path without opening storage, creating
@@ -129,11 +150,15 @@ not echo source lines, so a malformed secret setting is not copied to stderr.
 | ---: | --- |
 | `0` | Command completed successfully. |
 | `2` | Configuration could not be read, parsed, resolved, or validated. |
-| `3` | Configuration was valid, but server startup failed. |
+| `3` | Configuration was valid, but a general server startup step failed. |
+| `4` | The persistent storage directory is owned by another process. |
+| `5` | The storage manifest declares an incompatible version or record format. |
+| `6` | Persistent storage recovery or integrity validation failed. |
 
-Validation errors identify the affected field. Startup errors cover conditions
-such as an invalid bind address, an occupied port, or a requested listener that
-this release cannot provide.
+Validation errors identify the affected field. General startup errors cover
+conditions such as an invalid bind address, an occupied port, or a requested
+listener that this release cannot provide. Storage errors include the affected
+directory and an actionable reason without echoing authentication secrets.
 
 ## Version and compatibility
 

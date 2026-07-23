@@ -174,7 +174,7 @@ paths:
                       expired_last_5m_sessions: {type: integer}
                   durability:
                     type: object
-                    required: [controls, wal_bytes, wal_lag_sequences, checkpoint_sequence, checkpoint_age_seconds, compaction_backlog_bytes, recovery]
+                    required: [controls, storage_version, record_format, wal_bytes, wal_lag_sequences, checkpoint_sequence, checkpoint_age_seconds, compaction_backlog_bytes, recovery]
                     properties:
                       controls:
                         type: object
@@ -182,6 +182,16 @@ paths:
                         properties:
                           require_fsync: {type: boolean}
                           strict_recovery: {type: boolean}
+                      storage_version:
+                        description: Validated persistent storage version; null in ephemeral mode.
+                        oneOf:
+                          - {type: string, enum: [V1]}
+                          - {type: 'null'}
+                      record_format:
+                        description: Validated persistent record format; null in ephemeral mode.
+                        oneOf:
+                          - {type: string, enum: [JsonLinesV1]}
+                          - {type: 'null'}
                       wal_bytes: {type: integer, minimum: 0}
                       wal_lag_sequences: {type: integer, minimum: 0}
                       checkpoint_sequence:

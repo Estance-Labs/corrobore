@@ -10,13 +10,18 @@ use std::{
 };
 
 use clap::{Args, Parser, Subcommand};
-use corrobore_http_server::{AppState, ServerConfig, build_router, logging::init_logging};
+use corrobore_http_server::{
+    AppState, AppStateInitError, ServerConfig, build_router, logging::init_logging,
+};
 use serde::Deserialize;
 use tokio::net::TcpListener;
 use tracing::info;
 
 const CONFIG_EXIT_CODE: u8 = 2;
 const STARTUP_EXIT_CODE: u8 = 3;
+const OWNERSHIP_CONFLICT_EXIT_CODE: u8 = 4;
+const STORAGE_INCOMPATIBLE_EXIT_CODE: u8 = 5;
+const STORAGE_RECOVERY_EXIT_CODE: u8 = 6;
 
 #[derive(Parser)]
 #[command(name = "corrobore", about = "Operate a Corrobore standalone server")]
@@ -256,10 +261,7 @@ async fn main() -> ExitCode {
         }) => match load_config(&args) {
             Ok(config) => match start_server(config).await {
                 Ok(()) => ExitCode::SUCCESS,
-                Err(error) => {
-                    eprintln!("startup error: {error}");
-                    ExitCode::from(STARTUP_EXIT_CODE)
-                }
+                Err(error) => startup_failure(error.as_ref()),
             },
             Err(error) => config_failure(error),
         },
@@ -704,6 +706,23 @@ fn redact_config_error(error: impl std::fmt::Display) -> String {
 fn config_failure(error: String) -> ExitCode {
     eprintln!("configuration error: {error}");
     ExitCode::from(CONFIG_EXIT_CODE)
+}
+
+fn startup_failure(error: &(dyn std::error::Error + 'static)) -> ExitCode {
+    eprintln!("startup error: {error}");
+    let code = error
+        .downcast_ref::<AppStateInitError>()
+        .map_or(STARTUP_EXIT_CODE, |error| match error {
+            AppStateInitError::PersistentStorageOwnershipConflict { .. } => {
+                OWNERSHIP_CONFLICT_EXIT_CODE
+            }
+            AppStateInitError::PersistentStorageIncompatible { .. } => {
+                STORAGE_INCOMPATIBLE_EXIT_CODE
+            }
+            AppStateInitError::PersistentStorageRecoveryFailed { .. } => STORAGE_RECOVERY_EXIT_CODE,
+            _ => STARTUP_EXIT_CODE,
+        });
+    ExitCode::from(code)
 }
 
 fn print_effective(config: &OperationalConfig) {

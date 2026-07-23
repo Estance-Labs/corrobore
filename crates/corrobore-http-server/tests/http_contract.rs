@@ -417,6 +417,8 @@ async fn health_contract_exposes_persistent_recovery_and_controls() {
     assert_eq!(payload["durability"]["controls"]["require_fsync"], true);
     assert_eq!(payload["durability"]["controls"]["strict_recovery"], true);
     assert_eq!(payload["durability"]["recovery"]["outcome"], "recovered");
+    assert_eq!(payload["durability"]["storage_version"], "V1");
+    assert_eq!(payload["durability"]["record_format"], "JsonLinesV1");
     assert_eq!(
         payload["durability"]["recovery"]["manifest_validated"],
         true
