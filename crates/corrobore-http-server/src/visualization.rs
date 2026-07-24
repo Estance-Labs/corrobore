@@ -338,6 +338,8 @@ pub enum VisualizationPropertyValue {
     FloatList(Vec<f64>),
     /// Ordered boolean list.
     BoolList(Vec<bool>),
+    /// Arbitrarily nested JSON preserved by compatibility adapters.
+    Json(serde_json::Value),
 }
 
 /// Positive pheromone dimensions transported independently from graph-core.
@@ -633,6 +635,7 @@ fn visualization_property(value: &PropertyValue) -> VisualizationPropertyValue {
         PropertyValue::IntegerList(value) => VisualizationPropertyValue::IntegerList(value.clone()),
         PropertyValue::FloatList(value) => VisualizationPropertyValue::FloatList(value.clone()),
         PropertyValue::BoolList(value) => VisualizationPropertyValue::BoolList(value.clone()),
+        PropertyValue::Json(value) => VisualizationPropertyValue::Json(value.clone()),
     }
 }
 

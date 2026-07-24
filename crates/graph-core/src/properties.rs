@@ -54,6 +54,12 @@ pub enum PropertyValue {
     FloatList(Vec<f64>),
     /// Ordered list of boolean values.
     BoolList(Vec<bool>),
+    /// Arbitrarily nested, domain-neutral JSON value.
+    ///
+    /// Compatibility adapters use this escape hatch only when a field cannot be
+    /// represented by the scalar and homogeneous list variants above. The graph
+    /// core stores the value without assigning domain semantics to it.
+    Json(serde_json::Value),
 }
 
 /// Map of graph record property names to typed property values.
@@ -182,6 +188,24 @@ mod tests {
         assert_eq!(
             PropertyValue::BoolList(vec![true, false, true]),
             PropertyValue::BoolList(vec![true, false, true])
+        );
+    }
+
+    //
+    // Verify that domain-neutral nested JSON survives as a typed property
+    // without being flattened into strings or homogeneous lists.
+    #[test]
+    fn property_value_supports_nested_json() {
+        let value = serde_json::json!({
+            "extension": {
+                "weights": [1, 2.5, 3],
+                "enabled": true
+            }
+        });
+
+        assert_eq!(
+            PropertyValue::Json(value.clone()),
+            PropertyValue::Json(value)
         );
     }
 

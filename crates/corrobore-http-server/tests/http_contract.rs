@@ -1203,6 +1203,82 @@ async fn import_stix_contract_imports_bundle_with_auth() {
 }
 
 #[tokio::test]
+async fn import_stix_preserves_unknown_opencti_types_without_identity_fallback() {
+    let app = test_app();
+    let stix_id = "future-opencti-type--00000000-0000-4000-8000-000000000999";
+    let workspace_id = "workspace--opencti-forward-compatibility";
+    let start_request = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/sessions/start")
+        .header(header::AUTHORIZATION, "Bearer token-123")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({
+                "workspace_id": workspace_id,
+                "actor_id": "actor--opencti-forward-compatibility",
+                "actor_kind": "Agent"
+            })
+            .to_string(),
+        ))
+        .expect("session start request should build");
+    let start_response = app
+        .clone()
+        .oneshot(start_request)
+        .await
+        .expect("session start should respond");
+    assert_eq!(start_response.status(), StatusCode::OK);
+    let start_body = to_bytes(start_response.into_body(), usize::MAX)
+        .await
+        .expect("session start body should be readable");
+    let start_payload: Value =
+        serde_json::from_slice(&start_body).expect("session start payload should be json");
+    let session_id = start_payload["result"]["session_id"]
+        .as_str()
+        .expect("session id should be a string");
+    let raw = json!({
+        "type": "future-opencti-type",
+        "id": stix_id,
+        "name": "Forward-compatible fixture",
+        "x_opencti_extension": {
+            "nested": [true, 42, {"future_field": "preserved"}]
+        }
+    });
+    let import_request = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/import/stix")
+        .header(header::AUTHORIZATION, "Bearer token-123")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({
+                "bundle": {
+                    "type": "bundle",
+                    "objects": [raw]
+                },
+                "workspace_id": workspace_id,
+                "session_id": session_id
+            })
+            .to_string(),
+        ))
+        .expect("request should build");
+
+    let import_response = app
+        .clone()
+        .oneshot(import_request)
+        .await
+        .expect("import should respond");
+    assert_eq!(import_response.status(), StatusCode::OK);
+    let import_body = to_bytes(import_response.into_body(), usize::MAX)
+        .await
+        .expect("body should be readable");
+    let import_payload: Value =
+        serde_json::from_slice(&import_body).expect("payload should be json");
+    assert_eq!(
+        import_payload["result"]["applied_mutations"], 1,
+        "{import_payload}"
+    );
+}
+
+#[tokio::test]
 async fn import_stix_file_contract_imports_json_file_with_auth() {
     let app = test_app();
     let boundary = "----corrobore-boundary-001";

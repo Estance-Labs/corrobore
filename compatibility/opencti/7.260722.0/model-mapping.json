@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "mapping_version": {
+    "major": 1,
+    "minor": 0
+  },
+  "opencti": {
+    "version": "7.260722.0",
+    "source_commit": "e41adc1c3fd98a849602db33dbe550f689fe6d83"
+  },
+  "record_families": {
+    "objects": [
+      "stix_domain_object",
+      "stix_cyber_observable",
+      "stix_meta_object",
+      "internal_object",
+      "unknown_object"
+    ],
+    "relationships": [
+      "stix_core_relationship",
+      "stix_ref_relationship",
+      "stix_sighting_relationship",
+      "internal_relationship",
+      "unknown_relationship"
+    ]
+  },
+  "identity": {
+    "canonical_precedence": [
+      "internal_id",
+      "id"
+    ],
+    "indexes": {
+      "internal": [
+        "internal_id"
+      ],
+      "standard": [
+        "standard_id"
+      ],
+      "stix": [
+        "id",
+        "x_opencti_stix_ids"
+      ],
+      "external": [
+        "external_id",
+        "external_references.external_id"
+      ],
+      "alias": [
+        "aliases",
+        "x_opencti_aliases",
+        "i_aliases_ids"
+      ],
+      "deduplication": [
+        "deduplication_id",
+        "x_opencti_deduplication_id",
+        "deduplication_keys",
+        "x_opencti_deduplication_keys",
+        "i_aliases_ids"
+      ]
+    }
+  },
+  "access_metadata": {
+    "descriptive_only": true,
+    "marking_ids": [
+      "object_marking_refs",
+      "objectMarking"
+    ],
+    "organization_ids": [
+      "granted_refs",
+      "objectOrganization"
+    ],
+    "authorized_members": [
+      "authorized_members",
+      "restricted_members"
+    ],
+    "tenant_ids": [
+      "tenant_ids",
+      "x_opencti_tenant_refs",
+      "tenants"
+    ],
+    "creator_ids": [
+      "created_by_ref",
+      "createdBy"
+    ],
+    "owner_ids": [
+      "owner_id",
+      "owners",
+      "owner_ids",
+      "object_owner_refs",
+      "objectOwner"
+    ],
+    "sharing_policy": [
+      "sharing_policy"
+    ],
+    "authorized_authorities": [
+      "authorized_authorities"
+    ]
+  },
+  "timestamps": [
+    "created",
+    "modified",
+    "created_at",
+    "updated_at",
+    "refreshed_at",
+    "valid_from",
+    "valid_until",
+    "first_seen",
+    "last_seen"
+  ],
+  "provenance": {
+    "external_references": "external_references",
+    "source_references": [
+      "source_refs",
+      "source_reference",
+      "source_references"
+    ],
+    "migration_fields": [
+      "migration",
+      "migration_metadata"
+    ]
+  },
+  "graph_storage": {
+    "lossless_raw_property": "opencti.raw",
+    "mapping_version_property": "opencti.mapping_version",
+    "family_property": "opencti.family",
+    "canonical_id_property": "opencti.canonical_id",
+    "typed_field_prefix": "opencti.field.",
+    "object_base_label": "OpenCtiObject"
+  },
+  "relationship_contract": {
+    "direction": "source_to_target",
+    "family_inference": {
+      "preferred": "parent_types",
+      "stix_ref_relationship_types_without_parent_metadata": [
+        "created-by",
+        "external-reference",
+        "kill-chain-phase",
+        "object",
+        "object-label",
+        "object-marking"
+      ],
+      "internal_relationship_types_without_parent_metadata": [
+        "member-of"
+      ],
+      "plain_stix_relationship_default": "stix_core_relationship"
+    },
+    "type_fields": [
+      "relationship_type",
+      "entity_type",
+      "type"
+    ],
+    "source_fields": [
+      "source_ref",
+      "from",
+      "from_id",
+      "sighting_of_ref"
+    ],
+    "target_fields": [
+      "target_ref",
+      "to",
+      "to_id",
+      "where_sighted_refs"
+    ]
+  },
+  "forward_compatibility": {
+    "unknown_type_policy": "preserve_as_generic_typed_record",
+    "unknown_field_policy": "preserve_losslessly",
+    "malformed_record_policy": "reject_explicitly"
+  },
+  "projection_conflicts": {
+    "write_unit": "atomic_transaction",
+    "uniqueness": "one_active_record_per_typed_identifier",
+    "optimistic_concurrency": "exact_revision",
+    "replay": "same_transaction_and_payload_is_idempotent",
+    "changed_replay": "conflict",
+    "delete": "tombstone_and_release_identifiers",
+    "merge": "move_identifiers_to_survivor_and_tombstone_sources",
+    "rebuild": "deterministic_or_explicit_conflict"
+  }
+}
