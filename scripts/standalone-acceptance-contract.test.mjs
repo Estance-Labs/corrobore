@@ -61,6 +61,18 @@ test("standalone acceptance CI runs bounded native container and embedded gates"
 test("epic 13 acceptance matrix traces every criterion to automated evidence", async () => {
   const matrix = await read("docs/acceptance/standalone-server.md");
 
+  for (const completionEvidence of [
+    "Status: complete",
+    "Pull request #35",
+    "accepted on `main`",
+    "Epic #13 can be closed",
+  ]) {
+    assert.ok(
+      matrix.includes(completionEvidence),
+      `acceptance matrix should record final completion evidence: ${completionEvidence}`,
+    );
+  }
+
   for (const criterion of [
     "independent foreground process",
     "HTTP without embedding",
