@@ -73,7 +73,20 @@ println!("{}", bundle.objects.len());
 
 ## Current boundary
 
-The facade exposes an immutable `graph()` view. It does not wire persistent graph storage, Python bindings, or validate-only execution. Issue #228 tracks the shared-runtime validate-only defect, so the facade intentionally omits a `validate()` method.
+The facade exposes an immutable `graph()` view. A
+`CorroboreKnowledgeDataProvider` can borrow the same engine to serve the
+versioned Knowledge Data Engine contract without duplicating state. This keeps
+the existing Cypher methods compatible while product adapters migrate to typed
+initialize, health, read, graph, write, snapshot and maintenance operations.
+
+The provider currently implements the lifecycle and bounded graph reads
+documented in the [Knowledge Data Engine contract](../developer-guide/knowledge-data-engine.md).
+Other typed operations fail explicitly as unsupported until their delivery
+issues implement them.
+
+The facade does not wire Python bindings or validate-only execution. Issue #228
+tracks the shared-runtime validate-only defect, so the facade intentionally
+omits a `validate()` method.
 
 For authenticated transport features, session log retrieval, or admin license
 status endpoints, use `corrobore-http-server`.

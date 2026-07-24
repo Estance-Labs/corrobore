@@ -54,6 +54,7 @@ The bundle under `compatibility/opencti/7.260722.0/` contains:
 | --- | --- |
 | `source-lock.json` | Exact upstream and engine versions |
 | `operations.json` | Logical operation classes and their PRD, criticality, security, ordering, lifecycle and contract metadata |
+| `knowledge-data-engine-mapping.json` | Exhaustive mapping from the 32 logical operations to the versioned provider contract or an explicit unsupported boundary |
 | `catalogue.json` | 612 production callsites from 183 OpenCTI source files |
 | `parity-corpus.json` | Fully synthetic objects, relations, access controls, files and lifecycle fixtures |
 | `reference-results.json` | Canonical expected IDs, properties, ordering, cursors, aggregations, authorization and errors |
