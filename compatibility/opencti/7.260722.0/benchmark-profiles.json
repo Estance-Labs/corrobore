@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "generator_version": "opencti-synthetic-benchmark-v1",
+  "hardware": {
+    "cpu": "7 vCPU ARM64 Podman VM on Apple Silicon",
+    "memory_bytes": 5743632384,
+    "disk": "99 GB XFS-backed overlay filesystem",
+    "operating_system": "Fedora CoreOS 44 arm64",
+    "container_runtime": "Podman 5.8.3",
+    "notes": "Single engine container at a time; no swap; 2 GiB JVM heap."
+  },
+  "profiles": [
+    {
+      "id": "small",
+      "objects": 100000,
+      "relationships": 500000,
+      "purpose": "developer and small organization"
+    },
+    {
+      "id": "medium",
+      "objects": 1000000,
+      "relationships": 5000000,
+      "purpose": "standard production"
+    }
+  ],
+  "dataset": {
+    "seed": 38,
+    "clock": "2026-01-15T12:00:00.000Z",
+    "shards": 1,
+    "replicas": 0,
+    "refresh_during_ingestion": false,
+    "bulk_documents": 5000
+  },
+  "warmup": {
+    "iterations": 20,
+    "workloads": [
+      "get-by-id",
+      "filtered-list",
+      "full-text",
+      "deep-pagination",
+      "terms-aggregation",
+      "date-histogram"
+    ]
+  },
+  "measurement": {
+    "iterations": 60,
+    "concurrency": 1,
+    "metrics": [
+      "latency_p50_ms",
+      "latency_p95_ms",
+      "latency_p99_ms",
+      "throughput_ops_per_second",
+      "cpu_percent",
+      "memory_bytes",
+      "disk_bytes"
+    ]
+  },
+  "reproduction": {
+    "script": "scripts/opencti-reference-benchmark.mjs",
+    "container_script": "scripts/opencti-reference-benchmark.sh",
+    "command": "scripts/opencti-reference-benchmark.sh all",
+    "warning": "The medium matrix indexes 12 million documents across two engines and requires sufficient local disk and time."
+  }
+}

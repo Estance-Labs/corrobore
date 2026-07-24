@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "accepted_on": "2026-07-24",
+  "scope": "OpenCTI compatibility phase 0",
+  "decisions": [
+    {
+      "id": "adapter-location",
+      "status": "accepted",
+      "decision": "Keep the KnowledgeDataEngine provider boundary in OpenCTI and the OpenCTI-to-generic-graph mapping in the dedicated Corrobore CTI adapter, outside graph-core.",
+      "rationale": "OpenCTI owns routing and removal of direct client access, while Corrobore remains domain-neutral and the existing CTI domain boundary remains reusable."
+    },
+    {
+      "id": "capture-method",
+      "status": "accepted",
+      "decision": "Capture normalized requests and results at the KnowledgeDataEngine boundary; until that boundary lands, instrument the catalogued engine helper exports rather than the low-level HTTP transport.",
+      "rationale": "Logical captures preserve user, tenant and ordering semantics without binding the corpus to Elasticsearch wire details."
+    },
+    {
+      "id": "consistency-model",
+      "status": "accepted",
+      "decision": "Require read-your-writes for an acknowledged mutation and snapshot-consistent pagination identified by a transaction version.",
+      "rationale": "This is the minimum model that prevents duplicates or omissions across pages while keeping rebuildable secondary indexes behind one WAL."
+    },
+    {
+      "id": "full-text-library",
+      "status": "accepted",
+      "decision": "Use Tantivy as the embedded full-text index behind a Corrobore-owned search abstraction.",
+      "rationale": "Tantivy is Rust-native and supports the inverted-index, phrase, fuzzy, scoring and filtering primitives required by the PRD without exposing its API in the public engine contract."
+    },
+    {
+      "id": "file-extraction",
+      "status": "accepted",
+      "decision": "Run file extraction in a dedicated sandboxed worker; persist extracted text and its searchable index in Corrobore.",
+      "rationale": "PDF, office and HTML parsers expand the security and dependency surface, while the PRD explicitly allows a separate worker but requires Corrobore to own indexing and results."
+    },
+    {
+      "id": "snapshot-boundary",
+      "status": "accepted",
+      "decision": "Define one portable snapshot format produced locally and stream the same artifact through a storage abstraction to S3 or MinIO.",
+      "rationale": "One integrity-checked format avoids divergent local and object-store restore paths and covers single-node development plus production backup."
+    },
+    {
+      "id": "aggregation-subset",
+      "status": "accepted",
+      "decision": "Phase parity covers count, cardinality, terms, date_histogram, sum, filter, nested and reverse_nested; min, max and avg remain PRD capabilities but are added only when an OpenCTI callsite or accepted dashboard fixture requires them.",
+      "rationale": "The pinned OpenCTI source uses exactly this subset. It satisfies the no-full-Elasticsearch-emulation principle while the drift guard exposes future additions."
+    },
+    {
+      "id": "volume-profiles",
+      "status": "accepted",
+      "decision": "Small is 100000 objects and 500000 relationships; medium is 1000000 objects and 5000000 relationships. Large remains outside phase 0.",
+      "rationale": "These are the PRD benchmark thresholds and correspond to developer/small-organization and standard-production workloads."
+    }
+  ]
+}

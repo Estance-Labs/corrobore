@@ -1,0 +1,295 @@
+{
+  "schema_version": 1,
+  "name": "opencti-corrobore-synthetic-parity-v1",
+  "license": "CC0-1.0",
+  "provenance": {
+    "kind": "fully-synthetic",
+    "generator": "hand-reviewed deterministic fixtures",
+    "customer_data": false,
+    "pii": false,
+    "secrets": false,
+    "network_values": "IANA and RFC documentation ranges only"
+  },
+  "fixtures": [
+    {
+      "id": "marking-definition--00000000-0000-4000-8000-000000000001",
+      "type": "marking-definition",
+      "definition_type": "TLP",
+      "definition": "TLP:CLEAR"
+    },
+    {
+      "id": "marking-definition--00000000-0000-4000-8000-000000000002",
+      "type": "marking-definition",
+      "definition_type": "TLP",
+      "definition": "TLP:AMBER"
+    },
+    {
+      "id": "identity--00000000-0000-4000-8000-000000000010",
+      "type": "identity",
+      "identity_class": "organization",
+      "name": "Example CERT",
+      "x_opencti_organization_type": "CERT"
+    },
+    {
+      "id": "identity--00000000-0000-4000-8000-000000000011",
+      "type": "identity",
+      "identity_class": "organization",
+      "name": "Example Research Lab",
+      "x_opencti_organization_type": "Research"
+    },
+    {
+      "id": "user--00000000-0000-4000-8000-000000000020",
+      "type": "user",
+      "name": "Synthetic Analyst One",
+      "user_email": "analyst.one@example.com",
+      "objectOrganization": [
+        "identity--00000000-0000-4000-8000-000000000010"
+      ]
+    },
+    {
+      "id": "user--00000000-0000-4000-8000-000000000021",
+      "type": "user",
+      "name": "Synthetic Analyst Two",
+      "user_email": "analyst.two@example.net",
+      "objectOrganization": [
+        "identity--00000000-0000-4000-8000-000000000011"
+      ]
+    },
+    {
+      "id": "grouping--00000000-0000-4000-8000-000000000030",
+      "type": "grouping",
+      "name": "Tenant Alpha",
+      "context": "suspicious-activity",
+      "x_opencti_workflow_id": "tenant-alpha"
+    },
+    {
+      "id": "grouping--00000000-0000-4000-8000-000000000031",
+      "type": "grouping",
+      "name": "Tenant Beta",
+      "context": "suspicious-activity",
+      "x_opencti_workflow_id": "tenant-beta"
+    },
+    {
+      "id": "indicator--00000000-0000-4000-8000-000000000040",
+      "type": "indicator",
+      "name": "Documentation IPv4 indicator",
+      "pattern_type": "stix",
+      "pattern": "[ipv4-addr:value = '192.0.2.12']",
+      "valid_from": "2026-01-01T00:00:00.000Z",
+      "object_marking_refs": [
+        "marking-definition--00000000-0000-4000-8000-000000000001"
+      ],
+      "x_opencti_tenant_refs": [
+        "grouping--00000000-0000-4000-8000-000000000030"
+      ]
+    },
+    {
+      "id": "indicator--00000000-0000-4000-8000-000000000041",
+      "type": "indicator",
+      "name": "Documentation domain indicator",
+      "pattern_type": "stix",
+      "pattern": "[domain-name:value = 'malware.example.org']",
+      "valid_from": "2026-01-02T00:00:00.000Z",
+      "object_marking_refs": [
+        "marking-definition--00000000-0000-4000-8000-000000000002"
+      ],
+      "x_opencti_tenant_refs": [
+        "grouping--00000000-0000-4000-8000-000000000030"
+      ]
+    },
+    {
+      "id": "indicator--00000000-0000-4000-8000-000000000042",
+      "type": "indicator",
+      "name": "Documentation IPv6 indicator",
+      "pattern_type": "stix",
+      "pattern": "[ipv6-addr:value = '2001:db8::12']",
+      "valid_from": "2026-01-03T00:00:00.000Z",
+      "object_marking_refs": [
+        "marking-definition--00000000-0000-4000-8000-000000000001"
+      ],
+      "x_opencti_tenant_refs": [
+        "grouping--00000000-0000-4000-8000-000000000031"
+      ]
+    },
+    {
+      "id": "malware--00000000-0000-4000-8000-000000000050",
+      "type": "malware",
+      "name": "Synthetic Sample",
+      "is_family": false,
+      "malware_types": [
+        "remote-access-trojan"
+      ],
+      "object_marking_refs": [
+        "marking-definition--00000000-0000-4000-8000-000000000002"
+      ]
+    },
+    {
+      "id": "threat-actor--00000000-0000-4000-8000-000000000051",
+      "type": "threat-actor",
+      "name": "Example Adversary",
+      "threat_actor_types": [
+        "crime-syndicate"
+      ],
+      "object_marking_refs": [
+        "marking-definition--00000000-0000-4000-8000-000000000002"
+      ]
+    },
+    {
+      "id": "report--00000000-0000-4000-8000-000000000052",
+      "type": "report",
+      "name": "Synthetic investigation report",
+      "published": "2026-01-10T00:00:00.000Z",
+      "report_types": [
+        "threat-report"
+      ],
+      "object_refs": [
+        "indicator--00000000-0000-4000-8000-000000000040",
+        "indicator--00000000-0000-4000-8000-000000000041",
+        "malware--00000000-0000-4000-8000-000000000050"
+      ]
+    },
+    {
+      "id": "relationship--00000000-0000-4000-8000-000000000060",
+      "type": "relationship",
+      "relationship_type": "indicates",
+      "source_ref": "indicator--00000000-0000-4000-8000-000000000040",
+      "target_ref": "malware--00000000-0000-4000-8000-000000000050"
+    },
+    {
+      "id": "relationship--00000000-0000-4000-8000-000000000061",
+      "type": "relationship",
+      "relationship_type": "uses",
+      "source_ref": "threat-actor--00000000-0000-4000-8000-000000000051",
+      "target_ref": "malware--00000000-0000-4000-8000-000000000050"
+    },
+    {
+      "id": "relationship--00000000-0000-4000-8000-000000000062",
+      "type": "relationship",
+      "relationship_type": "object",
+      "source_ref": "report--00000000-0000-4000-8000-000000000052",
+      "target_ref": "indicator--00000000-0000-4000-8000-000000000041"
+    },
+    {
+      "id": "relationship--00000000-0000-4000-8000-000000000063",
+      "type": "relationship",
+      "relationship_type": "member-of",
+      "source_ref": "user--00000000-0000-4000-8000-000000000020",
+      "target_ref": "identity--00000000-0000-4000-8000-000000000010"
+    },
+    {
+      "id": "file--00000000-0000-4000-8000-000000000070",
+      "type": "file",
+      "name": "synthetic-report.txt",
+      "mime_type": "text/plain",
+      "size": 96,
+      "sha256": "159b66e81e6b547d8af3e4d0d131e4c5e1f5bec46a893286780a147bde85772c",
+      "content": "Synthetic report referencing 192.0.2.12 and malware.example.org.",
+      "entity_ref": "report--00000000-0000-4000-8000-000000000052"
+    },
+    {
+      "id": "file--00000000-0000-4000-8000-000000000071",
+      "type": "file",
+      "name": "synthetic-observation.json",
+      "mime_type": "application/json",
+      "size": 80,
+      "sha256": "b820f9f62d72b45a565969f7102158cab2a03b0e6cbb94b645d68bc25118013f",
+      "content": "{\"domain\":\"malware.example.org\",\"address\":\"2001:db8::12\"}",
+      "entity_ref": "indicator--00000000-0000-4000-8000-000000000041"
+    },
+    {
+      "id": "migration-marker--00000000-0000-4000-8000-000000000080",
+      "type": "migration-marker",
+      "name": "synthetic-v1-to-v2",
+      "from_schema": 1,
+      "to_schema": 2,
+      "expected_updated_ids": [
+        "indicator--00000000-0000-4000-8000-000000000040",
+        "indicator--00000000-0000-4000-8000-000000000041"
+      ]
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "objects-basic",
+      "kind": "objects",
+      "fixture_ids": [
+        "indicator--00000000-0000-4000-8000-000000000040",
+        "malware--00000000-0000-4000-8000-000000000050",
+        "report--00000000-0000-4000-8000-000000000052"
+      ]
+    },
+    {
+      "id": "relationships-directed",
+      "kind": "relationships",
+      "fixture_ids": [
+        "relationship--00000000-0000-4000-8000-000000000060",
+        "relationship--00000000-0000-4000-8000-000000000061"
+      ]
+    },
+    {
+      "id": "markings-allow-deny",
+      "kind": "markings",
+      "fixture_ids": [
+        "marking-definition--00000000-0000-4000-8000-000000000001",
+        "marking-definition--00000000-0000-4000-8000-000000000002"
+      ]
+    },
+    {
+      "id": "organizations-two",
+      "kind": "organizations",
+      "fixture_ids": [
+        "identity--00000000-0000-4000-8000-000000000010",
+        "identity--00000000-0000-4000-8000-000000000011"
+      ]
+    },
+    {
+      "id": "members-cross-organization",
+      "kind": "members",
+      "fixture_ids": [
+        "user--00000000-0000-4000-8000-000000000020",
+        "user--00000000-0000-4000-8000-000000000021"
+      ]
+    },
+    {
+      "id": "tenants-isolated",
+      "kind": "tenants",
+      "fixture_ids": [
+        "grouping--00000000-0000-4000-8000-000000000030",
+        "grouping--00000000-0000-4000-8000-000000000031"
+      ]
+    },
+    {
+      "id": "files-text-and-json",
+      "kind": "files",
+      "fixture_ids": [
+        "file--00000000-0000-4000-8000-000000000070",
+        "file--00000000-0000-4000-8000-000000000071"
+      ]
+    },
+    {
+      "id": "merge-indicator-duplicates",
+      "kind": "merges",
+      "source_ids": [
+        "indicator--00000000-0000-4000-8000-000000000041",
+        "indicator--00000000-0000-4000-8000-000000000042"
+      ],
+      "target_id": "indicator--00000000-0000-4000-8000-000000000040"
+    },
+    {
+      "id": "delete-entity-with-relations",
+      "kind": "deletes",
+      "target_id": "malware--00000000-0000-4000-8000-000000000050",
+      "expected_relation_ids": [
+        "relationship--00000000-0000-4000-8000-000000000060",
+        "relationship--00000000-0000-4000-8000-000000000061"
+      ]
+    },
+    {
+      "id": "migration-v1-to-v2",
+      "kind": "migrations",
+      "fixture_ids": [
+        "migration-marker--00000000-0000-4000-8000-000000000080"
+      ]
+    }
+  ]
+}

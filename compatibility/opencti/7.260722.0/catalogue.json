@@ -1,0 +1,4295 @@
+{
+  "callsites": [
+    {
+      "column": 34,
+      "file": "boot-utils.ts",
+      "line": 15,
+      "operation_id": "startup.initialize",
+      "symbol": "searchEngineInit"
+    },
+    {
+      "column": 30,
+      "file": "database/data-initialization.js",
+      "line": 553,
+      "operation_id": "read.by-id",
+      "symbol": "elRawGet"
+    },
+    {
+      "column": 13,
+      "file": "database/data-initialization.js",
+      "line": 557,
+      "operation_id": "write.index",
+      "symbol": "elRawIndex"
+    },
+    {
+      "column": 13,
+      "file": "database/data-initialization.js",
+      "line": 567,
+      "operation_id": "delete.by-id",
+      "symbol": "elRawDelete"
+    },
+    {
+      "column": 9,
+      "file": "database/draft-engine.ts",
+      "line": 50,
+      "operation_id": "delete.by-id",
+      "symbol": "elDeleteInstances"
+    },
+    {
+      "column": 9,
+      "file": "database/draft-engine.ts",
+      "line": 52,
+      "operation_id": "write.relations",
+      "symbol": "elRemoveDraftIdFromElements"
+    },
+    {
+      "column": 53,
+      "file": "database/draft-engine.ts",
+      "line": 63,
+      "operation_id": "delete.impact-analysis",
+      "symbol": "getRelationsToRemove"
+    },
+    {
+      "column": 46,
+      "file": "database/draft-engine.ts",
+      "line": 68,
+      "operation_id": "delete.impact-analysis",
+      "symbol": "computeDeleteElementsImpacts"
+    },
+    {
+      "column": 9,
+      "file": "database/draft-engine.ts",
+      "line": 72,
+      "operation_id": "write.relations",
+      "symbol": "elRemoveRelationConnection"
+    },
+    {
+      "column": 9,
+      "file": "database/draft-engine.ts",
+      "line": 73,
+      "operation_id": "delete.by-id",
+      "symbol": "elDeleteInstances"
+    },
+    {
+      "column": 31,
+      "file": "database/draft-engine.ts",
+      "line": 92,
+      "operation_id": "delete.impact-analysis",
+      "symbol": "getRelationsToRemove"
+    },
+    {
+      "column": 11,
+      "file": "database/draft-engine.ts",
+      "line": 96,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 26,
+      "file": "database/draft-engine.ts",
+      "line": 113,
+      "operation_id": "read.query-planning",
+      "symbol": "isImpactedRole"
+    },
+    {
+      "column": 24,
+      "file": "database/draft-engine.ts",
+      "line": 116,
+      "operation_id": "read.query-planning",
+      "symbol": "isImpactedRole"
+    },
+    {
+      "column": 25,
+      "file": "database/draft-engine.ts",
+      "line": 133,
+      "operation_id": "write.bulk",
+      "symbol": "elBulk"
+    },
+    {
+      "column": 13,
+      "file": "database/draft-engine.ts",
+      "line": 152,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 31,
+      "file": "database/draft-engine.ts",
+      "line": 158,
+      "operation_id": "delete.impact-analysis",
+      "symbol": "getRelationsToRemove"
+    },
+    {
+      "column": 44,
+      "file": "database/draft-engine.ts",
+      "line": 173,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 11,
+      "file": "database/draft-engine.ts",
+      "line": 209,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 10,
+      "file": "database/draft-engine.ts",
+      "line": 234,
+      "operation_id": "delete.by-query",
+      "symbol": "elRawDeleteByQuery"
+    },
+    {
+      "column": 10,
+      "file": "database/draft-engine.ts",
+      "line": 248,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 10,
+      "file": "database/draft-engine.ts",
+      "line": 266,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 15,
+      "file": "database/engine-monitoring.ts",
+      "line": 13,
+      "operation_id": "monitoring.health",
+      "symbol": "engine.cluster.health"
+    },
+    {
+      "column": 15,
+      "file": "database/engine-monitoring.ts",
+      "line": 14,
+      "operation_id": "monitoring.health",
+      "symbol": "engine.cluster.health"
+    },
+    {
+      "column": 20,
+      "file": "database/engine-monitoring.ts",
+      "line": 15,
+      "operation_id": "monitoring.health",
+      "symbol": "oebp"
+    },
+    {
+      "column": 15,
+      "file": "database/engine-monitoring.ts",
+      "line": 30,
+      "operation_id": "monitoring.health",
+      "symbol": "engine.nodes.stats"
+    },
+    {
+      "column": 15,
+      "file": "database/engine-monitoring.ts",
+      "line": 31,
+      "operation_id": "monitoring.health",
+      "symbol": "engine.nodes.stats"
+    },
+    {
+      "column": 24,
+      "file": "database/engine-monitoring.ts",
+      "line": 32,
+      "operation_id": "monitoring.health",
+      "symbol": "oebp"
+    },
+    {
+      "column": 15,
+      "file": "database/engine-monitoring.ts",
+      "line": 58,
+      "operation_id": "monitoring.health",
+      "symbol": "engine.cat.threadPool"
+    },
+    {
+      "column": 15,
+      "file": "database/engine-monitoring.ts",
+      "line": 59,
+      "operation_id": "monitoring.health",
+      "symbol": "engine.cat.threadPool"
+    },
+    {
+      "column": 25,
+      "file": "database/engine-monitoring.ts",
+      "line": 60,
+      "operation_id": "monitoring.health",
+      "symbol": "oebp"
+    },
+    {
+      "column": 11,
+      "file": "database/engine.ts",
+      "line": 304,
+      "operation_id": "file.extract",
+      "symbol": "engine.ingest.putPipeline"
+    },
+    {
+      "column": 11,
+      "file": "database/engine.ts",
+      "line": 353,
+      "operation_id": "file.extract",
+      "symbol": "engine.ingest.putPipeline"
+    },
+    {
+      "column": 71,
+      "file": "database/engine.ts",
+      "line": 396,
+      "operation_id": "startup.version",
+      "symbol": "engine.info"
+    },
+    {
+      "column": 17,
+      "file": "database/engine.ts",
+      "line": 609,
+      "operation_id": "read.search",
+      "symbol": "engine.search"
+    },
+    {
+      "column": 13,
+      "file": "database/engine.ts",
+      "line": 610,
+      "operation_id": "read.search",
+      "symbol": "engine.search"
+    },
+    {
+      "column": 23,
+      "file": "database/engine.ts",
+      "line": 641,
+      "operation_id": "read.by-id",
+      "symbol": "engine.get"
+    },
+    {
+      "column": 23,
+      "file": "database/engine.ts",
+      "line": 644,
+      "operation_id": "read.by-id",
+      "symbol": "engine.get"
+    },
+    {
+      "column": 23,
+      "file": "database/engine.ts",
+      "line": 652,
+      "operation_id": "write.index",
+      "symbol": "engine.index"
+    },
+    {
+      "column": 23,
+      "file": "database/engine.ts",
+      "line": 655,
+      "operation_id": "write.index",
+      "symbol": "engine.index"
+    },
+    {
+      "column": 23,
+      "file": "database/engine.ts",
+      "line": 663,
+      "operation_id": "delete.by-id",
+      "symbol": "engine.delete"
+    },
+    {
+      "column": 23,
+      "file": "database/engine.ts",
+      "line": 666,
+      "operation_id": "delete.by-id",
+      "symbol": "engine.delete"
+    },
+    {
+      "column": 23,
+      "file": "database/engine.ts",
+      "line": 674,
+      "operation_id": "delete.by-query",
+      "symbol": "engine.deleteByQuery"
+    },
+    {
+      "column": 23,
+      "file": "database/engine.ts",
+      "line": 677,
+      "operation_id": "delete.by-query",
+      "symbol": "engine.deleteByQuery"
+    },
+    {
+      "column": 17,
+      "file": "database/engine.ts",
+      "line": 686,
+      "operation_id": "write.bulk",
+      "symbol": "engine.bulk"
+    },
+    {
+      "column": 13,
+      "file": "database/engine.ts",
+      "line": 687,
+      "operation_id": "write.bulk",
+      "symbol": "engine.bulk"
+    },
+    {
+      "column": 23,
+      "file": "database/engine.ts",
+      "line": 695,
+      "operation_id": "write.update-by-query",
+      "symbol": "engine.updateByQuery"
+    },
+    {
+      "column": 23,
+      "file": "database/engine.ts",
+      "line": 698,
+      "operation_id": "write.update-by-query",
+      "symbol": "engine.updateByQuery"
+    },
+    {
+      "column": 23,
+      "file": "database/engine.ts",
+      "line": 706,
+      "operation_id": "migration.reindex",
+      "symbol": "engine.reindex"
+    },
+    {
+      "column": 23,
+      "file": "database/engine.ts",
+      "line": 709,
+      "operation_id": "migration.reindex",
+      "symbol": "engine.reindex"
+    },
+    {
+      "column": 23,
+      "file": "database/engine.ts",
+      "line": 719,
+      "operation_id": "migration.reindex",
+      "symbol": "engine.tasks.get"
+    },
+    {
+      "column": 23,
+      "file": "database/engine.ts",
+      "line": 722,
+      "operation_id": "migration.reindex",
+      "symbol": "engine.tasks.get"
+    },
+    {
+      "column": 12,
+      "file": "database/engine.ts",
+      "line": 990,
+      "operation_id": "schema.index-management",
+      "symbol": "engine.indices.exists"
+    },
+    {
+      "column": 39,
+      "file": "database/engine.ts",
+      "line": 992,
+      "operation_id": "schema.index-management",
+      "symbol": "engine.indices.exists"
+    },
+    {
+      "column": 21,
+      "file": "database/engine.ts",
+      "line": 998,
+      "operation_id": "schema.index-management",
+      "symbol": "engine.indices.getAlias"
+    },
+    {
+      "column": 21,
+      "file": "database/engine.ts",
+      "line": 1001,
+      "operation_id": "schema.index-management",
+      "symbol": "engine.indices.getAlias"
+    },
+    {
+      "column": 21,
+      "file": "database/engine.ts",
+      "line": 1007,
+      "operation_id": "schema.index-management",
+      "symbol": "engine.cat.indices"
+    },
+    {
+      "column": 21,
+      "file": "database/engine.ts",
+      "line": 1010,
+      "operation_id": "schema.index-management",
+      "symbol": "engine.cat.indices"
+    },
+    {
+      "column": 21,
+      "file": "database/engine.ts",
+      "line": 1015,
+      "operation_id": "schema.mapping",
+      "symbol": "engine.indices.getMapping"
+    },
+    {
+      "column": 21,
+      "file": "database/engine.ts",
+      "line": 1018,
+      "operation_id": "schema.mapping",
+      "symbol": "engine.indices.getMapping"
+    },
+    {
+      "column": 21,
+      "file": "database/engine.ts",
+      "line": 1024,
+      "operation_id": "schema.mapping",
+      "symbol": "engine.indices.getSettings"
+    },
+    {
+      "column": 23,
+      "file": "database/engine.ts",
+      "line": 1027,
+      "operation_id": "schema.mapping",
+      "symbol": "engine.indices.getSettings"
+    },
+    {
+      "column": 21,
+      "file": "database/engine.ts",
+      "line": 1038,
+      "operation_id": "schema.mapping",
+      "symbol": "engine.cat.templates"
+    },
+    {
+      "column": 21,
+      "file": "database/engine.ts",
+      "line": 1041,
+      "operation_id": "schema.mapping",
+      "symbol": "engine.cat.templates"
+    },
+    {
+      "column": 11,
+      "file": "database/engine.ts",
+      "line": 1046,
+      "operation_id": "schema.mapping",
+      "symbol": "engine.ilm.putLifecycle"
+    },
+    {
+      "column": 49,
+      "file": "database/engine.ts",
+      "line": 1096,
+      "operation_id": "maintenance.transport",
+      "symbol": "engine.transport.request"
+    },
+    {
+      "column": 15,
+      "file": "database/engine.ts",
+      "line": 1107,
+      "operation_id": "maintenance.transport",
+      "symbol": "engine.transport.request"
+    },
+    {
+      "column": 11,
+      "file": "database/engine.ts",
+      "line": 1143,
+      "operation_id": "schema.mapping",
+      "symbol": "engine.cluster.putComponentTemplate"
+    },
+    {
+      "column": 11,
+      "file": "database/engine.ts",
+      "line": 1147,
+      "operation_id": "schema.mapping",
+      "symbol": "engine.cluster.putComponentTemplate"
+    },
+    {
+      "column": 12,
+      "file": "database/engine.ts",
+      "line": 1509,
+      "operation_id": "schema.mapping",
+      "symbol": "engine.indices.putIndexTemplate"
+    },
+    {
+      "column": 10,
+      "file": "database/engine.ts",
+      "line": 1513,
+      "operation_id": "schema.mapping",
+      "symbol": "engine.indices.putIndexTemplate"
+    },
+    {
+      "column": 33,
+      "file": "database/engine.ts",
+      "line": 1523,
+      "operation_id": "schema.mapping",
+      "symbol": "engine.indices.existsIndexTemplate"
+    },
+    {
+      "column": 33,
+      "file": "database/engine.ts",
+      "line": 1525,
+      "operation_id": "schema.mapping",
+      "symbol": "engine.indices.existsIndexTemplate"
+    },
+    {
+      "column": 36,
+      "file": "database/engine.ts",
+      "line": 1534,
+      "operation_id": "schema.mapping",
+      "symbol": "engine.cluster.existsComponentTemplate"
+    },
+    {
+      "column": 36,
+      "file": "database/engine.ts",
+      "line": 1536,
+      "operation_id": "schema.mapping",
+      "symbol": "engine.cluster.existsComponentTemplate"
+    },
+    {
+      "column": 13,
+      "file": "database/engine.ts",
+      "line": 1564,
+      "operation_id": "schema.mapping",
+      "symbol": "engine.indices.putSettings"
+    },
+    {
+      "column": 13,
+      "file": "database/engine.ts",
+      "line": 1568,
+      "operation_id": "schema.mapping",
+      "symbol": "engine.indices.putSettings"
+    },
+    {
+      "column": 15,
+      "file": "database/engine.ts",
+      "line": 1608,
+      "operation_id": "schema.mapping",
+      "symbol": "engine.indices.putMapping"
+    },
+    {
+      "column": 15,
+      "file": "database/engine.ts",
+      "line": 1612,
+      "operation_id": "schema.mapping",
+      "symbol": "engine.indices.putMapping"
+    },
+    {
+      "column": 24,
+      "file": "database/engine.ts",
+      "line": 1625,
+      "operation_id": "schema.index-management",
+      "symbol": "engine.indices.delete"
+    },
+    {
+      "column": 24,
+      "file": "database/engine.ts",
+      "line": 1627,
+      "operation_id": "schema.index-management",
+      "symbol": "engine.indices.delete"
+    },
+    {
+      "column": 21,
+      "file": "database/engine.ts",
+      "line": 1640,
+      "operation_id": "schema.index-management",
+      "symbol": "engine.indices.exists"
+    },
+    {
+      "column": 21,
+      "file": "database/engine.ts",
+      "line": 1642,
+      "operation_id": "schema.index-management",
+      "symbol": "engine.indices.exists"
+    },
+    {
+      "column": 14,
+      "file": "database/engine.ts",
+      "line": 1647,
+      "operation_id": "schema.index-management",
+      "symbol": "engine.indices.create"
+    },
+    {
+      "column": 12,
+      "file": "database/engine.ts",
+      "line": 1649,
+      "operation_id": "schema.index-management",
+      "symbol": "engine.indices.create"
+    },
+    {
+      "column": 16,
+      "file": "database/engine.ts",
+      "line": 1687,
+      "operation_id": "schema.index-management",
+      "symbol": "engine.indices.delete"
+    },
+    {
+      "column": 14,
+      "file": "database/engine.ts",
+      "line": 1696,
+      "operation_id": "schema.index-management",
+      "symbol": "engine.indices.delete"
+    },
+    {
+      "column": 12,
+      "file": "database/engine.ts",
+      "line": 3452,
+      "operation_id": "read.count",
+      "symbol": "engine.count"
+    },
+    {
+      "column": 10,
+      "file": "database/engine.ts",
+      "line": 3457,
+      "operation_id": "read.count",
+      "symbol": "engine.count"
+    },
+    {
+      "column": 11,
+      "file": "database/engine.ts",
+      "line": 4069,
+      "operation_id": "write.index",
+      "symbol": "engine.index"
+    },
+    {
+      "column": 11,
+      "file": "database/engine.ts",
+      "line": 4073,
+      "operation_id": "write.index",
+      "symbol": "engine.index"
+    },
+    {
+      "column": 19,
+      "file": "database/engine.ts",
+      "line": 4101,
+      "operation_id": "write.update",
+      "symbol": "engine.update"
+    },
+    {
+      "column": 15,
+      "file": "database/engine.ts",
+      "line": 4102,
+      "operation_id": "write.update",
+      "symbol": "engine.update"
+    },
+    {
+      "column": 22,
+      "file": "database/engine.ts",
+      "line": 4143,
+      "operation_id": "delete.by-id",
+      "symbol": "engine.delete"
+    },
+    {
+      "column": 20,
+      "file": "database/engine.ts",
+      "line": 4145,
+      "operation_id": "delete.by-id",
+      "symbol": "engine.delete"
+    },
+    {
+      "column": 22,
+      "file": "database/engine.ts",
+      "line": 4403,
+      "operation_id": "migration.reindex",
+      "symbol": "engine.reindex"
+    },
+    {
+      "column": 20,
+      "file": "database/engine.ts",
+      "line": 4405,
+      "operation_id": "migration.reindex",
+      "symbol": "engine.reindex"
+    },
+    {
+      "column": 40,
+      "file": "database/engine.ts",
+      "line": 5096,
+      "operation_id": "maintenance.stats",
+      "symbol": "engine.indices.stats"
+    },
+    {
+      "column": 38,
+      "file": "database/engine.ts",
+      "line": 5099,
+      "operation_id": "maintenance.stats",
+      "symbol": "engine.indices.stats"
+    },
+    {
+      "column": 29,
+      "file": "database/file-search.js",
+      "line": 54,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 15,
+      "file": "database/file-search.js",
+      "line": 68,
+      "operation_id": "write.index",
+      "symbol": "elIndex"
+    },
+    {
+      "column": 15,
+      "file": "database/file-search.js",
+      "line": 74,
+      "operation_id": "write.index",
+      "symbol": "elIndex"
+    },
+    {
+      "column": 10,
+      "file": "database/file-search.js",
+      "line": 91,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 10,
+      "file": "database/file-search.js",
+      "line": 114,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 34,
+      "file": "database/file-search.js",
+      "line": 171,
+      "operation_id": "read.query-planning",
+      "symbol": "buildDataRestrictions"
+    },
+    {
+      "column": 10,
+      "file": "database/file-search.js",
+      "line": 249,
+      "operation_id": "read.search",
+      "symbol": "elRawSearch"
+    },
+    {
+      "column": 10,
+      "file": "database/file-search.js",
+      "line": 262,
+      "operation_id": "read.count",
+      "symbol": "elRawCount"
+    },
+    {
+      "column": 9,
+      "file": "database/file-search.js",
+      "line": 272,
+      "operation_id": "delete.by-query",
+      "symbol": "elRawDeleteByQuery"
+    },
+    {
+      "column": 9,
+      "file": "database/file-search.js",
+      "line": 282,
+      "operation_id": "delete.by-query",
+      "symbol": "elRawDeleteByQuery"
+    },
+    {
+      "column": 37,
+      "file": "database/file-storage.ts",
+      "line": 228,
+      "operation_id": "file.extract",
+      "symbol": "isAttachmentProcessorEnabled"
+    },
+    {
+      "column": 11,
+      "file": "database/file-storage.ts",
+      "line": 230,
+      "operation_id": "file.delete",
+      "symbol": "elDeleteFilesByIds"
+    },
+    {
+      "column": 29,
+      "file": "database/inconsistencyCleaner.ts",
+      "line": 54,
+      "operation_id": "read.search",
+      "symbol": "elRawSearch"
+    },
+    {
+      "column": 11,
+      "file": "database/inconsistencyCleaner.ts",
+      "line": 112,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 27,
+      "file": "database/middleware-loader.ts",
+      "line": 297,
+      "operation_id": "read.query-planning",
+      "symbol": "computeQueryIndices"
+    },
+    {
+      "column": 16,
+      "file": "database/middleware-loader.ts",
+      "line": 299,
+      "operation_id": "read.pagination",
+      "symbol": "elPaginate"
+    },
+    {
+      "column": 27,
+      "file": "database/middleware-loader.ts",
+      "line": 305,
+      "operation_id": "read.query-planning",
+      "symbol": "computeQueryIndices"
+    },
+    {
+      "column": 16,
+      "file": "database/middleware-loader.ts",
+      "line": 307,
+      "operation_id": "read.pagination",
+      "symbol": "elPaginate"
+    },
+    {
+      "column": 27,
+      "file": "database/middleware-loader.ts",
+      "line": 313,
+      "operation_id": "read.query-planning",
+      "symbol": "computeQueryIndices"
+    },
+    {
+      "column": 10,
+      "file": "database/middleware-loader.ts",
+      "line": 315,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 34,
+      "file": "database/middleware-loader.ts",
+      "line": 345,
+      "operation_id": "read.aggregation.terms",
+      "symbol": "elAggregationsList"
+    },
+    {
+      "column": 27,
+      "file": "database/middleware-loader.ts",
+      "line": 360,
+      "operation_id": "read.query-planning",
+      "symbol": "computeQueryIndices"
+    },
+    {
+      "column": 10,
+      "file": "database/middleware-loader.ts",
+      "line": 362,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 16,
+      "file": "database/middleware-loader.ts",
+      "line": 417,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 27,
+      "file": "database/middleware-loader.ts",
+      "line": 457,
+      "operation_id": "read.query-planning",
+      "symbol": "computeQueryIndices"
+    },
+    {
+      "column": 28,
+      "file": "database/middleware-loader.ts",
+      "line": 462,
+      "operation_id": "read.pagination",
+      "symbol": "elConnection"
+    },
+    {
+      "column": 35,
+      "file": "database/middleware-loader.ts",
+      "line": 538,
+      "operation_id": "read.aggregation.terms",
+      "symbol": "elAggregationNestedTermsWithFilter"
+    },
+    {
+      "column": 10,
+      "file": "database/middleware-loader.ts",
+      "line": 553,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 16,
+      "file": "database/middleware-loader.ts",
+      "line": 568,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 16,
+      "file": "database/middleware-loader.ts",
+      "line": 584,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 16,
+      "file": "database/middleware-loader.ts",
+      "line": 593,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 22,
+      "file": "database/middleware-loader.ts",
+      "line": 619,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 24,
+      "file": "database/middleware.ts",
+      "line": 353,
+      "operation_id": "read.pagination",
+      "symbol": "elPaginate"
+    },
+    {
+      "column": 24,
+      "file": "database/middleware.ts",
+      "line": 364,
+      "operation_id": "read.pagination",
+      "symbol": "elPaginate"
+    },
+    {
+      "column": 10,
+      "file": "database/middleware.ts",
+      "line": 375,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 10,
+      "file": "database/middleware.ts",
+      "line": 385,
+      "operation_id": "read.pagination",
+      "symbol": "elConnection"
+    },
+    {
+      "column": 36,
+      "file": "database/middleware.ts",
+      "line": 431,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 24,
+      "file": "database/middleware.ts",
+      "line": 510,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 27,
+      "file": "database/middleware.ts",
+      "line": 514,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 15,
+      "file": "database/middleware.ts",
+      "line": 552,
+      "operation_id": "delete.by-id",
+      "symbol": "elDeleteElements"
+    },
+    {
+      "column": 26,
+      "file": "database/middleware.ts",
+      "line": 578,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 26,
+      "file": "database/middleware.ts",
+      "line": 592,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 34,
+      "file": "database/middleware.ts",
+      "line": 770,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 31,
+      "file": "database/middleware.ts",
+      "line": 800,
+      "operation_id": "read.aggregation.date-histogram",
+      "symbol": "elHistogramCount"
+    },
+    {
+      "column": 31,
+      "file": "database/middleware.ts",
+      "line": 810,
+      "operation_id": "read.aggregation.date-histogram",
+      "symbol": "elHistogramCount"
+    },
+    {
+      "column": 31,
+      "file": "database/middleware.ts",
+      "line": 822,
+      "operation_id": "read.aggregation.date-histogram",
+      "symbol": "elHistogramCount"
+    },
+    {
+      "column": 34,
+      "file": "database/middleware.ts",
+      "line": 838,
+      "operation_id": "read.aggregation.terms",
+      "symbol": "elAggregationCount"
+    },
+    {
+      "column": 34,
+      "file": "database/middleware.ts",
+      "line": 882,
+      "operation_id": "read.aggregation.terms",
+      "symbol": "elAggregationCount"
+    },
+    {
+      "column": 34,
+      "file": "database/middleware.ts",
+      "line": 931,
+      "operation_id": "read.aggregation.terms",
+      "symbol": "elAggregationRelationsCount"
+    },
+    {
+      "column": 24,
+      "file": "database/middleware.ts",
+      "line": 1259,
+      "operation_id": "write.bulk",
+      "symbol": "elIndexElements"
+    },
+    {
+      "column": 9,
+      "file": "database/middleware.ts",
+      "line": 1632,
+      "operation_id": "read.query-planning",
+      "symbol": "isImpactedTypeAndSide"
+    },
+    {
+      "column": 9,
+      "file": "database/middleware.ts",
+      "line": 1643,
+      "operation_id": "read.query-planning",
+      "symbol": "isImpactedTypeAndSide"
+    },
+    {
+      "column": 9,
+      "file": "database/middleware.ts",
+      "line": 1674,
+      "operation_id": "read.query-planning",
+      "symbol": "isImpactedTypeAndSide"
+    },
+    {
+      "column": 9,
+      "file": "database/middleware.ts",
+      "line": 1685,
+      "operation_id": "read.query-planning",
+      "symbol": "isImpactedTypeAndSide"
+    },
+    {
+      "column": 11,
+      "file": "database/middleware.ts",
+      "line": 1701,
+      "operation_id": "write.relations",
+      "symbol": "elUpdateRelationConnections"
+    },
+    {
+      "column": 11,
+      "file": "database/middleware.ts",
+      "line": 1714,
+      "operation_id": "write.relations",
+      "symbol": "elUpdateEntityConnections"
+    },
+    {
+      "column": 15,
+      "file": "database/middleware.ts",
+      "line": 1740,
+      "operation_id": "write.relations",
+      "symbol": "elUpdateEntityConnections"
+    },
+    {
+      "column": 9,
+      "file": "database/middleware.ts",
+      "line": 1755,
+      "operation_id": "delete.by-id",
+      "symbol": "elDeleteElements"
+    },
+    {
+      "column": 11,
+      "file": "database/middleware.ts",
+      "line": 1815,
+      "operation_id": "write.update",
+      "symbol": "elUpdateElement"
+    },
+    {
+      "column": 34,
+      "file": "database/middleware.ts",
+      "line": 2374,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 15,
+      "file": "database/middleware.ts",
+      "line": 2725,
+      "operation_id": "write.update",
+      "symbol": "elUpdateElement"
+    },
+    {
+      "column": 13,
+      "file": "database/middleware.ts",
+      "line": 2737,
+      "operation_id": "write.update",
+      "symbol": "elUpdateElement"
+    },
+    {
+      "column": 13,
+      "file": "database/middleware.ts",
+      "line": 2740,
+      "operation_id": "delete.by-id",
+      "symbol": "elDeleteElements"
+    },
+    {
+      "column": 13,
+      "file": "database/middleware.ts",
+      "line": 2744,
+      "operation_id": "write.bulk",
+      "symbol": "elIndexElements"
+    },
+    {
+      "column": 7,
+      "file": "database/middleware.ts",
+      "line": 3358,
+      "operation_id": "read.query-planning",
+      "symbol": "isImpactedTypeAndSide"
+    },
+    {
+      "column": 7,
+      "file": "database/middleware.ts",
+      "line": 3359,
+      "operation_id": "read.query-planning",
+      "symbol": "isImpactedTypeAndSide"
+    },
+    {
+      "column": 11,
+      "file": "database/middleware.ts",
+      "line": 3997,
+      "operation_id": "write.drafts",
+      "symbol": "elMarkElementsAsDraftDelete"
+    },
+    {
+      "column": 13,
+      "file": "database/middleware.ts",
+      "line": 4103,
+      "operation_id": "delete.by-id",
+      "symbol": "elDeleteElements"
+    },
+    {
+      "column": 15,
+      "file": "database/middleware.ts",
+      "line": 4118,
+      "operation_id": "file.index",
+      "symbol": "elUpdateRemovedFiles"
+    },
+    {
+      "column": 13,
+      "file": "database/middleware.ts",
+      "line": 4125,
+      "operation_id": "delete.by-id",
+      "symbol": "elDeleteElements"
+    },
+    {
+      "column": 10,
+      "file": "domain/attribute.ts",
+      "line": 18,
+      "operation_id": "read.attribute-values",
+      "symbol": "elAttributeValues"
+    },
+    {
+      "column": 9,
+      "file": "domain/backgroundTask-common.js",
+      "line": 424,
+      "operation_id": "write.index",
+      "symbol": "elIndex"
+    },
+    {
+      "column": 27,
+      "file": "domain/backgroundTask.js",
+      "line": 137,
+      "operation_id": "read.pagination",
+      "symbol": "elPaginate"
+    },
+    {
+      "column": 9,
+      "file": "domain/backgroundTask.js",
+      "line": 141,
+      "operation_id": "write.index",
+      "symbol": "elIndex"
+    },
+    {
+      "column": 9,
+      "file": "domain/backgroundTask.js",
+      "line": 168,
+      "operation_id": "write.index",
+      "symbol": "elIndex"
+    },
+    {
+      "column": 22,
+      "file": "domain/connector.ts",
+      "line": 94,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 12,
+      "file": "domain/container.js",
+      "line": 59,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/container.js",
+      "line": 65,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/container.js",
+      "line": 113,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/container.js",
+      "line": 114,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/container.js",
+      "line": 139,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/container.js",
+      "line": 145,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/container.js",
+      "line": 158,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/container.js",
+      "line": 164,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 26,
+      "file": "domain/container.js",
+      "line": 249,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 25,
+      "file": "domain/file.js",
+      "line": 48,
+      "operation_id": "maintenance.stats",
+      "symbol": "getStats"
+    },
+    {
+      "column": 25,
+      "file": "domain/indexedFile.ts",
+      "line": 27,
+      "operation_id": "maintenance.stats",
+      "symbol": "getStats"
+    },
+    {
+      "column": 10,
+      "file": "domain/indexedFile.ts",
+      "line": 35,
+      "operation_id": "file.search",
+      "symbol": "elCountFiles"
+    },
+    {
+      "column": 10,
+      "file": "domain/indexedFile.ts",
+      "line": 39,
+      "operation_id": "file.search",
+      "symbol": "elSearchFiles"
+    },
+    {
+      "column": 9,
+      "file": "domain/indexedFile.ts",
+      "line": 53,
+      "operation_id": "file.delete",
+      "symbol": "elDeleteAllFiles"
+    },
+    {
+      "column": 10,
+      "file": "domain/log.ts",
+      "line": 49,
+      "operation_id": "read.pagination",
+      "symbol": "elPaginate"
+    },
+    {
+      "column": 14,
+      "file": "domain/log.ts",
+      "line": 70,
+      "operation_id": "read.count",
+      "symbol": "elCardinalityCount"
+    },
+    {
+      "column": 14,
+      "file": "domain/log.ts",
+      "line": 71,
+      "operation_id": "read.count",
+      "symbol": "elCardinalityCount"
+    },
+    {
+      "column": 14,
+      "file": "domain/log.ts",
+      "line": 75,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 14,
+      "file": "domain/log.ts",
+      "line": 76,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 10,
+      "file": "domain/note.js",
+      "line": 55,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 10,
+      "file": "domain/note.js",
+      "line": 56,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/note.js",
+      "line": 80,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/note.js",
+      "line": 86,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 10,
+      "file": "domain/observedData.js",
+      "line": 57,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 10,
+      "file": "domain/observedData.js",
+      "line": 58,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/observedData.js",
+      "line": 82,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/observedData.js",
+      "line": 88,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 10,
+      "file": "domain/opinion.js",
+      "line": 64,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 10,
+      "file": "domain/opinion.js",
+      "line": 65,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/opinion.js",
+      "line": 89,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/opinion.js",
+      "line": 95,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/report.js",
+      "line": 52,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/report.js",
+      "line": 53,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/report.js",
+      "line": 78,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/report.js",
+      "line": 84,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/report.js",
+      "line": 97,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/report.js",
+      "line": 103,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 10,
+      "file": "domain/searchMetrics.js",
+      "line": 5,
+      "operation_id": "maintenance.stats",
+      "symbol": "getStats"
+    },
+    {
+      "column": 39,
+      "file": "domain/settings.js",
+      "line": 39,
+      "operation_id": "startup.version",
+      "symbol": "searchEngineVersion"
+    },
+    {
+      "column": 40,
+      "file": "domain/settings.js",
+      "line": 144,
+      "operation_id": "read.full-text",
+      "symbol": "isRuntimeSortEnable"
+    },
+    {
+      "column": 18,
+      "file": "domain/status.ts",
+      "line": 246,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/stixCoreObject.js",
+      "line": 464,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/stixCoreObject.js",
+      "line": 465,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 14,
+      "file": "domain/stixCoreObject.js",
+      "line": 473,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 14,
+      "file": "domain/stixCoreObject.js",
+      "line": 475,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 34,
+      "file": "domain/stixCoreObject.js",
+      "line": 772,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 11,
+      "file": "domain/stixCoreObject.js",
+      "line": 910,
+      "operation_id": "write.update",
+      "symbol": "elUpdateElement"
+    },
+    {
+      "column": 29,
+      "file": "domain/stixCoreObject.js",
+      "line": 916,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 11,
+      "file": "domain/stixCoreObject.js",
+      "line": 1030,
+      "operation_id": "write.update",
+      "symbol": "elUpdateElement"
+    },
+    {
+      "column": 12,
+      "file": "domain/stixCoreRelationship.js",
+      "line": 67,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/stixCoreRelationship.js",
+      "line": 68,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 10,
+      "file": "domain/stixCyberObservable.js",
+      "line": 66,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 10,
+      "file": "domain/stixCyberObservable.js",
+      "line": 67,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 25,
+      "file": "domain/stixDomainObject.js",
+      "line": 73,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 10,
+      "file": "domain/stixDomainObject.js",
+      "line": 100,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 10,
+      "file": "domain/stixDomainObject.js",
+      "line": 101,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 16,
+      "file": "domain/stixObjectOrStixRelationship.ts",
+      "line": 20,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 12,
+      "file": "domain/stixRefRelationship.js",
+      "line": 141,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/stixRefRelationship.js",
+      "line": 142,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/stixRelationship.js",
+      "line": 64,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 12,
+      "file": "domain/stixRelationship.js",
+      "line": 65,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 10,
+      "file": "domain/stixSightingRelationship.js",
+      "line": 22,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 10,
+      "file": "domain/stixSightingRelationship.js",
+      "line": 23,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 9,
+      "file": "domain/user.js",
+      "line": 670,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 11,
+      "file": "domain/user.js",
+      "line": 710,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 11,
+      "file": "domain/user.js",
+      "line": 736,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 11,
+      "file": "domain/user.js",
+      "line": 771,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 32,
+      "file": "domain/user.js",
+      "line": 881,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadBy"
+    },
+    {
+      "column": 11,
+      "file": "domain/user.js",
+      "line": 1320,
+      "operation_id": "delete.by-query",
+      "symbol": "elRawDeleteByQuery"
+    },
+    {
+      "column": 16,
+      "file": "domain/user.js",
+      "line": 1341,
+      "operation_id": "delete.by-query",
+      "symbol": "elRawDeleteByQuery"
+    },
+    {
+      "column": 16,
+      "file": "domain/user.js",
+      "line": 1366,
+      "operation_id": "delete.by-query",
+      "symbol": "elRawDeleteByQuery"
+    },
+    {
+      "column": 22,
+      "file": "domain/user.js",
+      "line": 1564,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadBy"
+    },
+    {
+      "column": 16,
+      "file": "domain/user.js",
+      "line": 1622,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadBy"
+    },
+    {
+      "column": 24,
+      "file": "domain/work.js",
+      "line": 48,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 10,
+      "file": "domain/work.js",
+      "line": 67,
+      "operation_id": "read.pagination",
+      "symbol": "elPaginate"
+    },
+    {
+      "column": 10,
+      "file": "domain/work.js",
+      "line": 73,
+      "operation_id": "read.pagination",
+      "symbol": "elPaginate"
+    },
+    {
+      "column": 10,
+      "file": "domain/work.js",
+      "line": 97,
+      "operation_id": "read.pagination",
+      "symbol": "elPaginate"
+    },
+    {
+      "column": 10,
+      "file": "domain/work.js",
+      "line": 113,
+      "operation_id": "read.pagination",
+      "symbol": "elPaginate"
+    },
+    {
+      "column": 9,
+      "file": "domain/work.js",
+      "line": 131,
+      "operation_id": "delete.by-id",
+      "symbol": "elDeleteInstances"
+    },
+    {
+      "column": 9,
+      "file": "domain/work.js",
+      "line": 156,
+      "operation_id": "write.update",
+      "symbol": "elUpdate"
+    },
+    {
+      "column": 23,
+      "file": "domain/work.js",
+      "line": 167,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 9,
+      "file": "domain/work.js",
+      "line": 197,
+      "operation_id": "delete.by-query",
+      "symbol": "elRawDeleteByQuery"
+    },
+    {
+      "column": 9,
+      "file": "domain/work.js",
+      "line": 254,
+      "operation_id": "write.index",
+      "symbol": "elIndex"
+    },
+    {
+      "column": 11,
+      "file": "domain/work.js",
+      "line": 279,
+      "operation_id": "write.update",
+      "symbol": "elUpdate"
+    },
+    {
+      "column": 13,
+      "file": "domain/work.js",
+      "line": 372,
+      "operation_id": "write.update",
+      "symbol": "elUpdate"
+    },
+    {
+      "column": 9,
+      "file": "domain/work.js",
+      "line": 419,
+      "operation_id": "write.update",
+      "symbol": "elUpdate"
+    },
+    {
+      "column": 9,
+      "file": "domain/work.js",
+      "line": 440,
+      "operation_id": "write.update",
+      "symbol": "elUpdate"
+    },
+    {
+      "column": 9,
+      "file": "domain/work.js",
+      "line": 457,
+      "operation_id": "write.update",
+      "symbol": "elUpdate"
+    },
+    {
+      "column": 9,
+      "file": "domain/work.js",
+      "line": 493,
+      "operation_id": "write.update",
+      "symbol": "elUpdate"
+    },
+    {
+      "column": 62,
+      "file": "graphql/sseMiddleware.js",
+      "line": 713,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 17,
+      "file": "graphql/sseMiddleware.js",
+      "line": 811,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 50,
+      "file": "http/httpPlatform.js",
+      "line": 538,
+      "operation_id": "monitoring.health",
+      "symbol": "isEngineAlive"
+    },
+    {
+      "column": 30,
+      "file": "http/httpRollingFeed.ts",
+      "line": 192,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 9,
+      "file": "initialization.js",
+      "line": 37,
+      "operation_id": "schema.mapping",
+      "symbol": "elUpdateIndicesMappings"
+    },
+    {
+      "column": 13,
+      "file": "initialization.js",
+      "line": 77,
+      "operation_id": "startup.initialize",
+      "symbol": "initializeSchema"
+    },
+    {
+      "column": 10,
+      "file": "manager/activityManager.ts",
+      "line": 123,
+      "operation_id": "write.bulk",
+      "symbol": "elIndexElements"
+    },
+    {
+      "column": 19,
+      "file": "manager/connectorManager.js",
+      "line": 48,
+      "operation_id": "write.update",
+      "symbol": "elUpdate"
+    },
+    {
+      "column": 11,
+      "file": "manager/connectorManager.js",
+      "line": 62,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 9,
+      "file": "manager/connectorManager.js",
+      "line": 90,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 9,
+      "file": "manager/expiredManager.js",
+      "line": 50,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 9,
+      "file": "manager/expiredManager.js",
+      "line": 73,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 15,
+      "file": "manager/fileIndexManager.ts",
+      "line": 101,
+      "operation_id": "file.index",
+      "symbol": "elIndexFiles"
+    },
+    {
+      "column": 17,
+      "file": "manager/fileIndexManager.ts",
+      "line": 130,
+      "operation_id": "file.index",
+      "symbol": "elUpdateFilesWithEntityRestrictions"
+    },
+    {
+      "column": 19,
+      "file": "manager/fileIndexManager.ts",
+      "line": 226,
+      "operation_id": "file.extract",
+      "symbol": "isAttachmentProcessorEnabled"
+    },
+    {
+      "column": 9,
+      "file": "manager/historyManager.ts",
+      "line": 253,
+      "operation_id": "write.bulk",
+      "symbol": "elIndexElements"
+    },
+    {
+      "column": 36,
+      "file": "manager/playbookManager/playbookManager.ts",
+      "line": 374,
+      "operation_id": "read.pagination",
+      "symbol": "elPaginate"
+    },
+    {
+      "column": 20,
+      "file": "manager/retentionManager.ts",
+      "line": 66,
+      "operation_id": "read.pagination",
+      "symbol": "elPaginate"
+    },
+    {
+      "column": 20,
+      "file": "manager/retentionManager.ts",
+      "line": 75,
+      "operation_id": "read.pagination",
+      "symbol": "elPaginate"
+    },
+    {
+      "column": 20,
+      "file": "manager/retentionManager.ts",
+      "line": 79,
+      "operation_id": "read.pagination",
+      "symbol": "elPaginate"
+    },
+    {
+      "column": 9,
+      "file": "manager/ruleManager.ts",
+      "line": 175,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 11,
+      "file": "manager/taskManager.js",
+      "line": 99,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 11,
+      "file": "manager/taskManager.js",
+      "line": 109,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 9,
+      "file": "manager/taskManager.js",
+      "line": 117,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 36,
+      "file": "manager/telemetryManager.ts",
+      "line": 513,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 42,
+      "file": "manager/telemetryManager.ts",
+      "line": 549,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 7,
+      "file": "manager/telemetryManager.ts",
+      "line": 569,
+      "operation_id": "read.aggregation.terms",
+      "symbol": "elAggregationCount"
+    },
+    {
+      "column": 7,
+      "file": "manager/telemetryManager.ts",
+      "line": 574,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 7,
+      "file": "manager/telemetryManager.ts",
+      "line": 575,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 9,
+      "file": "manager/telemetryManager.ts",
+      "line": 598,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 9,
+      "file": "manager/telemetryManager.ts",
+      "line": 599,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 38,
+      "file": "manager/telemetryManager.ts",
+      "line": 607,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 7,
+      "file": "manager/telemetryManager.ts",
+      "line": 623,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 7,
+      "file": "manager/telemetryManager.ts",
+      "line": 624,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 7,
+      "file": "manager/telemetryManager.ts",
+      "line": 625,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 7,
+      "file": "manager/telemetryManager.ts",
+      "line": 626,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 39,
+      "file": "manager/telemetryManager.ts",
+      "line": 640,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 7,
+      "file": "manager/telemetryManager.ts",
+      "line": 675,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 7,
+      "file": "manager/telemetryManager.ts",
+      "line": 676,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 7,
+      "file": "manager/telemetryManager.ts",
+      "line": 677,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 37,
+      "file": "manager/telemetryManager.ts",
+      "line": 692,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 37,
+      "file": "managers.js",
+      "line": 136,
+      "operation_id": "file.extract",
+      "symbol": "isAttachmentProcessorEnabled"
+    },
+    {
+      "column": 45,
+      "file": "managers.js",
+      "line": 138,
+      "operation_id": "file.extract",
+      "symbol": "isAttachmentProcessorEnabled"
+    },
+    {
+      "column": 37,
+      "file": "managers.js",
+      "line": 224,
+      "operation_id": "file.extract",
+      "symbol": "isAttachmentProcessorEnabled"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1608207845411-work_expectation_redis.js",
+      "line": 10,
+      "operation_id": "delete.by-query",
+      "symbol": "elRawDeleteByQuery"
+    },
+    {
+      "column": 28,
+      "file": "migrations/1608243352290-deduplicate_observable_url.js",
+      "line": 32,
+      "operation_id": "read.search",
+      "symbol": "elRawSearch"
+    },
+    {
+      "column": 24,
+      "file": "migrations/1608243352290-deduplicate_observable_url.js",
+      "line": 55,
+      "operation_id": "read.search",
+      "symbol": "elRawSearch"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1611671597858-standard_id.js",
+      "line": 29,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1611671597858-standard_id.js",
+      "line": 34,
+      "operation_id": "write.bulk",
+      "symbol": "elBulk"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1612381566895-clear_indicates_indexation.js",
+      "line": 35,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1612381566895-clear_indicates_indexation.js",
+      "line": 40,
+      "operation_id": "write.bulk",
+      "symbol": "elBulk"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1612999232704-fix_attack_patterns.js",
+      "line": 27,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1612999232704-fix_attack_patterns.js",
+      "line": 32,
+      "operation_id": "write.bulk",
+      "symbol": "elBulk"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1613150325865-clear_aliases.js",
+      "line": 27,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1613150325865-clear_aliases.js",
+      "line": 32,
+      "operation_id": "write.bulk",
+      "symbol": "elBulk"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1614942944848-fix_locations_identities.js",
+      "line": 29,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1614942944848-fix_locations_identities.js",
+      "line": 34,
+      "operation_id": "write.bulk",
+      "symbol": "elBulk"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1616890781521-fix_aliases.js",
+      "line": 58,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1616890781521-fix_aliases.js",
+      "line": 63,
+      "operation_id": "write.bulk",
+      "symbol": "elBulk"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1619270898754-migrate_incidents.js",
+      "line": 36,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1619270898754-migrate_incidents.js",
+      "line": 41,
+      "operation_id": "write.bulk",
+      "symbol": "elBulk"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1619270898754-migrate_incidents.js",
+      "line": 78,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1620980638439-fix_attack_patterns.js",
+      "line": 27,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1620980638439-fix_attack_patterns.js",
+      "line": 32,
+      "operation_id": "write.bulk",
+      "symbol": "elBulk"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1624359823329-rule_index.js",
+      "line": 5,
+      "operation_id": "schema.index-management",
+      "symbol": "elCreateIndices"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1630337822820-report_status.js",
+      "line": 62,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1630337822820-report_status.js",
+      "line": 67,
+      "operation_id": "write.bulk",
+      "symbol": "elBulk"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1637328713848-system_standard_id.js",
+      "line": 29,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1637328713848-system_standard_id.js",
+      "line": 34,
+      "operation_id": "write.bulk",
+      "symbol": "elBulk"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1643894590312-change_resolves-to.js",
+      "line": 18,
+      "operation_id": "write.bulk",
+      "symbol": "elBulk"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1643894590312-change_resolves-to.js",
+      "line": 57,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1644341790691-remove_attribute.js",
+      "line": 10,
+      "operation_id": "delete.by-query",
+      "symbol": "elRawDeleteByQuery"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1650287551439-remove_sector_locations.js",
+      "line": 23,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1651939301056-workflow_rename.js",
+      "line": 18,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1652114181368-entities_rename.js",
+      "line": 29,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 16,
+      "file": "migrations/1652125339035-files_database.js",
+      "line": 22,
+      "operation_id": "write.update",
+      "symbol": "elUpdate"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1652175522433-main_observable_rename.js",
+      "line": 30,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1652175522433-main_observable_rename.js",
+      "line": 52,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1654553817467-sync_dependencies.js",
+      "line": 18,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1659977630852-internal_aliases.js",
+      "line": 16,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 16,
+      "file": "migrations/1661196127751-artifacts.js",
+      "line": 24,
+      "operation_id": "write.update",
+      "symbol": "elUpdate"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1666699509527-history-mesage-truncate.js",
+      "line": 7,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 29,
+      "file": "migrations/1670254906000-vocabulary-mapping.js",
+      "line": 18,
+      "operation_id": "read.attribute-values",
+      "symbol": "elAttributeValues"
+    },
+    {
+      "column": 32,
+      "file": "migrations/1672652100502-entity-settings-mapping.js",
+      "line": 49,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 24,
+      "file": "migrations/1672652100502-entity-settings-mapping.js",
+      "line": 53,
+      "operation_id": "write.index",
+      "symbol": "prepareElementForIndexing"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1672652100502-entity-settings-mapping.js",
+      "line": 54,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 24,
+      "file": "migrations/1678399004322-rel-merge-adapt.js",
+      "line": 28,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 13,
+      "file": "migrations/1678399004322-rel-merge-adapt.js",
+      "line": 37,
+      "operation_id": "write.update",
+      "symbol": "elUpdate"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1679582135178-separate-case-types.js",
+      "line": 30,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 10,
+      "file": "migrations/1679582135178-separate-case-types.js",
+      "line": 59,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1680253979662-drop-unused-internal-date-attributes.js",
+      "line": 44,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 13,
+      "file": "migrations/1681899432316-roles_groups_missing.js",
+      "line": 51,
+      "operation_id": "delete.by-id",
+      "symbol": "elDeleteElements"
+    },
+    {
+      "column": 10,
+      "file": "migrations/1687082905415-types-adapt.js",
+      "line": 21,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 10,
+      "file": "migrations/1687529127415-triggers-remove-unused-field.js",
+      "line": 45,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1687529127420-trigger-type-modifications.js",
+      "line": 23,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1687529127420-trigger-type-modifications.js",
+      "line": 42,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1688674984685-threat-actor-split.js",
+      "line": 39,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1688674984685-threat-actor-split.js",
+      "line": 64,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 29,
+      "file": "migrations/1688674984685-threat-actor-split.js",
+      "line": 124,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 29,
+      "file": "migrations/1688674984685-threat-actor-split.js",
+      "line": 146,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 32,
+      "file": "migrations/1688674984685-threat-actor-split.js",
+      "line": 179,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1688674984685-threat-actor-split.js",
+      "line": 191,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1688710489709-add_order_to_opinion_ov.js",
+      "line": 26,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 13,
+      "file": "migrations/1688710489709-add_order_to_opinion_ov.js",
+      "line": 62,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1688769447643-trigger-knowledge-migration.js",
+      "line": 23,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 29,
+      "file": "migrations/1689722008218-threat-actor-split-inferred.js",
+      "line": 14,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 32,
+      "file": "migrations/1689722008218-threat-actor-split-inferred.js",
+      "line": 47,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1689722008218-threat-actor-split-inferred.js",
+      "line": 59,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1691155357750-vocabulary-update-fix.js",
+      "line": 19,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 18,
+      "file": "migrations/1691398780000-background-tasks-scope.js",
+      "line": 33,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 18,
+      "file": "migrations/1691398780000-background-tasks-scope.js",
+      "line": 64,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 18,
+      "file": "migrations/1691398780000-background-tasks-scope.js",
+      "line": 96,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 18,
+      "file": "migrations/1691398780000-background-tasks-scope.js",
+      "line": 127,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 24,
+      "file": "migrations/1691495378997-migrate-hidden-types-from-role-to-group.js",
+      "line": 16,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 23,
+      "file": "migrations/1691495378997-migrate-hidden-types-from-role-to-group.js",
+      "line": 17,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1691495378997-migrate-hidden-types-from-role-to-group.js",
+      "line": 26,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1691495378997-migrate-hidden-types-from-role-to-group.js",
+      "line": 39,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1691569743543-add-entity-setting-workflow_configuration.js",
+      "line": 16,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1691821747145-default-outcomes.js",
+      "line": 27,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1691821747733-sync-from-current-state-to-current-state-date.js",
+      "line": 8,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1692961699032-investigation-relations-from-has-reference-to-list-of-entities-and-relations-ids.js",
+      "line": 21,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1692961699032-investigation-relations-from-has-reference-to-list-of-entities-and-relations-ids.js",
+      "line": 45,
+      "operation_id": "migration.delete-by-query",
+      "symbol": "elDeleteByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1692961699032-investigation-relations-from-has-reference-to-list-of-entities-and-relations-ids.js",
+      "line": 62,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1692961699132-init-account-status.js",
+      "line": 19,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1693339530445-fix-old-rename-for-relations.js",
+      "line": 49,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 13,
+      "file": "migrations/1694352490408-stream-access.js",
+      "line": 19,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 13,
+      "file": "migrations/1694352490408-stream-access.js",
+      "line": 20,
+      "operation_id": "delete.by-id",
+      "symbol": "elDeleteElements"
+    },
+    {
+      "column": 29,
+      "file": "migrations/1694352490408-stream-access.js",
+      "line": 25,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1694352490408-stream-access.js",
+      "line": 27,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 29,
+      "file": "migrations/1694352490408-stream-access.js",
+      "line": 29,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1694352490408-stream-access.js",
+      "line": 31,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 27,
+      "file": "migrations/1694352490408-stream-access.js",
+      "line": 33,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1694352490408-stream-access.js",
+      "line": 40,
+      "operation_id": "delete.by-id",
+      "symbol": "elDeleteElements"
+    },
+    {
+      "column": 29,
+      "file": "migrations/1698678031958-create-index-files.js",
+      "line": 8,
+      "operation_id": "schema.mapping",
+      "symbol": "engineMappingGenerator"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1698678031958-create-index-files.js",
+      "line": 9,
+      "operation_id": "schema.index-management",
+      "symbol": "elCreateIndex"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1698678031967-filters-refacto.js",
+      "line": 156,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1698678031967-filters-refacto.js",
+      "line": 211,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1698678031967-filters-refacto.js",
+      "line": 288,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1698678031967-filters-refacto.js",
+      "line": 353,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1701354091189-files-registration.js",
+      "line": 21,
+      "operation_id": "write.bulk",
+      "symbol": "elIndexElements"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1701859469408-rename-workflow-filter-key.js",
+      "line": 111,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1701859469408-rename-workflow-filter-key.js",
+      "line": 168,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1701859469408-rename-workflow-filter-key.js",
+      "line": 243,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1701859469408-rename-workflow-filter-key.js",
+      "line": 309,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1701859469418-rename_platform_messages.js",
+      "line": 17,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1701859469421-rename_content_notification.js",
+      "line": 17,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1701859469521-migrate_widgets.js",
+      "line": 112,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1706134203776-vulnerability-attributes-rename.js",
+      "line": 23,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 29,
+      "file": "migrations/1707808059963-rename-data-sharing-capability-description.js",
+      "line": 7,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1707808059963-rename-data-sharing-capability-description.js",
+      "line": 9,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 29,
+      "file": "migrations/1707808059963-rename-data-sharing-capability-description.js",
+      "line": 11,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1707808059963-rename-data-sharing-capability-description.js",
+      "line": 13,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 29,
+      "file": "migrations/1711444304636-create-index-deleted-objects.js",
+      "line": 8,
+      "operation_id": "schema.mapping",
+      "symbol": "engineMappingGenerator"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1711444304636-create-index-deleted-objects.js",
+      "line": 9,
+      "operation_id": "schema.index-management",
+      "symbol": "elCreateIndex"
+    },
+    {
+      "column": 50,
+      "file": "migrations/1713449762000-investigations-and-dashboards-capabilities.js",
+      "line": 8,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1713449762000-investigations-and-dashboards-capabilities.js",
+      "line": 11,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 34,
+      "file": "migrations/1713449762000-investigations-and-dashboards-capabilities.js",
+      "line": 21,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1713449762000-investigations-and-dashboards-capabilities.js",
+      "line": 23,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 34,
+      "file": "migrations/1713449762000-investigations-and-dashboards-capabilities.js",
+      "line": 25,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1713449762000-investigations-and-dashboards-capabilities.js",
+      "line": 27,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 34,
+      "file": "migrations/1713449762000-investigations-and-dashboards-capabilities.js",
+      "line": 29,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1713449762000-investigations-and-dashboards-capabilities.js",
+      "line": 31,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 38,
+      "file": "migrations/1713944533370-convert_linked-to_related-to.js",
+      "line": 22,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 28,
+      "file": "migrations/1713944533370-convert_linked-to_related-to.js",
+      "line": 71,
+      "operation_id": "read.count",
+      "symbol": "elRawCount"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1713944533370-convert_linked-to_related-to.js",
+      "line": 117,
+      "operation_id": "migration.reindex",
+      "symbol": "elReindexByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1713944533370-convert_linked-to_related-to.js",
+      "line": 151,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1713944533370-convert_linked-to_related-to.js",
+      "line": 173,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1713944533370-convert_linked-to_related-to.js",
+      "line": 177,
+      "operation_id": "migration.delete-by-query",
+      "symbol": "elDeleteByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1714034457885-fix-knowledge-orga-restrict-capability-name.js",
+      "line": 23,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1714734961164-default-notifiers-user.js",
+      "line": 23,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 37,
+      "file": "migrations/1715067563363-fix-csv-ingester-without-mapper.js",
+      "line": 15,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1715067563363-fix-csv-ingester-without-mapper.js",
+      "line": 24,
+      "operation_id": "delete.by-id",
+      "symbol": "elDeleteElements"
+    },
+    {
+      "column": 23,
+      "file": "migrations/1716392968110-alias_migration.js",
+      "line": 18,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1716392968110-alias_migration.js",
+      "line": 30,
+      "operation_id": "write.bulk",
+      "symbol": "elBulk"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1716392968110-alias_migration.js",
+      "line": 34,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1717060854132-max-shareable-marking-in-groups.js",
+      "line": 65,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1718631740774-remove-platform-data-sharing-markings.js",
+      "line": 22,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1718809173008-update-data-sharing-ingestion-capabilities.js",
+      "line": 50,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 31,
+      "file": "migrations/1718809173008-update-data-sharing-ingestion-capabilities.js",
+      "line": 53,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1718809173008-update-data-sharing-ingestion-capabilities.js",
+      "line": 60,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 38,
+      "file": "migrations/1718809173008-update-data-sharing-ingestion-capabilities.js",
+      "line": 64,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1718809173008-update-data-sharing-ingestion-capabilities.js",
+      "line": 66,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 38,
+      "file": "migrations/1718809173008-update-data-sharing-ingestion-capabilities.js",
+      "line": 69,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1718809173008-update-data-sharing-ingestion-capabilities.js",
+      "line": 71,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 37,
+      "file": "migrations/1718809173008-update-data-sharing-ingestion-capabilities.js",
+      "line": 74,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1718809173008-update-data-sharing-ingestion-capabilities.js",
+      "line": 82,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 40,
+      "file": "migrations/1718809173008-update-data-sharing-ingestion-capabilities.js",
+      "line": 86,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1718809173008-update-data-sharing-ingestion-capabilities.js",
+      "line": 88,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1719208368256-settingscapabilities.js",
+      "line": 64,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 33,
+      "file": "migrations/1719208368256-settingscapabilities.js",
+      "line": 67,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1719208368256-settingscapabilities.js",
+      "line": 69,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 38,
+      "file": "migrations/1719208368256-settingscapabilities.js",
+      "line": 71,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1719208368256-settingscapabilities.js",
+      "line": 73,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 36,
+      "file": "migrations/1719208368256-settingscapabilities.js",
+      "line": 75,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1719208368256-settingscapabilities.js",
+      "line": 77,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 13,
+      "file": "migrations/1719208388531-notifier_authorized_authorities.js",
+      "line": 18,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1719208388531-notifier_authorized_authorities.js",
+      "line": 22,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1719321008908-dashboard-and-investigations-capabilities.js",
+      "line": 61,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 43,
+      "file": "migrations/1719321008908-dashboard-and-investigations-capabilities.js",
+      "line": 64,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1719321008908-dashboard-and-investigations-capabilities.js",
+      "line": 66,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 49,
+      "file": "migrations/1719321008908-dashboard-and-investigations-capabilities.js",
+      "line": 69,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1719321008908-dashboard-and-investigations-capabilities.js",
+      "line": 71,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 43,
+      "file": "migrations/1719321008908-dashboard-and-investigations-capabilities.js",
+      "line": 74,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1719321008908-dashboard-and-investigations-capabilities.js",
+      "line": 76,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1719419160224-remove-representative.js",
+      "line": 20,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1722320850955-add-retention-rule-knowledge-scope.js",
+      "line": 22,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 38,
+      "file": "migrations/1724060623785-convert_missing_linked-to_related-to.js",
+      "line": 22,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 28,
+      "file": "migrations/1724060623785-convert_missing_linked-to_related-to.js",
+      "line": 71,
+      "operation_id": "read.count",
+      "symbol": "elRawCount"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1724060623785-convert_missing_linked-to_related-to.js",
+      "line": 117,
+      "operation_id": "migration.reindex",
+      "symbol": "elReindexByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1724060623785-convert_missing_linked-to_related-to.js",
+      "line": 151,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1724060623785-convert_missing_linked-to_related-to.js",
+      "line": 173,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1724060623785-convert_missing_linked-to_related-to.js",
+      "line": 177,
+      "operation_id": "migration.delete-by-query",
+      "symbol": "elDeleteByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1724139009000-remove-authorized-members-public-dashboard.js",
+      "line": 23,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1724405107527-trigger-authorized-authorities.js",
+      "line": 23,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1724916130587-add-unit-to-retention-rules.js",
+      "line": 21,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 31,
+      "file": "migrations/1725699277745-connector-bypass-mandatory-field.js",
+      "line": 14,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 54,
+      "file": "migrations/1725699277745-connector-bypass-mandatory-field.js",
+      "line": 18,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 43,
+      "file": "migrations/1726472121823-delete-files-duplicates.js",
+      "line": 16,
+      "operation_id": "schema.index-management",
+      "symbol": "elIndexGetAlias"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1726472121823-delete-files-duplicates.js",
+      "line": 36,
+      "operation_id": "delete.by-id",
+      "symbol": "elDeleteInstances"
+    },
+    {
+      "column": 29,
+      "file": "migrations/1727876946701-create-index-draft-objects.js",
+      "line": 8,
+      "operation_id": "schema.mapping",
+      "symbol": "engineMappingGenerator"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1727876946701-create-index-draft-objects.js",
+      "line": 9,
+      "operation_id": "schema.index-management",
+      "symbol": "elCreateIndex"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1730562409547-capability-frontend-export.js",
+      "line": 30,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 40,
+      "file": "migrations/1733912620469-clean-deprecated-rels.js",
+      "line": 43,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1733912620469-clean-deprecated-rels.js",
+      "line": 71,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1733912620469-clean-deprecated-rels.js",
+      "line": 76,
+      "operation_id": "write.bulk",
+      "symbol": "elBulk"
+    },
+    {
+      "column": 40,
+      "file": "migrations/1733912620469-clean-deprecated-rels.js",
+      "line": 100,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1733912620469-clean-deprecated-rels.js",
+      "line": 121,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1733912620469-clean-deprecated-rels.js",
+      "line": 126,
+      "operation_id": "write.bulk",
+      "symbol": "elBulk"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1733912620469-clean-deprecated-rels.js",
+      "line": 164,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1734016708002-license.js",
+      "line": 21,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1740426699455-remove-stateless-session.js",
+      "line": 22,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1742457323615-add-scope-to-status.js",
+      "line": 21,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1742812597952-migrate-authorized-members-to-restricted-members.js",
+      "line": 25,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 13,
+      "file": "migrations/1742812645319-migrate-authorized-members-default-values.js",
+      "line": 28,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1742823297613-reindex-targets-rel.js",
+      "line": 44,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1742823297613-reindex-targets-rel.js",
+      "line": 51,
+      "operation_id": "write.bulk",
+      "symbol": "elBulk"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1742823297614-fix-missing-internal-ids.js",
+      "line": 19,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1742823297615-fix-playbook-cron-filters-conversion.js",
+      "line": 145,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 37,
+      "file": "migrations/1742823297617-remove_multiple_authors.js",
+      "line": 27,
+      "operation_id": "read.search",
+      "symbol": "elRawSearch"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1742823297617-remove_multiple_authors.js",
+      "line": 37,
+      "operation_id": "write.update",
+      "symbol": "elUpdate"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1742823297617-remove_multiple_authors.js",
+      "line": 85,
+      "operation_id": "delete.by-query",
+      "symbol": "elRawDeleteByQuery"
+    },
+    {
+      "column": 12,
+      "file": "migrations/1742823297618-fix-activity-group_ids.js",
+      "line": 47,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 31,
+      "file": "migrations/1746054044682-rename-csvmapper-desc.js",
+      "line": 10,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1746054044682-rename-csvmapper-desc.js",
+      "line": 13,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 29,
+      "file": "migrations/1748347435089-create-index-pir-rel.js",
+      "line": 8,
+      "operation_id": "schema.mapping",
+      "symbol": "engineMappingGenerator"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1748347435089-create-index-pir-rel.js",
+      "line": 9,
+      "operation_id": "schema.index-management",
+      "symbol": "elCreateIndex"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1750840720214-vulnerabilities-vectors.js",
+      "line": 36,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1756283876396-remove-index-pir-rel.js",
+      "line": 9,
+      "operation_id": "schema.index-management",
+      "symbol": "elDeleteIndex"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1756815510612-add-ai-in-platform-settings.js",
+      "line": 18,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 38,
+      "file": "migrations/1758060978527-split-label-capabilities.js",
+      "line": 16,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1758060978527-split-label-capabilities.js",
+      "line": 18,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 34,
+      "file": "migrations/1759087578937-rename-delete-capa.js",
+      "line": 10,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1759087578937-rename-delete-capa.js",
+      "line": 13,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 34,
+      "file": "migrations/1761037937217-split-delete-merge-capa.js",
+      "line": 18,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1761037937217-split-delete-merge-capa.js",
+      "line": 21,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1761208642892-set-default-themes.js",
+      "line": 18,
+      "operation_id": "delete.by-query",
+      "symbol": "elRawDeleteByQuery"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1761208642892-set-default-themes.js",
+      "line": 106,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1765807866115-add-default-workbench-retention-policies.js",
+      "line": 36,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 15,
+      "file": "migrations/1769815233918-legacy_token_migration.js",
+      "line": 38,
+      "operation_id": "write.update",
+      "symbol": "elUpdate"
+    },
+    {
+      "column": 15,
+      "file": "migrations/1769815233918-legacy_token_migration.js",
+      "line": 44,
+      "operation_id": "write.update",
+      "symbol": "elUpdate"
+    },
+    {
+      "column": 41,
+      "file": "migrations/1775570561286-update_capabilities_description.js",
+      "line": 12,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1775570561286-update_capabilities_description.js",
+      "line": 14,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 38,
+      "file": "migrations/1775570561286-update_capabilities_description.js",
+      "line": 16,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1775570561286-update_capabilities_description.js",
+      "line": 18,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1776164753048-note_standard_id_abstract.js",
+      "line": 41,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 11,
+      "file": "migrations/1776164753048-note_standard_id_abstract.js",
+      "line": 45,
+      "operation_id": "write.bulk",
+      "symbol": "elBulk"
+    },
+    {
+      "column": 10,
+      "file": "migrations/1776350600000-add_manual_enrollment_toggle_in_playbook.js",
+      "line": 30,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 13,
+      "file": "migrations/1776859399668-software_case_insensitive_standard_id.js",
+      "line": 95,
+      "operation_id": "write.bulk",
+      "symbol": "elBulk"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1777898748017-encrypt-credentials-at-rest.js",
+      "line": 17,
+      "operation_id": "write.update",
+      "symbol": "elUpdate"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1777898748017-encrypt-credentials-at-rest.js",
+      "line": 25,
+      "operation_id": "write.update",
+      "symbol": "elUpdate"
+    },
+    {
+      "column": 10,
+      "file": "migrations/1779117914543-fix-playbook-config-bundle-scope.js",
+      "line": 49,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1780039990761-add-active-field-to-retention-rules.js",
+      "line": 57,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1780039990761-add-active-field-to-retention-rules.js",
+      "line": 123,
+      "operation_id": "migration.update-by-query",
+      "symbol": "elUpdateByQueryForMigration"
+    },
+    {
+      "column": 9,
+      "file": "migrations/1782480206087-decay-rule-observable-types-to-filters.ts",
+      "line": 53,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 13,
+      "file": "migrations/1782480206087-decay-rule-observable-types-to-filters.ts",
+      "line": 59,
+      "operation_id": "write.bulk",
+      "symbol": "elBulk"
+    },
+    {
+      "column": 23,
+      "file": "modules/ai/ai-domain.ts",
+      "line": 258,
+      "operation_id": "file.search",
+      "symbol": "elSearchFiles"
+    },
+    {
+      "column": 23,
+      "file": "modules/ai/ai-domain.ts",
+      "line": 303,
+      "operation_id": "file.search",
+      "symbol": "elSearchFiles"
+    },
+    {
+      "column": 11,
+      "file": "modules/authenticationProvider/providers.ts",
+      "line": 179,
+      "operation_id": "delete.by-id",
+      "symbol": "elDeleteElements"
+    },
+    {
+      "column": 28,
+      "file": "modules/dataSanity/operations/caseSensitiveDuplicatedId.ts",
+      "line": 58,
+      "operation_id": "read.by-id",
+      "symbol": "elBatchIdsWithRelCount"
+    },
+    {
+      "column": 15,
+      "file": "modules/dataSanity/operations/caseSensitiveDuplicatedId.ts",
+      "line": 83,
+      "operation_id": "write.update",
+      "symbol": "elUpdate"
+    },
+    {
+      "column": 9,
+      "file": "modules/dataSharing/feed-domain.ts",
+      "line": 117,
+      "operation_id": "write.update",
+      "symbol": "elReplace"
+    },
+    {
+      "column": 10,
+      "file": "modules/dataSharing/taxiiCollection-domain.ts",
+      "line": 168,
+      "operation_id": "read.pagination",
+      "symbol": "elPaginate"
+    },
+    {
+      "column": 33,
+      "file": "modules/deleteOperation/deleteOperation-domain.ts",
+      "line": 100,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 27,
+      "file": "modules/deleteOperation/deleteOperation-domain.ts",
+      "line": 123,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 38,
+      "file": "modules/deleteOperation/deleteOperation-domain.ts",
+      "line": 128,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 40,
+      "file": "modules/deleteOperation/deleteOperation-domain.ts",
+      "line": 250,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 13,
+      "file": "modules/deleteOperation/deleteOperation-domain.ts",
+      "line": 255,
+      "operation_id": "file.index",
+      "symbol": "elUpdateRemovedFiles"
+    },
+    {
+      "column": 9,
+      "file": "modules/deleteOperation/deleteOperation-domain.ts",
+      "line": 262,
+      "operation_id": "delete.by-id",
+      "symbol": "elDeleteInstances"
+    },
+    {
+      "column": 9,
+      "file": "modules/deleteOperation/deleteOperation-domain.ts",
+      "line": 264,
+      "operation_id": "delete.by-id",
+      "symbol": "elDeleteElements"
+    },
+    {
+      "column": 35,
+      "file": "modules/draftWorkspace/draftWorkspace-domain.ts",
+      "line": 152,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 5,
+      "file": "modules/draftWorkspace/draftWorkspace-domain.ts",
+      "line": 283,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 5,
+      "file": "modules/draftWorkspace/draftWorkspace-domain.ts",
+      "line": 284,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 35,
+      "file": "modules/draftWorkspace/draftWorkspace-domain.ts",
+      "line": 319,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 36,
+      "file": "modules/draftWorkspace/draftWorkspace-domain.ts",
+      "line": 376,
+      "operation_id": "read.aggregation.terms",
+      "symbol": "elAggregationCount"
+    },
+    {
+      "column": 43,
+      "file": "modules/draftWorkspace/draftWorkspace-domain.ts",
+      "line": 431,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 43,
+      "file": "modules/draftWorkspace/draftWorkspace-domain.ts",
+      "line": 454,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 33,
+      "file": "modules/draftWorkspace/draftWorkspace-domain.ts",
+      "line": 551,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 13,
+      "file": "modules/draftWorkspace/draftWorkspace-domain.ts",
+      "line": 553,
+      "operation_id": "write.drafts",
+      "symbol": "loadDraftElement"
+    },
+    {
+      "column": 31,
+      "file": "modules/draftWorkspace/draftWorkspace-domain.ts",
+      "line": 729,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 29,
+      "file": "modules/draftWorkspace/draftWorkspace-domain.ts",
+      "line": 825,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 26,
+      "file": "modules/draftWorkspace/draftWorkspace-domain.ts",
+      "line": 869,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 30,
+      "file": "modules/draftWorkspace/draftWorkspace-domain.ts",
+      "line": 921,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 31,
+      "file": "modules/draftWorkspace/draftWorkspace-domain.ts",
+      "line": 990,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 26,
+      "file": "modules/draftWorkspace/draftWorkspace-domain.ts",
+      "line": 1026,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 24,
+      "file": "modules/grouping/grouping-domain.ts",
+      "line": 58,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 24,
+      "file": "modules/grouping/grouping-domain.ts",
+      "line": 59,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 24,
+      "file": "modules/grouping/grouping-domain.ts",
+      "line": 79,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 24,
+      "file": "modules/grouping/grouping-domain.ts",
+      "line": 80,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 24,
+      "file": "modules/grouping/grouping-domain.ts",
+      "line": 88,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 24,
+      "file": "modules/grouping/grouping-domain.ts",
+      "line": 89,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 24,
+      "file": "modules/indicator/indicator-domain.ts",
+      "line": 633,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 24,
+      "file": "modules/indicator/indicator-domain.ts",
+      "line": 637,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 24,
+      "file": "modules/indicator/indicator-domain.ts",
+      "line": 650,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 24,
+      "file": "modules/indicator/indicator-domain.ts",
+      "line": 656,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 34,
+      "file": "modules/internal/document/document-domain.ts",
+      "line": 41,
+      "operation_id": "file.search",
+      "symbol": "elSearchFiles"
+    },
+    {
+      "column": 10,
+      "file": "modules/internal/document/document-domain.ts",
+      "line": 74,
+      "operation_id": "write.index",
+      "symbol": "elIndex"
+    },
+    {
+      "column": 30,
+      "file": "modules/internal/document/document-domain.ts",
+      "line": 78,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 11,
+      "file": "modules/internal/document/document-domain.ts",
+      "line": 80,
+      "operation_id": "delete.by-id",
+      "symbol": "elDeleteInstances"
+    },
+    {
+      "column": 10,
+      "file": "modules/internal/document/document-domain.ts",
+      "line": 158,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 10,
+      "file": "modules/internal/document/document-domain.ts",
+      "line": 166,
+      "operation_id": "read.aggregation.terms",
+      "symbol": "elAggregationCount"
+    },
+    {
+      "column": 10,
+      "file": "modules/notification/notification-domain.ts",
+      "line": 275,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 10,
+      "file": "modules/notification/notification-domain.ts",
+      "line": 313,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 16,
+      "file": "modules/pir/pir-domain.ts",
+      "line": 145,
+      "operation_id": "read.pagination",
+      "symbol": "elPaginate"
+    },
+    {
+      "column": 10,
+      "file": "modules/pir/pir-utils.ts",
+      "line": 132,
+      "operation_id": "write.update",
+      "symbol": "elUpdate"
+    },
+    {
+      "column": 59,
+      "file": "modules/publicDashboard/publicDashboard-utils.ts",
+      "line": 108,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 29,
+      "file": "modules/requestAccess/requestAccess-domain.ts",
+      "line": 531,
+      "operation_id": "read.by-id",
+      "symbol": "elLoadById"
+    },
+    {
+      "column": 20,
+      "file": "modules/retentionRules/retentionRules-domain.ts",
+      "line": 29,
+      "operation_id": "read.pagination",
+      "symbol": "elPaginate"
+    },
+    {
+      "column": 20,
+      "file": "modules/retentionRules/retentionRules-domain.ts",
+      "line": 41,
+      "operation_id": "read.pagination",
+      "symbol": "elPaginate"
+    },
+    {
+      "column": 20,
+      "file": "modules/retentionRules/retentionRules-domain.ts",
+      "line": 46,
+      "operation_id": "read.pagination",
+      "symbol": "elPaginate"
+    },
+    {
+      "column": 9,
+      "file": "modules/retentionRules/retentionRules-domain.ts",
+      "line": 87,
+      "operation_id": "write.index",
+      "symbol": "elIndex"
+    },
+    {
+      "column": 13,
+      "file": "modules/vocabulary/vocabulary-domain.ts",
+      "line": 80,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 9,
+      "file": "modules/vocabulary/vocabulary-utils.ts",
+      "line": 1250,
+      "operation_id": "write.update-by-query",
+      "symbol": "elRawUpdateByQuery"
+    },
+    {
+      "column": 27,
+      "file": "modules/workspace/workspace-domain.ts",
+      "line": 131,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 11,
+      "file": "modules/workspace/workspace-domain.ts",
+      "line": 206,
+      "operation_id": "delete.by-query",
+      "symbol": "elRawDeleteByQuery"
+    },
+    {
+      "column": 10,
+      "file": "modules/xtm/hub/news-feed/news-feed-domain.ts",
+      "line": 26,
+      "operation_id": "read.count",
+      "symbol": "elCount"
+    },
+    {
+      "column": 26,
+      "file": "modules/xtm/hub/news-feed/news-feed-domain.ts",
+      "line": 144,
+      "operation_id": "read.pagination",
+      "symbol": "elPaginate"
+    },
+    {
+      "column": 34,
+      "file": "resolvers/settings.js",
+      "line": 41,
+      "operation_id": "read.aggregation.terms",
+      "symbol": "elAggregationCount"
+    },
+    {
+      "column": 40,
+      "file": "resolvers/settings.js",
+      "line": 42,
+      "operation_id": "read.aggregation.terms",
+      "symbol": "elAggregationCount"
+    },
+    {
+      "column": 10,
+      "file": "utils/ai/dataResolutionHelpers.js",
+      "line": 198,
+      "operation_id": "read.pagination",
+      "symbol": "elPaginate"
+    },
+    {
+      "column": 23,
+      "file": "utils/ai/dataResolutionHelpers.js",
+      "line": 260,
+      "operation_id": "file.search",
+      "symbol": "elSearchFiles"
+    },
+    {
+      "column": 34,
+      "file": "utils/clean-relations.js",
+      "line": 40,
+      "operation_id": "read.search",
+      "symbol": "elRawSearch"
+    },
+    {
+      "column": 26,
+      "file": "utils/clean-relations.js",
+      "line": 65,
+      "operation_id": "read.search",
+      "symbol": "elRawSearch"
+    },
+    {
+      "column": 36,
+      "file": "utils/filtering/filtering-completeSpecialFilterKeys.ts",
+      "line": 103,
+      "operation_id": "read.by-id",
+      "symbol": "elFindByIds"
+    },
+    {
+      "column": 29,
+      "file": "utils/filtering/filtering-completeSpecialFilterKeys.ts",
+      "line": 123,
+      "operation_id": "read.query-planning",
+      "symbol": "computeQueryIndices"
+    },
+    {
+      "column": 35,
+      "file": "utils/filtering/filtering-completeSpecialFilterKeys.ts",
+      "line": 124,
+      "operation_id": "read.pagination",
+      "symbol": "elPaginate"
+    },
+    {
+      "column": 25,
+      "file": "utils/filtering/filtering-completeSpecialFilterKeys.ts",
+      "line": 349,
+      "operation_id": "read.pagination",
+      "symbol": "elList"
+    },
+    {
+      "column": 29,
+      "file": "utils/filtering/filtering-completeSpecialFilterKeys.ts",
+      "line": 474,
+      "operation_id": "read.query-planning",
+      "symbol": "computeQueryIndices"
+    },
+    {
+      "column": 34,
+      "file": "utils/filtering/filtering-completeSpecialFilterKeys.ts",
+      "line": 475,
+      "operation_id": "read.pagination",
+      "symbol": "elPaginate"
+    }
+  ],
+  "schema_version": 1,
+  "source_commit": "e41adc1c3fd98a849602db33dbe550f689fe6d83",
+  "summary": {
+    "operation_definitions": 32,
+    "source_files": 183,
+    "total_callsites": 612
+  }
+}

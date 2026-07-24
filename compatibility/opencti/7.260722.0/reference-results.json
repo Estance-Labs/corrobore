@@ -1,0 +1,243 @@
+{
+  "schema_version": 1,
+  "corpus_sha256": "951553b4d75fd87c61d3bdfeb0de5f755a40502b5191193e8bc994dae4f85975",
+  "canonicalization": "RFC-8785-inspired-key-order-preserve-arrays",
+  "capture_protocol": {
+    "request_clock": "2026-01-15T12:00:00.000Z",
+    "timezone": "UTC",
+    "locale": "en",
+    "pagination_cursor": "base64url-of-canonical-sort-values",
+    "comparison": "exact except backend timing metadata"
+  },
+  "captures": [
+    {
+      "id": "read-indicator-by-id",
+      "operation_id": "read.by-id",
+      "dimensions": ["ids", "properties"],
+      "input": {
+        "id": "indicator--00000000-0000-4000-8000-000000000040",
+        "actor": "user--00000000-0000-4000-8000-000000000020"
+      },
+      "expected": {
+        "id": "indicator--00000000-0000-4000-8000-000000000040",
+        "name": "Documentation IPv4 indicator",
+        "pattern": "[ipv4-addr:value = '192.0.2.12']",
+        "type": "indicator"
+      }
+    },
+    {
+      "id": "search-indicators-ordered",
+      "operation_id": "read.search",
+      "dimensions": ["ids", "properties", "ordering"],
+      "input": {
+        "types": ["indicator"],
+        "order_by": "valid_from",
+        "order_mode": "asc"
+      },
+      "expected": {
+        "ordered_ids": [
+          "indicator--00000000-0000-4000-8000-000000000040",
+          "indicator--00000000-0000-4000-8000-000000000041",
+          "indicator--00000000-0000-4000-8000-000000000042"
+        ],
+        "sort_values": [
+          ["2026-01-01T00:00:00.000Z", "indicator--00000000-0000-4000-8000-000000000040"],
+          ["2026-01-02T00:00:00.000Z", "indicator--00000000-0000-4000-8000-000000000041"],
+          ["2026-01-03T00:00:00.000Z", "indicator--00000000-0000-4000-8000-000000000042"]
+        ]
+      }
+    },
+    {
+      "id": "pagination-indicators-page-one",
+      "operation_id": "read.pagination",
+      "dimensions": ["ids", "ordering", "pagination"],
+      "input": {
+        "first": 2,
+        "after": null,
+        "order_by": "valid_from",
+        "order_mode": "asc"
+      },
+      "expected": {
+        "ordered_ids": [
+          "indicator--00000000-0000-4000-8000-000000000040",
+          "indicator--00000000-0000-4000-8000-000000000041"
+        ],
+        "page_info": {
+          "end_cursor": "WyIyMDI2LTAxLTAyVDAwOjAwOjAwLjAwMFoiLCJpbmRpY2F0b3ItLTAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDA0MSJd",
+          "has_next_page": true
+        }
+      }
+    },
+    {
+      "id": "pagination-indicators-page-two",
+      "operation_id": "read.pagination",
+      "dimensions": ["ids", "ordering", "pagination"],
+      "input": {
+        "first": 2,
+        "after": "WyIyMDI2LTAxLTAyVDAwOjAwOjAwLjAwMFoiLCJpbmRpY2F0b3ItLTAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDA0MSJd",
+        "order_by": "valid_from",
+        "order_mode": "asc"
+      },
+      "expected": {
+        "ordered_ids": [
+          "indicator--00000000-0000-4000-8000-000000000042"
+        ],
+        "page_info": {
+          "end_cursor": "WyIyMDI2LTAxLTAzVDAwOjAwOjAwLjAwMFoiLCJpbmRpY2F0b3ItLTAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDA0MiJd",
+          "has_next_page": false
+        }
+      }
+    },
+    {
+      "id": "aggregation-types",
+      "operation_id": "read.aggregation.terms",
+      "dimensions": ["aggregations", "ordering"],
+      "input": {
+        "field": "type",
+        "order": "count-desc-key-asc"
+      },
+      "expected": {
+        "buckets": [
+          {"key": "relationship", "count": 4},
+          {"key": "indicator", "count": 3},
+          {"key": "file", "count": 2},
+          {"key": "grouping", "count": 2},
+          {"key": "identity", "count": 2},
+          {"key": "marking-definition", "count": 2},
+          {"key": "user", "count": 2},
+          {"key": "malware", "count": 1},
+          {"key": "migration-marker", "count": 1},
+          {"key": "report", "count": 1},
+          {"key": "threat-actor", "count": 1}
+        ]
+      }
+    },
+    {
+      "id": "aggregation-indicators-by-day",
+      "operation_id": "read.aggregation.date-histogram",
+      "dimensions": ["aggregations", "ordering"],
+      "input": {
+        "types": ["indicator"],
+        "field": "valid_from",
+        "interval": "1d"
+      },
+      "expected": {
+        "buckets": [
+          {"key": "2026-01-01T00:00:00.000Z", "count": 1},
+          {"key": "2026-01-02T00:00:00.000Z", "count": 1},
+          {"key": "2026-01-03T00:00:00.000Z", "count": 1}
+        ]
+      }
+    },
+    {
+      "id": "authorization-clear-allowed",
+      "operation_id": "read.search",
+      "dimensions": ["authorization", "ids"],
+      "input": {
+        "actor": "user--00000000-0000-4000-8000-000000000020",
+        "allowed_markings": ["marking-definition--00000000-0000-4000-8000-000000000001"]
+      },
+      "expected": {
+        "ordered_ids": [
+          "indicator--00000000-0000-4000-8000-000000000040",
+          "indicator--00000000-0000-4000-8000-000000000042"
+        ]
+      }
+    },
+    {
+      "id": "authorization-amber-denied",
+      "operation_id": "read.by-id",
+      "dimensions": ["authorization", "errors"],
+      "input": {
+        "actor": "user--00000000-0000-4000-8000-000000000020",
+        "id": "malware--00000000-0000-4000-8000-000000000050",
+        "allowed_markings": ["marking-definition--00000000-0000-4000-8000-000000000001"]
+      },
+      "expected": {
+        "error": {
+          "code": "AUTHORIZATION_DENIED",
+          "retriable": false
+        }
+      }
+    },
+    {
+      "id": "invalid-pagination-cursor",
+      "operation_id": "read.pagination",
+      "dimensions": ["pagination", "errors"],
+      "input": {
+        "first": 2,
+        "after": "not-a-canonical-cursor"
+      },
+      "expected": {
+        "error": {
+          "code": "INVALID_CURSOR",
+          "retriable": false
+        }
+      }
+    },
+    {
+      "id": "file-full-text",
+      "operation_id": "file.search",
+      "dimensions": ["ids", "properties", "ordering", "authorization"],
+      "input": {
+        "text": "malware.example.org",
+        "actor": "user--00000000-0000-4000-8000-000000000020"
+      },
+      "expected": {
+        "ordered_ids": [
+          "file--00000000-0000-4000-8000-000000000070",
+          "file--00000000-0000-4000-8000-000000000071"
+        ],
+        "highlights": ["malware.example.org"]
+      }
+    },
+    {
+      "id": "merge-indicators",
+      "operation_id": "write.update",
+      "dimensions": ["ids", "properties", "ordering"],
+      "input": {
+        "scenario": "merge-indicator-duplicates"
+      },
+      "expected": {
+        "target_id": "indicator--00000000-0000-4000-8000-000000000040",
+        "redirected_relationship_ids": [
+          "relationship--00000000-0000-4000-8000-000000000062"
+        ],
+        "deleted_source_ids": [
+          "indicator--00000000-0000-4000-8000-000000000041",
+          "indicator--00000000-0000-4000-8000-000000000042"
+        ]
+      }
+    },
+    {
+      "id": "delete-malware-cascade",
+      "operation_id": "delete.by-id",
+      "dimensions": ["ids", "ordering"],
+      "input": {
+        "scenario": "delete-entity-with-relations"
+      },
+      "expected": {
+        "deleted_ids": [
+          "relationship--00000000-0000-4000-8000-000000000060",
+          "relationship--00000000-0000-4000-8000-000000000061",
+          "malware--00000000-0000-4000-8000-000000000050"
+        ]
+      }
+    },
+    {
+      "id": "migration-v1-to-v2",
+      "operation_id": "migration.update-by-query",
+      "dimensions": ["ids", "properties", "errors"],
+      "input": {
+        "scenario": "migration-v1-to-v2"
+      },
+      "expected": {
+        "updated_ids": [
+          "indicator--00000000-0000-4000-8000-000000000040",
+          "indicator--00000000-0000-4000-8000-000000000041"
+        ],
+        "failures": []
+      }
+    }
+  ]
+}

@@ -1,0 +1,210 @@
+{
+  "schema_version": 1,
+  "methodology": "single-node-sequential-cold-index-then-warm-query",
+  "results": [
+    {
+      "dataset_sha256": "06f8670a49c4b47c9b02ca2914f4dc9f9e3e711ea3da9485d3b0a9d9b4c78533",
+      "engine": "elasticsearch-8.19.18",
+      "ingestion": {
+        "elapsed_seconds": 91.466,
+        "throughput_docs_per_second": 65598.335
+      },
+      "metrics": {
+        "cpu_percent": 16.74,
+        "disk_bytes": 524844463,
+        "latency_p50_ms": 3.175,
+        "latency_p95_ms": 3.977,
+        "latency_p99_ms": 4.228,
+        "memory_bytes": 792184832,
+        "throughput_ops_per_second": 317.176
+      },
+      "profile": "medium",
+      "recorded_at": "2026-07-24T19:35:47.338Z",
+      "workload_metrics": {
+        "get-by-id": {
+          "latency_p50_ms": 2.393,
+          "latency_p95_ms": 2.69,
+          "latency_p99_ms": 2.807
+        },
+        "filtered-list": {
+          "latency_p50_ms": 3.322,
+          "latency_p95_ms": 3.873,
+          "latency_p99_ms": 4.023
+        },
+        "full-text": {
+          "latency_p50_ms": 3.771,
+          "latency_p95_ms": 4.209,
+          "latency_p99_ms": 4.363
+        },
+        "deep-pagination": {
+          "latency_p50_ms": 3.419,
+          "latency_p95_ms": 3.872,
+          "latency_p99_ms": 4.136
+        },
+        "terms-aggregation": {
+          "latency_p50_ms": 3.011,
+          "latency_p95_ms": 3.453,
+          "latency_p99_ms": 3.658
+        },
+        "date-histogram": {
+          "latency_p50_ms": 3.037,
+          "latency_p95_ms": 3.583,
+          "latency_p99_ms": 9.629
+        }
+      }
+    },
+    {
+      "dataset_sha256": "92e91ea659c94e261a6c6ad8787bf51a856bfa74ad8a075660e8d7edef664fbb",
+      "engine": "elasticsearch-8.19.18",
+      "ingestion": {
+        "elapsed_seconds": 12.817,
+        "throughput_docs_per_second": 46812.735
+      },
+      "metrics": {
+        "cpu_percent": 16.706,
+        "disk_bytes": 55399040,
+        "latency_p50_ms": 4.107,
+        "latency_p95_ms": 5.063,
+        "latency_p99_ms": 5.736,
+        "memory_bytes": 1477616160,
+        "throughput_ops_per_second": 247.641
+      },
+      "profile": "small",
+      "recorded_at": "2026-07-24T19:28:42.264Z",
+      "workload_metrics": {
+        "get-by-id": {
+          "latency_p50_ms": 2.999,
+          "latency_p95_ms": 3.416,
+          "latency_p99_ms": 3.663
+        },
+        "filtered-list": {
+          "latency_p50_ms": 4.467,
+          "latency_p95_ms": 5.329,
+          "latency_p99_ms": 5.67
+        },
+        "full-text": {
+          "latency_p50_ms": 4.324,
+          "latency_p95_ms": 5.391,
+          "latency_p99_ms": 5.951
+        },
+        "deep-pagination": {
+          "latency_p50_ms": 4.417,
+          "latency_p95_ms": 5.217,
+          "latency_p99_ms": 5.5
+        },
+        "terms-aggregation": {
+          "latency_p50_ms": 3.985,
+          "latency_p95_ms": 4.802,
+          "latency_p99_ms": 6.287
+        },
+        "date-histogram": {
+          "latency_p50_ms": 4.035,
+          "latency_p95_ms": 4.74,
+          "latency_p99_ms": 4.946
+        }
+      }
+    },
+    {
+      "dataset_sha256": "06f8670a49c4b47c9b02ca2914f4dc9f9e3e711ea3da9485d3b0a9d9b4c78533",
+      "engine": "opensearch-3.7.0",
+      "ingestion": {
+        "elapsed_seconds": 89.545,
+        "throughput_docs_per_second": 67005.11
+      },
+      "metrics": {
+        "cpu_percent": 23.105,
+        "disk_bytes": 882200664,
+        "latency_p50_ms": 3.17,
+        "latency_p95_ms": 3.792,
+        "latency_p99_ms": 4.262,
+        "memory_bytes": 754974720,
+        "throughput_ops_per_second": 325.277
+      },
+      "profile": "medium",
+      "recorded_at": "2026-07-24T19:37:29.521Z",
+      "workload_metrics": {
+        "get-by-id": {
+          "latency_p50_ms": 2.193,
+          "latency_p95_ms": 2.467,
+          "latency_p99_ms": 2.703
+        },
+        "filtered-list": {
+          "latency_p50_ms": 3.288,
+          "latency_p95_ms": 3.902,
+          "latency_p99_ms": 7.243
+        },
+        "full-text": {
+          "latency_p50_ms": 3.396,
+          "latency_p95_ms": 4.066,
+          "latency_p99_ms": 4.272
+        },
+        "deep-pagination": {
+          "latency_p50_ms": 3.504,
+          "latency_p95_ms": 3.866,
+          "latency_p99_ms": 4.012
+        },
+        "terms-aggregation": {
+          "latency_p50_ms": 2.964,
+          "latency_p95_ms": 3.492,
+          "latency_p99_ms": 3.814
+        },
+        "date-histogram": {
+          "latency_p50_ms": 2.97,
+          "latency_p95_ms": 3.474,
+          "latency_p99_ms": 5.189
+        }
+      }
+    },
+    {
+      "dataset_sha256": "92e91ea659c94e261a6c6ad8787bf51a856bfa74ad8a075660e8d7edef664fbb",
+      "engine": "opensearch-3.7.0",
+      "ingestion": {
+        "elapsed_seconds": 14.269,
+        "throughput_docs_per_second": 42048.865
+      },
+      "metrics": {
+        "cpu_percent": 15.826,
+        "disk_bytes": 54714118,
+        "latency_p50_ms": 4.11,
+        "latency_p95_ms": 5.084,
+        "latency_p99_ms": 5.672,
+        "memory_bytes": 826802176,
+        "throughput_ops_per_second": 250.822
+      },
+      "profile": "small",
+      "recorded_at": "2026-07-24T19:33:31.372Z",
+      "workload_metrics": {
+        "get-by-id": {
+          "latency_p50_ms": 2.855,
+          "latency_p95_ms": 3.558,
+          "latency_p99_ms": 5.962
+        },
+        "filtered-list": {
+          "latency_p50_ms": 4.317,
+          "latency_p95_ms": 5.131,
+          "latency_p99_ms": 5.452
+        },
+        "full-text": {
+          "latency_p50_ms": 4.299,
+          "latency_p95_ms": 5.134,
+          "latency_p99_ms": 5.521
+        },
+        "deep-pagination": {
+          "latency_p50_ms": 4.275,
+          "latency_p95_ms": 5.283,
+          "latency_p99_ms": 6.078
+        },
+        "terms-aggregation": {
+          "latency_p50_ms": 3.999,
+          "latency_p95_ms": 4.845,
+          "latency_p99_ms": 5.313
+        },
+        "date-histogram": {
+          "latency_p50_ms": 3.997,
+          "latency_p95_ms": 4.857,
+          "latency_p99_ms": 5.316
+        }
+      }
+    }
+  ]
+}
