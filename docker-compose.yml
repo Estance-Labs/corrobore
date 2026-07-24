@@ -24,6 +24,9 @@ services:
       # The production container persists graph records by default.
       CORROBORE_STORAGE_MODE: ${CORROBORE_STORAGE_MODE:-persistent}
       CORROBORE_STORAGE_DIR: ${CORROBORE_STORAGE_DIR:-/graph-data}
+      CORROBORE_STORAGE_MAX_HOT_NODES: ${CORROBORE_STORAGE_MAX_HOT_NODES:-16384}
+      CORROBORE_STORAGE_MAX_HOT_RELATIONSHIPS: ${CORROBORE_STORAGE_MAX_HOT_RELATIONSHIPS:-32768}
+      CORROBORE_STORAGE_MAX_WARM_ADJACENCY_ENTRIES: ${CORROBORE_STORAGE_MAX_WARM_ADJACENCY_ENTRIES:-65536}
     volumes:
       # Persist session state and logs across restarts.
       - corrobore-data:/data

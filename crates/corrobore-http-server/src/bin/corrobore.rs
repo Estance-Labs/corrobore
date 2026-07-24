@@ -105,6 +105,15 @@ struct ConfigArgs {
     /// Override whether persistent recovery is strict.
     #[arg(long, action = clap::ArgAction::Set)]
     storage_strict_recovery: Option<bool>,
+    /// Override the maximum resident hot node payloads.
+    #[arg(long)]
+    storage_max_hot_nodes: Option<u64>,
+    /// Override the maximum resident hot relationship payloads.
+    #[arg(long)]
+    storage_max_hot_relationships: Option<u64>,
+    /// Override the maximum resident warm adjacency entries.
+    #[arg(long)]
+    storage_max_warm_adjacency_entries: Option<u64>,
     /// Override the structured log directory.
     #[arg(long)]
     log_dir: Option<PathBuf>,
@@ -206,6 +215,9 @@ struct FileStorage {
     directory: Option<String>,
     require_fsync: Option<bool>,
     strict_recovery: Option<bool>,
+    max_hot_nodes: Option<u64>,
+    max_hot_relationships: Option<u64>,
+    max_warm_adjacency_entries: Option<u64>,
 }
 
 #[derive(Default, Deserialize)]
@@ -614,6 +626,21 @@ fn apply_file(path: &Path, values: &mut HashMap<String, String>) -> Result<(), S
         "CORROBORE_STORAGE_STRICT_RECOVERY",
         config.storage.strict_recovery,
     );
+    insert_num(
+        values,
+        "CORROBORE_STORAGE_MAX_HOT_NODES",
+        config.storage.max_hot_nodes,
+    );
+    insert_num(
+        values,
+        "CORROBORE_STORAGE_MAX_HOT_RELATIONSHIPS",
+        config.storage.max_hot_relationships,
+    );
+    insert_num(
+        values,
+        "CORROBORE_STORAGE_MAX_WARM_ADJACENCY_ENTRIES",
+        config.storage.max_warm_adjacency_entries,
+    );
     insert(
         values,
         "CORROBORE_HTTP_LOG_DIR",
@@ -762,6 +789,21 @@ fn apply_cli(args: &ConfigArgs, values: &mut HashMap<String, String>) {
         values,
         "CORROBORE_STORAGE_STRICT_RECOVERY",
         args.storage_strict_recovery,
+    );
+    insert_num(
+        values,
+        "CORROBORE_STORAGE_MAX_HOT_NODES",
+        args.storage_max_hot_nodes,
+    );
+    insert_num(
+        values,
+        "CORROBORE_STORAGE_MAX_HOT_RELATIONSHIPS",
+        args.storage_max_hot_relationships,
+    );
+    insert_num(
+        values,
+        "CORROBORE_STORAGE_MAX_WARM_ADJACENCY_ENTRIES",
+        args.storage_max_warm_adjacency_entries,
     );
     insert_path(values, "CORROBORE_HTTP_LOG_DIR", args.log_dir.as_deref());
     insert(values, "CORROBORE_LOG_LEVEL", args.log_level.clone());
@@ -1108,6 +1150,18 @@ fn print_effective(config: &OperationalConfig) {
     println!(
         "storage.strict_recovery = {}",
         config.server.storage_strict_recovery
+    );
+    println!(
+        "storage.max_hot_nodes = {}",
+        config.server.storage_max_hot_nodes
+    );
+    println!(
+        "storage.max_hot_relationships = {}",
+        config.server.storage_max_hot_relationships
+    );
+    println!(
+        "storage.max_warm_adjacency_entries = {}",
+        config.server.storage_max_warm_adjacency_entries
     );
     println!("interfaces.enabled = {:?}", config.interfaces);
     if let Some(directory) = &config.server.web_dir {

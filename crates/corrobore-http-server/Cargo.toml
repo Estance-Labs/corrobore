@@ -34,6 +34,7 @@ base64 = "0.22"
 chrono = { workspace = true }
 clap = { workspace = true }
 corrobore-engine = { path = "../corrobore-engine" }
+cypher-parser = { path = "../cypher-parser" }
 dotenvy = { workspace = true }
 domain-provider-abi = { path = "../domain-provider-abi" }
 ed25519-dalek = { version = "2.2", features = ["pkcs8"] }

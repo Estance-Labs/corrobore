@@ -486,6 +486,7 @@ dependencies = [
  "chrono",
  "clap",
  "corrobore-engine",
+ "cypher-parser",
  "domain-provider-abi",
  "dotenvy",
  "ed25519-dalek",

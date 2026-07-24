@@ -65,6 +65,9 @@ fn config(web_dir: Option<String>) -> ServerConfig {
         storage_dir: None,
         storage_require_fsync: false,
         storage_strict_recovery: false,
+        storage_max_hot_nodes: 16_384,
+        storage_max_hot_relationships: 32_768,
+        storage_max_warm_adjacency_entries: 65_536,
         domain_provider_dir: None,
         domain_provider_manifest_file: None,
     }

@@ -192,6 +192,28 @@ pub trait EnginePersistence: std::fmt::Debug + Send {
 
     /// Atomically commits the graph after a successful mutation.
     fn persist_graph(&mut self, graph: &Graph) -> Result<(), String>;
+
+    /// Prepare a request-scoped graph projection before execution.
+    ///
+    /// Snapshot adapters use the default and keep their already loaded graph.
+    /// Paged adapters return a bounded projection selected through durable
+    /// catalog metadata, allowing startup to remain payload-cold.
+    fn prepare_graph_for_request(&mut self, _query: &str) -> Result<Option<Graph>, String> {
+        Ok(None)
+    }
+
+    /// Commit the changed record versions between two operational projections.
+    ///
+    /// The default preserves compatibility with snapshot-style embedded
+    /// adapters. Standalone paged adapters override this method and append only
+    /// the record-level delta under one WAL transaction.
+    fn persist_graph_transition(
+        &mut self,
+        _previous: &Graph,
+        current: &Graph,
+    ) -> Result<(), String> {
+        self.persist_graph(current)
+    }
 }
 
 /// Options controlling an embedded STIX bundle export.
@@ -371,6 +393,13 @@ impl CorroboreEngine {
         &mut self,
         request: EngineRequest,
     ) -> Result<CypherResponse, EngineError> {
+        if let Some(adapter) = self.persistence.as_mut()
+            && let Some(projection) = adapter
+                .prepare_graph_for_request(&request.query)
+                .map_err(EngineError::Persistence)?
+        {
+            self.gateway.replace_graph(projection);
+        }
         let workspace_id = match request.workspace_id {
             Some(value) => {
                 WorkspaceId::new(value).map_err(|error| EngineError::InvalidConfiguration {
@@ -424,7 +453,12 @@ impl CorroboreEngine {
         if durable_mutation && response.status == CypherResponseStatus::Success {
             let committed_graph = self.gateway.graph().clone();
             if let Some(adapter) = self.persistence.as_mut()
-                && let Err(error) = adapter.persist_graph(&committed_graph)
+                && let Err(error) = adapter.persist_graph_transition(
+                    previous_graph
+                        .as_ref()
+                        .expect("durable mutation captured rollback"),
+                    &committed_graph,
+                )
             {
                 self.gateway
                     .replace_graph(previous_graph.expect("durable mutation captured rollback"));

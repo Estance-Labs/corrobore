@@ -21,7 +21,28 @@ The parser implements the subset listed in [Cypher Support](../user-guide/cypher
 
 ## Graph and storage
 
-`Graph` provides in-memory node, relationship, traversal, temporal, snapshot, claim, and semantic-seed operations. `FileBackedGraphStore` provides append-only versioned records, a manifest, recovery, checksums, and catalogs. Pager and working-set contracts allow a bounded memory view over durable records, but the default HTTP server currently constructs an in-process gateway rather than loading a persistent graph store.
+`Graph` provides request-scoped node, relationship, traversal, temporal,
+snapshot, claim, and semantic-seed operations. In persistent standalone mode,
+`CanonicalEngineStore` is the source of truth: WAL intent and record-level
+append logs are committed before acknowledgement, while catalog, label/type and
+adjacency state are rebuildable projections. Startup restores metadata and
+checkpoint/WAL state without hydrating graph payloads. The public engine asks
+the file-backed pager for a bounded projection before each request and commits
+only changed record versions afterward. Ephemeral and embedded callers can
+continue using an in-memory `Graph`.
+
+The persistent path deliberately separates:
+
+- canonical node and relationship versions in append-only logs;
+- durable transaction intent, applied markers and periodic checkpoints;
+- compact catalog and adjacency projections;
+- request-scoped hot payloads and warm adjacency metadata;
+- cold records addressed by cataloged file offsets.
+
+Checkpointing is periodic so a small mutation does not rewrite the full
+catalog. Recovery loads the last safe checkpoint and replays newer committed
+transactions idempotently. Compaction operates behind that checkpoint boundary
+and never rewrites active node or relationship payload references.
 
 ## Working-set subsystem
 

@@ -215,7 +215,27 @@ paths:
                       expired_last_5m_sessions: {type: integer}
                   durability:
                     type: object
-                    required: [controls, storage_version, record_format, wal_bytes, wal_lag_sequences, checkpoint_sequence, checkpoint_age_seconds, compaction_backlog_bytes, recovery]
+                    required:
+                      - controls
+                      - storage_version
+                      - record_format
+                      - wal_bytes
+                      - wal_lag_sequences
+                      - checkpoint_sequence
+                      - checkpoint_age_seconds
+                      - compaction_backlog_bytes
+                      - page_ins
+                      - cache_hits
+                      - resident_hot_nodes
+                      - resident_hot_relationships
+                      - resident_warm_adjacency_entries
+                      - resident_cold_nodes
+                      - resident_cold_relationships
+                      - node_index_entries
+                      - relationship_index_entries
+                      - label_index_entries
+                      - relationship_type_index_entries
+                      - recovery
                     properties:
                       controls:
                         type: object
@@ -244,10 +264,26 @@ paths:
                           - {type: integer, minimum: 0}
                           - {type: 'null'}
                       compaction_backlog_bytes: {type: integer, minimum: 0}
+                      page_ins: {type: integer, minimum: 0}
+                      cache_hits: {type: integer, minimum: 0}
+                      resident_hot_nodes: {type: integer, minimum: 0}
+                      resident_hot_relationships: {type: integer, minimum: 0}
+                      resident_warm_adjacency_entries: {type: integer, minimum: 0}
+                      resident_cold_nodes: {type: integer, minimum: 0}
+                      resident_cold_relationships: {type: integer, minimum: 0}
+                      node_index_entries: {type: integer, minimum: 0}
+                      relationship_index_entries: {type: integer, minimum: 0}
+                      label_index_entries: {type: integer, minimum: 0}
+                      relationship_type_index_entries: {type: integer, minimum: 0}
                       recovery:
                         type: object
-                        required: [outcome, manifest_validated, required_components_validated, catalog_recovered, adjacency_storage_recovered, warning_count, derived_state_rebuilt]
+                        required: [outcome, manifest_validated, required_components_validated, catalog_recovered, adjacency_storage_recovered, warning_count, derived_state_rebuilt, replayed_transaction_count, recovery_path]
                         properties:
+                          replayed_transaction_count: {type: integer, minimum: 0}
+                          recovery_path:
+                            oneOf:
+                              - {type: string, enum: [checkpoint_and_bounded_replay, full_replay]}
+                              - {type: 'null'}
                           outcome:
                             type: string
                             enum: [ephemeral, recovered, unavailable]
