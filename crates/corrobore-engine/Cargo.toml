@@ -16,9 +16,16 @@ path = "src/lib.rs"
 export-stix = { path = "../export-stix" }
 graph-core = { path = "../graph-core" }
 shared-runtime = { path = "../shared-runtime" }
+base64 = "0.22"
+hmac = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+subtle = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+serde = { workspace = true }
 serde_json = { workspace = true }
 
 [lints]

@@ -27,7 +27,7 @@ flowchart TD
 
 | Crate | Responsibility |
 | :--- | :--- |
-| `corrobore-engine` | Synchronous embedded facade for reads, writes, seed search, graph inspection, and deterministic STIX export. |
+| `corrobore-engine` | Synchronous embedded facade plus the versioned, backend-neutral Knowledge Data Engine provider contract for lifecycle, typed reads, graph operations, writes and durability. |
 | `corrobore-http-server` | Axum transport, authentication, limits, sessions, logs, metrics, and HTTP contracts. |
 | `corrobore-ingest` | Incremental TAXII 2.1 polling and import through the public HTTP API. |
 | `shared-runtime` | Agent-safe request modes, policies, budgets, validation, audit events, and the Cypher gateway. |

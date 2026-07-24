@@ -60,6 +60,8 @@
 //! # Ok::<(), corrobore_engine::EngineError>(())
 //! ```
 
+mod knowledge_data;
+
 use std::collections::HashMap;
 
 use export_stix::{StixExportBundle, export_stix_subset_bundle};
@@ -81,6 +83,8 @@ pub use shared_runtime::{
     CypherValidationError,
 };
 use thiserror::Error;
+
+pub use knowledge_data::*;
 
 const DEFAULT_WORKSPACE_ID: &str = "workspace--embedded-default";
 const DEFAULT_SESSION_ID: &str = "session--embedded-default";

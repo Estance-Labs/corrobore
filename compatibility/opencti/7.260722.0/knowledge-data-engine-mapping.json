@@ -1,0 +1,164 @@
+[
+  {
+    "operation_id": "startup.version",
+    "contract_operation": "initialize",
+    "support": "typed"
+  },
+  {
+    "operation_id": "startup.initialize",
+    "contract_operation": "initialize",
+    "support": "typed"
+  },
+  {
+    "operation_id": "schema.index-management",
+    "contract_operation": "rebuild_indexes",
+    "support": "typed"
+  },
+  {
+    "operation_id": "schema.mapping",
+    "contract_operation": "migrate",
+    "support": "typed"
+  },
+  {
+    "operation_id": "migration.update-by-query",
+    "contract_operation": "migrate",
+    "support": "typed"
+  },
+  {
+    "operation_id": "migration.delete-by-query",
+    "contract_operation": "migrate",
+    "support": "typed"
+  },
+  {
+    "operation_id": "migration.reindex",
+    "contract_operation": "migrate",
+    "support": "typed"
+  },
+  {
+    "operation_id": "read.search",
+    "contract_operation": "search",
+    "support": "typed"
+  },
+  {
+    "operation_id": "read.by-id",
+    "contract_operation": "get_by_id",
+    "support": "typed"
+  },
+  {
+    "operation_id": "read.query-planning",
+    "contract_operation": "search",
+    "support": "typed"
+  },
+  {
+    "operation_id": "read.full-text",
+    "contract_operation": "search",
+    "support": "typed"
+  },
+  {
+    "operation_id": "read.pagination",
+    "contract_operation": "paginate",
+    "support": "typed"
+  },
+  {
+    "operation_id": "read.count",
+    "contract_operation": "count",
+    "support": "typed"
+  },
+  {
+    "operation_id": "read.aggregation.terms",
+    "contract_operation": "aggregate",
+    "support": "typed"
+  },
+  {
+    "operation_id": "read.aggregation.date-histogram",
+    "contract_operation": "aggregate",
+    "support": "typed"
+  },
+  {
+    "operation_id": "read.attribute-values",
+    "contract_operation": "aggregate",
+    "support": "typed"
+  },
+  {
+    "operation_id": "write.index",
+    "contract_operation": "create",
+    "support": "typed"
+  },
+  {
+    "operation_id": "write.bulk",
+    "contract_operation": "bulk",
+    "support": "typed"
+  },
+  {
+    "operation_id": "write.update",
+    "contract_operation": "update",
+    "support": "typed"
+  },
+  {
+    "operation_id": "write.update-by-query",
+    "contract_operation": "bulk",
+    "support": "typed"
+  },
+  {
+    "operation_id": "write.relations",
+    "contract_operation": "bulk",
+    "support": "typed"
+  },
+  {
+    "operation_id": "write.drafts",
+    "contract_operation": "bulk",
+    "support": "typed"
+  },
+  {
+    "operation_id": "delete.by-id",
+    "contract_operation": "delete",
+    "support": "typed"
+  },
+  {
+    "operation_id": "delete.by-query",
+    "contract_operation": "bulk",
+    "support": "typed"
+  },
+  {
+    "operation_id": "delete.impact-analysis",
+    "contract_operation": "subgraph",
+    "support": "typed"
+  },
+  {
+    "operation_id": "file.search",
+    "contract_operation": "search",
+    "support": "typed"
+  },
+  {
+    "operation_id": "file.index",
+    "contract_operation": "bulk",
+    "support": "typed"
+  },
+  {
+    "operation_id": "file.delete",
+    "contract_operation": "delete",
+    "support": "typed"
+  },
+  {
+    "operation_id": "file.extract",
+    "contract_operation": null,
+    "support": "unsupported",
+    "reason": "File extraction is an asynchronous worker concern outside the Knowledge Data Engine boundary; issue #48 owns that worker contract."
+  },
+  {
+    "operation_id": "monitoring.health",
+    "contract_operation": "health",
+    "support": "typed"
+  },
+  {
+    "operation_id": "maintenance.stats",
+    "contract_operation": "health",
+    "support": "typed"
+  },
+  {
+    "operation_id": "maintenance.transport",
+    "contract_operation": null,
+    "support": "unsupported",
+    "reason": "Engine-specific transport tuning is intentionally not portable; issue #52 owns provider-private maintenance hooks."
+  }
+]
