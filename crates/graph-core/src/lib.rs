@@ -232,7 +232,7 @@ pub use export_metadata::{ExportMetadata, ExportMode, ExportProfile, ValidationR
 pub use export_plan::{
     DeterministicExportPlan, ExportRecord, ExportRecordKind, build_deterministic_export_plan,
 };
-pub use graph::Graph;
+pub use graph::{Graph, GraphPersistenceSnapshot};
 pub use graph_pager::{
     AdjacencyDirection, GraphPager, GraphPagerError, GraphPagerResult, GraphRecordMetadata,
     GraphRecordRef, PageIdentity, PageIdentityKind, PageInRequest, PageInResult, PageInStatus,

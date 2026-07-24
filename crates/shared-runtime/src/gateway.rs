@@ -101,6 +101,20 @@ impl CypherGateway {
         }
     }
 
+    /// Creates a gateway from explicit policies and an existing graph.
+    pub fn with_graph(
+        runtime_policy: RuntimePolicy,
+        budget: RuntimeBudget,
+        execution_policy: ExecutionPolicy,
+        graph: Graph,
+    ) -> Self {
+        Self {
+            validator: RequestValidator::new(runtime_policy),
+            budget,
+            executor: CypherPipelineExecutor::with_graph(execution_policy, graph),
+        }
+    }
+
     /// Strict default.
     pub fn strict_default() -> Self {
         Self::with_policies(
@@ -162,6 +176,11 @@ impl CypherGateway {
     /// Returns an immutable reference to the runtime graph.
     pub fn graph(&self) -> &Graph {
         self.executor.graph()
+    }
+
+    /// Replaces the runtime graph after a failed durable commit.
+    pub fn replace_graph(&mut self, graph: Graph) {
+        *self.executor.graph_mut() = graph;
     }
 }
 

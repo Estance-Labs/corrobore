@@ -20,6 +20,8 @@
 // THE SOFTWARE.
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     GraphError, Node, NodeId, NodeInput, NodePatch, NodeVersionId, RecordStatus, Relationship,
     RelationshipId, RelationshipInput, RelationshipPatch, RelationshipVersionId,
@@ -40,10 +42,133 @@ pub struct Graph {
     next_relationship_version_sequence: u64,
 }
 
+/// Serializable, version-preserving snapshot of one in-memory graph.
+///
+/// Storage adapters use this opaque value instead of depending on the private
+/// map and adjacency representation of [`Graph`].
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GraphPersistenceSnapshot {
+    nodes: Vec<Node>,
+    relationships: Vec<Relationship>,
+    next_node_sequence: u64,
+    next_node_version_sequence: u64,
+    next_relationship_sequence: u64,
+    next_relationship_version_sequence: u64,
+}
+
 impl Graph {
     /// Creates a new instance.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Captures every graph record version and identifier sequence for durable
+    /// storage.
+    pub fn persistence_snapshot(&self) -> GraphPersistenceSnapshot {
+        let mut nodes: Vec<Node> = self.nodes.values().flatten().cloned().collect();
+        nodes.sort_by(|left, right| {
+            left.id
+                .as_str()
+                .cmp(right.id.as_str())
+                .then(left.version.cmp(&right.version))
+        });
+        let mut relationships: Vec<Relationship> =
+            self.relationships.values().flatten().cloned().collect();
+        relationships.sort_by(|left, right| {
+            left.id
+                .as_str()
+                .cmp(right.id.as_str())
+                .then(left.version.cmp(&right.version))
+        });
+        GraphPersistenceSnapshot {
+            nodes,
+            relationships,
+            next_node_sequence: self.next_node_sequence,
+            next_node_version_sequence: self.next_node_version_sequence,
+            next_relationship_sequence: self.next_relationship_sequence,
+            next_relationship_version_sequence: self.next_relationship_version_sequence,
+        }
+    }
+
+    /// Reconstructs a graph from a validated durable snapshot.
+    pub fn from_persistence_snapshot(
+        snapshot: GraphPersistenceSnapshot,
+    ) -> Result<Self, GraphError> {
+        let mut graph = Graph {
+            next_node_sequence: snapshot.next_node_sequence,
+            next_node_version_sequence: snapshot.next_node_version_sequence,
+            next_relationship_sequence: snapshot.next_relationship_sequence,
+            next_relationship_version_sequence: snapshot.next_relationship_version_sequence,
+            ..Graph::default()
+        };
+
+        for node in snapshot.nodes {
+            if node.current
+                && graph
+                    .current_node_versions
+                    .insert(node.id.clone(), node.version_id.clone())
+                    .is_some()
+            {
+                return Err(GraphError::InternalInvariantViolation(format!(
+                    "multiple current node versions in persistence snapshot for {}",
+                    node.id.as_str()
+                )));
+            }
+            graph.nodes.entry(node.id.clone()).or_default().push(node);
+        }
+        for node_id in graph.nodes.keys() {
+            if !graph.current_node_versions.contains_key(node_id) {
+                return Err(GraphError::InternalInvariantViolation(format!(
+                    "missing current node version in persistence snapshot for {}",
+                    node_id.as_str()
+                )));
+            }
+        }
+
+        for relationship in snapshot.relationships {
+            if !graph.nodes.contains_key(&relationship.source)
+                || !graph.nodes.contains_key(&relationship.target)
+            {
+                return Err(GraphError::InternalInvariantViolation(format!(
+                    "relationship {} references a missing endpoint in persistence snapshot",
+                    relationship.id.as_str()
+                )));
+            }
+            if relationship.current {
+                if graph
+                    .current_relationship_versions
+                    .insert(relationship.id.clone(), relationship.version_id.clone())
+                    .is_some()
+                {
+                    return Err(GraphError::InternalInvariantViolation(format!(
+                        "multiple current relationship versions in persistence snapshot for {}",
+                        relationship.id.as_str()
+                    )));
+                }
+                graph.adjacency.record_created_relationship(
+                    &relationship.id,
+                    &relationship.source,
+                    &relationship.target,
+                )?;
+            }
+            graph
+                .relationships
+                .entry(relationship.id.clone())
+                .or_default()
+                .push(relationship);
+        }
+        for relationship_id in graph.relationships.keys() {
+            if !graph
+                .current_relationship_versions
+                .contains_key(relationship_id)
+            {
+                return Err(GraphError::InternalInvariantViolation(format!(
+                    "missing current relationship version in persistence snapshot for {}",
+                    relationship_id.as_str()
+                )));
+            }
+        }
+        Ok(graph)
     }
 
     /// Creates the node.

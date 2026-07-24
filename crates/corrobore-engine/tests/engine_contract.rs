@@ -21,9 +21,23 @@
 use std::collections::HashMap;
 
 use corrobore_engine::{
-    CorroboreEngine, CypherResponseData, CypherResponseStatus, EngineError, EngineRequest,
-    EngineRequestMode, ExportMode, StixExportOptions,
+    CorroboreEngine, CypherResponseData, CypherResponseStatus, EngineError, EnginePersistence,
+    EngineRequest, EngineRequestMode, ExportMode, StixExportOptions,
 };
+use graph_core::Graph;
+
+#[derive(Debug)]
+struct FailingPersistence;
+
+impl EnginePersistence for FailingPersistence {
+    fn load_graph(&self) -> Result<Graph, String> {
+        Ok(Graph::new())
+    }
+
+    fn persist_graph(&mut self, _graph: &Graph) -> Result<(), String> {
+        Err("injected durable commit failure".to_owned())
+    }
+}
 
 #[test]
 fn engine_contract_strict_default_executes_read_query() {
@@ -103,6 +117,30 @@ fn engine_contract_write_then_read_back_returns_records() {
         }
         other => panic!("expected records, got {other:?}"),
     }
+}
+
+#[test]
+fn engine_contract_rolls_back_memory_when_durable_commit_fails() {
+    let mut engine = CorroboreEngine::builder()
+        .persistence(Box::new(FailingPersistence))
+        .build()
+        .expect("persistent engine should initialize");
+
+    let error = engine
+        .write("CREATE (n:Indicator {name: 'must-rollback'})")
+        .expect_err("failed durable commit must reject the mutation");
+    assert!(matches!(
+        error,
+        EngineError::Persistence(reason) if reason.contains("injected durable commit failure")
+    ));
+    assert!(
+        engine
+            .graph()
+            .list_nodes()
+            .expect("rolled-back graph should be readable")
+            .is_empty(),
+        "in-memory graph must roll back when persistence fails"
+    );
 }
 
 #[test]

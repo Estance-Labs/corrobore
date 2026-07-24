@@ -52,6 +52,9 @@ jobs:
               - 'scripts/docs-contract-guard.mjs'
               - 'scripts/docs-contract-guard.test.mjs'
               - 'scripts/open-source-readiness.test.mjs'
+              - 'scripts/standalone-acceptance-contract.test.mjs'
+              - 'scripts/standalone-acceptance.sh'
+              - '.github/workflows/standalone-acceptance.yml'
 
   quality:
     name: Format, lint, and build
@@ -96,6 +99,9 @@ jobs:
 
       - name: Validate open-source readiness contracts
         run: node --test scripts/open-source-readiness.test.mjs
+
+      - name: Validate standalone acceptance contracts
+        run: node --test scripts/standalone-acceptance-contract.test.mjs
 
   cargo-deny:
     name: Dependency and license audit

@@ -19,7 +19,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use axum::{
     body::{Body, to_bytes},
@@ -38,6 +43,41 @@ fn test_state() -> AppState {
     .expect("boundary test config should parse");
 
     AppState::new(config).expect("boundary test state should initialize")
+}
+
+fn persistent_test_state(storage_dir: &Path) -> AppState {
+    let runtime_dir = storage_dir
+        .parent()
+        .expect("storage fixture should have a parent")
+        .join("runtime");
+    let config = ServerConfig::from_map(&HashMap::from([
+        (
+            "CORROBORE_HTTP_AUTH_TOKEN".to_owned(),
+            "boundary-token".to_owned(),
+        ),
+        ("CORROBORE_STORAGE_MODE".to_owned(), "persistent".to_owned()),
+        (
+            "CORROBORE_STORAGE_DIR".to_owned(),
+            storage_dir.display().to_string(),
+        ),
+        (
+            "CORROBORE_HTTP_SESSION_STORE_DIR".to_owned(),
+            runtime_dir.display().to_string(),
+        ),
+    ]))
+    .expect("persistent boundary config should parse");
+
+    AppState::new(config).expect("persistent boundary state should initialize")
+}
+
+fn persistent_temp_dir() -> PathBuf {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should follow Unix epoch")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("corrobore-engine-persistence-{suffix}"));
+    fs::create_dir_all(&path).expect("persistent boundary directory should be created");
+    path
 }
 
 #[tokio::test]
@@ -111,6 +151,62 @@ async fn http_auto_mutation_is_visible_through_the_embedded_engine_boundary() {
             CypherResponseData::Records(ref records) if !records.is_empty()
         ),
         "embedded read should observe the auto-routed mutation performed through HTTP"
+    );
+}
+
+#[tokio::test]
+async fn persistent_http_mutation_survives_app_state_restart() {
+    let directory = persistent_temp_dir();
+    let storage_dir = directory.join("graph");
+    let first = persistent_test_state(&storage_dir);
+    let write = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/cypher/write")
+        .header(header::AUTHORIZATION, "Bearer boundary-token")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({"query": "CREATE (n:Indicator {name: 'durable-boundary'})"}).to_string(),
+        ))
+        .expect("persistent write request should build");
+    let response = build_router(first)
+        .oneshot(write)
+        .await
+        .expect("persistent write should run");
+    let write_status = response.status();
+    let write_body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("persistent write body should be readable");
+    assert_eq!(
+        write_status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&write_body)
+    );
+
+    let restarted = persistent_test_state(&storage_dir);
+    let read = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/cypher/read")
+        .header(header::AUTHORIZATION, "Bearer boundary-token")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({"query": "MATCH (n:Indicator) RETURN n"}).to_string(),
+        ))
+        .expect("persistent read request should build");
+    let response = build_router(restarted)
+        .oneshot(read)
+        .await
+        .expect("persistent read should run");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("persistent read body should be readable");
+    let payload: Value = serde_json::from_slice(&body).expect("persistent read should be JSON");
+    assert!(
+        payload["result"]["data"]["Records"]
+            .as_array()
+            .is_some_and(|records| !records.is_empty()),
+        "HTTP mutation must remain visible after rebuilding AppState from persistent storage"
     );
 }
 
