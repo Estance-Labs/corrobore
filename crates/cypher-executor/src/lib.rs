@@ -34,7 +34,10 @@ use cypher_parser::{
 };
 use cypher_planner::{build_function_call_plan, build_logical_plan};
 use function_registry::{FunctionRegistry, FunctionValue, ModelFunctionAdapter, RegistryError};
-use graph_core::{Graph, Node, NodeInput, NodePatch, PropertyValue, Relationship};
+use graph_core::{
+    Graph, Node, NodeInput, NodePatch, PropertyValue, Relationship, RelationshipInput,
+    RelationshipPatch,
+};
 use thiserror::Error;
 use tracing::{debug, instrument, trace, warn};
 
@@ -288,7 +291,7 @@ impl CypherPipelineExecutor {
         };
 
         let mut nodes_created: usize = 0;
-        let relationships_created: usize = 0;
+        let mut relationships_created: usize = 0;
         let mut properties_set: usize = 0;
         let mut nodes_deleted: usize = 0;
         let mut relationships_deleted: usize = 0;
@@ -306,21 +309,15 @@ impl CypherPipelineExecutor {
 
         // --- CREATE ---
         if let Some(create_clause) = &query.create_clause {
-            for node_pattern in &create_clause.nodes {
-                let labels: Vec<&str> = node_pattern.label.as_deref().into_iter().collect();
-                let mut input = NodeInput::new(labels);
-                for (key, value) in &node_pattern.properties {
-                    input = input.with_property(key.clone(), literal_to_property_value(value));
-                }
-                let node_id = self.graph.create_node(input).map_err(|e| {
-                    ExecutionError::InvalidQuery(format!("CREATE node failed: {e}"))
-                })?;
-                nodes_created += 1;
-
-                // Bind the created node so RETURN can project it.
-                if let Some(node) = self.graph.get_node(&node_id).map_err(|e| {
-                    ExecutionError::InvalidQuery(format!("node lookup after CREATE failed: {e}"))
-                })? {
+            if create_clause.relationship.is_some() {
+                let (created_nodes, created_relationships) =
+                    self.execute_create_relationship(create_clause, &mut rows)?;
+                nodes_created += created_nodes;
+                relationships_created += created_relationships;
+            } else {
+                for node_pattern in &create_clause.nodes {
+                    let node = self.create_node_from_pattern(node_pattern, "CREATE")?;
+                    nodes_created += 1;
                     let mut row = ExecutionRow::new();
                     row.bindings
                         .insert(node_pattern.variable.clone(), BindingValue::Node(node));
@@ -331,33 +328,18 @@ impl CypherPipelineExecutor {
 
         // --- MERGE ---
         if let Some(merge_clause) = &query.merge_clause {
-            let pattern = &merge_clause.pattern;
-            // Try to find an existing node matching label + properties.
-            let existing = self.find_matching_node(pattern)?;
-
-            match existing {
-                Some(node) => {
-                    // Node found — bind it.
-                    let mut row = ExecutionRow::new();
-                    row.bindings
-                        .insert(pattern.variable.clone(), BindingValue::Node(node));
-                    rows.push(row);
-                }
-                None => {
-                    // Not found — create.
-                    let labels: Vec<&str> = pattern.label.as_deref().into_iter().collect();
-                    let mut input = NodeInput::new(labels);
-                    for (key, value) in &pattern.properties {
-                        input = input.with_property(key.clone(), literal_to_property_value(value));
+            if merge_clause.relationship.is_none() {
+                let pattern = &merge_clause.pattern;
+                match self.find_matching_node(pattern)? {
+                    Some(node) => {
+                        let mut row = ExecutionRow::new();
+                        row.bindings
+                            .insert(pattern.variable.clone(), BindingValue::Node(node));
+                        rows.push(row);
                     }
-                    let node_id = self.graph.create_node(input).map_err(|e| {
-                        ExecutionError::InvalidQuery(format!("MERGE create failed: {e}"))
-                    })?;
-                    nodes_created += 1;
-
-                    if let Some(node) = self.graph.get_node(&node_id).map_err(|e| {
-                        ExecutionError::InvalidQuery(format!("node lookup after MERGE failed: {e}"))
-                    })? {
+                    None => {
+                        let node = self.create_node_from_pattern(pattern, "MERGE")?;
+                        nodes_created += 1;
                         let mut row = ExecutionRow::new();
                         row.bindings
                             .insert(pattern.variable.clone(), BindingValue::Node(node));
@@ -365,6 +347,7 @@ impl CypherPipelineExecutor {
                     }
                 }
             }
+            relationships_created += self.execute_merge_relationship(merge_clause, &mut rows)?;
         }
 
         // --- SET ---
@@ -381,6 +364,19 @@ impl CypherPipelineExecutor {
                         self.graph.update_node(node.id(), patch).map_err(|e| {
                             ExecutionError::InvalidQuery(format!("SET failed: {e}"))
                         })?;
+                        properties_set += 1;
+                    } else if let Some(BindingValue::Relationship(relationship)) =
+                        row.bindings.get(variable)
+                    {
+                        let patch = RelationshipPatch::default().set_property(
+                            assignment.target.property.clone(),
+                            literal_to_property_value(&assignment.value),
+                        );
+                        self.graph
+                            .update_relationship(relationship.id(), patch)
+                            .map_err(|e| {
+                                ExecutionError::InvalidQuery(format!("SET failed: {e}"))
+                            })?;
                         properties_set += 1;
                     }
                 }
@@ -402,9 +398,17 @@ impl CypherPipelineExecutor {
                             }
                         }
                         BindingValue::Relationship(rel) => {
-                            new_row
-                                .bindings
-                                .insert(var.clone(), BindingValue::Relationship(rel.clone()));
+                            if let Some(refreshed) =
+                                self.graph.get_relationship(rel.id()).map_err(|e| {
+                                    ExecutionError::InvalidQuery(format!(
+                                        "relationship re-read after SET failed: {e}"
+                                    ))
+                                })?
+                            {
+                                new_row
+                                    .bindings
+                                    .insert(var.clone(), BindingValue::Relationship(refreshed));
+                            }
                         }
                     }
                 }
@@ -510,6 +514,146 @@ impl CypherPipelineExecutor {
                 fix_hints: vec![],
             })
         }
+    }
+
+    // Create or reuse a MERGE relationship and bind it for SET/RETURN.
+    fn execute_merge_relationship(
+        &mut self,
+        merge_clause: &cypher_parser::MergeClause,
+        rows: &mut [ExecutionRow],
+    ) -> Result<usize, ExecutionError> {
+        let Some((relationship_pattern, target_pattern)) = &merge_clause.relationship else {
+            return Ok(0);
+        };
+        let relationship_type = relationship_pattern.rel_type.as_deref().ok_or_else(|| {
+            ExecutionError::InvalidQuery("MERGE relationship type is required".to_owned())
+        })?;
+        let target = match self.find_matching_node(target_pattern)? {
+            Some(node) => node,
+            None => self.create_node_from_pattern(target_pattern, "MERGE target")?,
+        };
+        let mut created = 0;
+        for row in rows.iter_mut() {
+            let source = match row.bindings.get(&merge_clause.pattern.variable) {
+                Some(BindingValue::Node(node)) => node.clone(),
+                _ => continue,
+            };
+            let existing = self
+                .graph
+                .relationships_between(source.id(), target.id())
+                .map_err(|e| ExecutionError::InvalidQuery(format!("MERGE scan failed: {e}")))?
+                .into_iter()
+                .find(|relationship| relationship.rel_type().as_str() == relationship_type);
+            let relationship = match existing {
+                Some(relationship) => relationship,
+                None => {
+                    let relationship_id = self
+                        .graph
+                        .create_relationship(
+                            RelationshipInput::new(
+                                source.id().clone(),
+                                relationship_type,
+                                target.id().clone(),
+                            )
+                            .map_err(|e| {
+                                ExecutionError::InvalidQuery(format!("MERGE create failed: {e}"))
+                            })?,
+                        )
+                        .map_err(|e| {
+                            ExecutionError::InvalidQuery(format!("MERGE create failed: {e}"))
+                        })?;
+                    created += 1;
+                    self.graph
+                        .get_relationship(&relationship_id)
+                        .map_err(|e| {
+                            ExecutionError::InvalidQuery(format!("MERGE lookup failed: {e}"))
+                        })?
+                        .expect("created relationship should be readable")
+                }
+            };
+            row.bindings.insert(
+                target_pattern.variable.clone(),
+                BindingValue::Node(target.clone()),
+            );
+            if let Some(variable) = &relationship_pattern.variable {
+                row.bindings
+                    .insert(variable.clone(), BindingValue::Relationship(relationship));
+            }
+        }
+        Ok(created)
+    }
+
+    fn execute_create_relationship(
+        &mut self,
+        create_clause: &cypher_parser::CreateClause,
+        rows: &mut [ExecutionRow],
+    ) -> Result<(usize, usize), ExecutionError> {
+        let Some((relationship_pattern, target_pattern)) = &create_clause.relationship else {
+            return Ok((0, 0));
+        };
+        let source_variable = &create_clause.nodes[0].variable;
+        let relationship_type = relationship_pattern.rel_type.as_deref().ok_or_else(|| {
+            ExecutionError::InvalidQuery("CREATE relationship type is required".to_owned())
+        })?;
+        let mut created = 0;
+        for row in rows.iter_mut() {
+            let source = match row.bindings.get(source_variable) {
+                Some(BindingValue::Node(node)) => node.clone(),
+                _ => continue,
+            };
+            let target = self.create_node_from_pattern(target_pattern, "CREATE target")?;
+            let relationship_id = self
+                .graph
+                .create_relationship(
+                    RelationshipInput::new(
+                        source.id().clone(),
+                        relationship_type,
+                        target.id().clone(),
+                    )
+                    .map_err(|e| {
+                        ExecutionError::InvalidQuery(format!("CREATE relationship failed: {e}"))
+                    })?,
+                )
+                .map_err(|e| {
+                    ExecutionError::InvalidQuery(format!("CREATE relationship failed: {e}"))
+                })?;
+            let relationship = self
+                .graph
+                .get_relationship(&relationship_id)
+                .map_err(|e| {
+                    ExecutionError::InvalidQuery(format!("CREATE relationship lookup failed: {e}"))
+                })?
+                .expect("created relationship should be readable");
+            row.bindings
+                .insert(target_pattern.variable.clone(), BindingValue::Node(target));
+            if let Some(variable) = &relationship_pattern.variable {
+                row.bindings
+                    .insert(variable.clone(), BindingValue::Relationship(relationship));
+            }
+            created += 1;
+        }
+        Ok((created, created))
+    }
+
+    fn create_node_from_pattern(
+        &mut self,
+        pattern: &cypher_parser::NodePattern,
+        operation: &str,
+    ) -> Result<Node, ExecutionError> {
+        let labels: Vec<&str> = pattern.label.as_deref().into_iter().collect();
+        let mut input = NodeInput::new(labels);
+        for (key, value) in &pattern.properties {
+            input = input.with_property(key.clone(), literal_to_property_value(value));
+        }
+        let node_id = self.graph.create_node(input).map_err(|e| {
+            ExecutionError::InvalidQuery(format!("{operation} node creation failed: {e}"))
+        })?;
+        self.graph
+            .get_node(&node_id)
+            .map_err(|e| ExecutionError::InvalidQuery(format!("{operation} lookup failed: {e}")))?
+            .ok_or_else(|| {
+                ExecutionError::InvalidQuery(format!("{operation} created node is unavailable"))
+            })
     }
 
     /// Find an existing node matching a node pattern's label and inline
@@ -654,10 +798,10 @@ impl CypherPipelineExecutor {
                     continue;
                 };
 
-                if !node_label_matches(&source, match_clause.start.label.as_deref()) {
+                if !node_pattern_matches(&source, &match_clause.start) {
                     continue;
                 }
-                if !node_label_matches(&target, end_pattern.label.as_deref()) {
+                if !node_pattern_matches(&target, end_pattern) {
                     continue;
                 }
 
@@ -683,7 +827,7 @@ impl CypherPipelineExecutor {
         })?;
         let rows = nodes
             .into_iter()
-            .filter(|node| node_label_matches(node, match_clause.start.label.as_deref()))
+            .filter(|node| node_pattern_matches(node, &match_clause.start))
             .map(|node| {
                 let mut row = ExecutionRow::new();
                 row.bindings.insert(
@@ -724,6 +868,14 @@ fn node_label_matches(node: &Node, expected_label: Option<&str>) -> bool {
     expected_label
         .map(|label| node.has_label(label))
         .unwrap_or(true)
+}
+
+fn node_pattern_matches(node: &Node, pattern: &cypher_parser::NodePattern) -> bool {
+    node_label_matches(node, pattern.label.as_deref())
+        && pattern.properties.iter().all(|(key, expected)| {
+            node.property(key)
+                .is_some_and(|actual| *actual == literal_to_property_value(expected))
+        })
 }
 
 fn relationship_type_matches(relationship: &Relationship, expected_type: Option<&str>) -> bool {

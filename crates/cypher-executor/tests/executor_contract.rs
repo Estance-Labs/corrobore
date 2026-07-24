@@ -548,6 +548,73 @@ fn execute_merge_finds_existing_node_without_creating_duplicate() {
     }
 }
 
+#[test]
+fn execute_merge_relationship_creates_and_counts_the_edge() {
+    let mut executor = CypherPipelineExecutor::new(ExecutionPolicy {
+        read_only_by_default: false,
+    });
+    executor
+        .execute("CREATE (s:Entity {id: 'source'})")
+        .expect("source node should execute");
+    executor
+        .execute("CREATE (o:Entity {id: 'target'})")
+        .expect("target node should execute");
+
+    let result = executor
+        .execute("MATCH (s:Entity {id: 'source'}) MERGE (s)-[r:TARGETS]->(o:Entity {id: 'target'})")
+        .expect("relationship MERGE should execute");
+
+    match result.data {
+        ExecutionResultData::MutationSummary {
+            relationships_created,
+            ..
+        } => assert_eq!(relationships_created, 1),
+        _ => panic!("expected mutation summary for relationship MERGE"),
+    }
+    let read = executor
+        .execute("MATCH (s:Entity)-[r:TARGETS]->(o:Entity) RETURN COUNT(r)")
+        .expect("created relationship should be readable");
+    match read.data {
+        ExecutionResultData::Records(records) => {
+            assert_eq!(records[0].fields.get("count"), Some(&"1".to_owned()));
+        }
+        _ => panic!("expected relationship count record"),
+    }
+}
+
+#[test]
+fn execute_create_relationship_creates_and_counts_the_edge() {
+    let mut executor = CypherPipelineExecutor::new(ExecutionPolicy {
+        read_only_by_default: false,
+    });
+    executor
+        .execute("CREATE (s:Entity {id: 'source'})")
+        .expect("source node should execute");
+
+    let result = executor
+        .execute(
+            "MATCH (s:Entity {id: 'source'}) CREATE (s)-[r:TARGETS]->(o:Entity {id: 'target'})",
+        )
+        .expect("relationship CREATE should execute");
+
+    match result.data {
+        ExecutionResultData::MutationSummary {
+            relationships_created,
+            ..
+        } => assert_eq!(relationships_created, 1),
+        _ => panic!("expected mutation summary for relationship CREATE"),
+    }
+    let read = executor
+        .execute("MATCH (s:Entity)-[r:TARGETS]->(o:Entity) RETURN COUNT(r)")
+        .expect("created relationship should be readable");
+    match read.data {
+        ExecutionResultData::Records(records) => {
+            assert_eq!(records[0].fields.get("count"), Some(&"1".to_owned()));
+        }
+        _ => panic!("expected relationship count record"),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Mutation execution: SET
 // ---------------------------------------------------------------------------

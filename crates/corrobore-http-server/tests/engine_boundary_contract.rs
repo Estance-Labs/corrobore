@@ -114,6 +114,66 @@ async fn http_auto_mutation_is_visible_through_the_embedded_engine_boundary() {
     );
 }
 
+#[tokio::test]
+async fn http_parameters_create_and_read_a_relationship_through_the_engine_boundary() {
+    let state = test_state();
+    let app = build_router(state);
+    for (query, params) in [
+        (
+            "MERGE (n:Entity {id: $entityId})",
+            json!({"entityId": "source"}),
+        ),
+        (
+            "MERGE (n:Entity {id: $entityId})",
+            json!({"entityId": "target"}),
+        ),
+        (
+            "MATCH (s:Entity {id: $sourceId}) MERGE (s)-[r:TARGETS]->(o:Entity {id: $targetId}) SET r.fact_id = $factId",
+            json!({"sourceId": "source", "targetId": "target", "factId": "fact-1"}),
+        ),
+    ] {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/v1/cypher/write")
+            .header(header::AUTHORIZATION, "Bearer boundary-token")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"query": query, "params": params}).to_string(),
+            ))
+            .expect("HTTP mutation request should build");
+        let response = app
+            .clone()
+            .oneshot(request)
+            .await
+            .expect("HTTP mutation should run");
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/cypher/read")
+        .header(header::AUTHORIZATION, "Bearer boundary-token")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({
+                "query": "MATCH (s:Entity)-[r:TARGETS]->(o:Entity) WHERE s.id = $sourceId RETURN s.id, r.fact_id, o.id",
+                "params": {"sourceId": "source"}
+            })
+            .to_string(),
+        ))
+        .expect("HTTP read request should build");
+    let response = app.oneshot(request).await.expect("HTTP read should run");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("HTTP body should be readable");
+    let payload: Value = serde_json::from_slice(&body).expect("HTTP body should be JSON");
+    let fields = &payload["result"]["data"]["Records"][0]["fields"];
+    assert_eq!(fields["s.id"], "source");
+    assert_eq!(fields["r.fact_id"], "fact-1");
+    assert_eq!(fields["o.id"], "target");
+}
+
 #[test]
 fn dependency_boundary_keeps_server_dependencies_out_of_the_embedded_engine() {
     let engine_manifest = include_str!("../../corrobore-engine/Cargo.toml");
