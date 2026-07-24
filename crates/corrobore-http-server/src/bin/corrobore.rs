@@ -12,7 +12,10 @@ use std::{
 use clap::{Args, Parser, Subcommand};
 use corrobore_http_server::{
     AppState, AppStateInitError, ServerConfig, ServerLifecycleError, build_router,
-    install_shutdown_signal, logging::init_logging, serve_with_lifecycle,
+    install_shutdown_signal,
+    logging::init_logging,
+    security::{OperationalEndpointPolicy, TlsMaterialPaths, load_tls_material},
+    serve_tls_with_lifecycle, serve_with_lifecycle,
 };
 use serde::Deserialize;
 use tokio::net::TcpListener;
@@ -72,9 +75,21 @@ struct ConfigArgs {
     /// Override the configured bearer token.
     #[arg(long)]
     auth_token: Option<String>,
+    /// Override the authentication mode (`required` or `local-insecure`).
+    #[arg(long)]
+    auth_mode: Option<String>,
+    /// Load the configured bearer token from a file.
+    #[arg(long)]
+    auth_token_file: Option<PathBuf>,
     /// Override the configured administrative bearer token.
     #[arg(long)]
     admin_auth_token: Option<String>,
+    /// Load the configured administrative bearer token from a file.
+    #[arg(long)]
+    admin_auth_token_file: Option<PathBuf>,
+    /// Configure operational endpoints as `public` or `authenticated`.
+    #[arg(long)]
+    operational_endpoint_policy: Option<String>,
     /// Override the runtime data directory.
     #[arg(long)]
     data_dir: Option<PathBuf>,
@@ -165,6 +180,8 @@ struct FileConfig {
     #[serde(default)]
     maintenance: FileMaintenance,
     #[serde(default)]
+    operations: FileOperations,
+    #[serde(default)]
     tls: FileTls,
 }
 
@@ -173,8 +190,11 @@ struct FileConfig {
 struct FileServer {
     host: Option<String>,
     port: Option<u16>,
+    auth_mode: Option<String>,
     auth_token: Option<String>,
+    auth_token_file: Option<String>,
     admin_auth_token: Option<String>,
+    admin_auth_token_file: Option<String>,
     data_directory: Option<String>,
     shutdown_timeout_ms: Option<u64>,
 }
@@ -246,6 +266,12 @@ struct FileTls {
     enabled: bool,
     certificate_file: Option<String>,
     private_key_file: Option<String>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileOperations {
+    endpoint_policy: Option<String>,
 }
 
 struct OperationalConfig {
@@ -366,16 +392,34 @@ async fn probe_operational_endpoints(
         host if host.contains(':') && !host.starts_with('[') => format!("[{host}]"),
         host => host.to_owned(),
     };
-    let base_url = format!("http://{host}:{}", config.server.port);
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_millis(
-            config.server.request_timeout_ms,
-        ))
+    let scheme = if config.tls.enabled { "https" } else { "http" };
+    let base_url = format!("{scheme}://{host}:{}", config.server.port);
+    let mut client_builder = reqwest::Client::builder().timeout(std::time::Duration::from_millis(
+        config.server.request_timeout_ms,
+    ));
+    if config.tls.enabled {
+        let certificate_path = config.tls.certificate_file.as_ref().ok_or_else(|| {
+            StatusProbeError::Unavailable("TLS certificate is missing".to_owned())
+        })?;
+        let certificate_pem = fs::read(certificate_path).map_err(|_| {
+            StatusProbeError::Unavailable("TLS certificate cannot be read".to_owned())
+        })?;
+        let certificate = reqwest::Certificate::from_pem(&certificate_pem).map_err(|_| {
+            StatusProbeError::Unavailable("TLS certificate cannot be parsed".to_owned())
+        })?;
+        client_builder = client_builder.add_root_certificate(certificate);
+    }
+    let client = client_builder
         .build()
         .map_err(|error| StatusProbeError::Unavailable(error.to_string()))?;
 
-    let readiness_response = client
-        .get(format!("{base_url}/health/ready"))
+    let mut readiness_request = client.get(format!("{base_url}/health/ready"));
+    if config.server.operational_endpoint_policy == OperationalEndpointPolicy::Authenticated
+        && let Some(token) = config.server.auth_token.as_deref()
+    {
+        readiness_request = readiness_request.bearer_auth(token);
+    }
+    let readiness_response = readiness_request
         .send()
         .await
         .map_err(|error| StatusProbeError::Unavailable(error.to_string()))?;
@@ -400,8 +444,13 @@ async fn probe_operational_endpoints(
         )));
     }
 
-    let version_response = client
-        .get(format!("{base_url}/version"))
+    let mut version_request = client.get(format!("{base_url}/version"));
+    if config.server.operational_endpoint_policy == OperationalEndpointPolicy::Authenticated
+        && let Some(token) = config.server.auth_token.as_deref()
+    {
+        version_request = version_request.bearer_auth(token);
+    }
+    let version_response = version_request
         .send()
         .await
         .map_err(|error| StatusProbeError::Unavailable(error.to_string()))?;
@@ -464,7 +513,22 @@ fn load_config(args: &ConfigArgs) -> Result<OperationalConfig, String> {
     if let Some(path) = &args.config {
         apply_file(path, &mut values)?;
     }
-    for (key, value) in std::env::vars().filter(|(key, _)| key.starts_with("CORROBORE_")) {
+    let environment = std::env::vars()
+        .filter(|(key, _)| key.starts_with("CORROBORE_"))
+        .collect::<HashMap<_, _>>();
+    reconcile_secret_precedence(
+        &mut values,
+        &environment,
+        "CORROBORE_HTTP_AUTH_TOKEN",
+        "CORROBORE_HTTP_AUTH_TOKEN_FILE",
+    );
+    reconcile_secret_precedence(
+        &mut values,
+        &environment,
+        "CORROBORE_HTTP_ADMIN_AUTH_TOKEN",
+        "CORROBORE_HTTP_ADMIN_AUTH_TOKEN_FILE",
+    );
+    for (key, value) in environment {
         values.insert(key, value);
     }
     if !values.contains_key("CORROBORE_LOG_LEVEL")
@@ -502,8 +566,23 @@ fn apply_file(path: &Path, values: &mut HashMap<String, String>) -> Result<(), S
     );
     insert(
         values,
+        "CORROBORE_HTTP_AUTH_MODE",
+        config.server.auth_mode.clone(),
+    );
+    insert(
+        values,
+        "CORROBORE_HTTP_AUTH_TOKEN_FILE",
+        config.server.auth_token_file.clone(),
+    );
+    insert(
+        values,
         "CORROBORE_HTTP_ADMIN_AUTH_TOKEN",
         config.server.admin_auth_token.clone(),
+    );
+    insert(
+        values,
+        "CORROBORE_HTTP_ADMIN_AUTH_TOKEN_FILE",
+        config.server.admin_auth_token_file.clone(),
     );
     insert(
         values,
@@ -591,6 +670,11 @@ fn apply_file(path: &Path, values: &mut HashMap<String, String>) -> Result<(), S
         "CORROBORE_MAINTENANCE_INTERVAL_MS",
         Some(config.maintenance.interval_ms),
     );
+    insert(
+        values,
+        "CORROBORE_OPERATIONAL_ENDPOINT_POLICY",
+        config.operations.endpoint_policy,
+    );
     insert_bool(values, "CORROBORE_TLS_ENABLED", Some(config.tls.enabled));
     insert(
         values,
@@ -624,13 +708,43 @@ fn safe_toml_diagnostic(path: &Path, source: &str, error: &toml::de::Error) -> S
 }
 
 fn apply_cli(args: &ConfigArgs, values: &mut HashMap<String, String>) {
+    reconcile_cli_secret_precedence(
+        values,
+        args.auth_token.is_some(),
+        args.auth_token_file.is_some(),
+        "CORROBORE_HTTP_AUTH_TOKEN",
+        "CORROBORE_HTTP_AUTH_TOKEN_FILE",
+    );
+    reconcile_cli_secret_precedence(
+        values,
+        args.admin_auth_token.is_some(),
+        args.admin_auth_token_file.is_some(),
+        "CORROBORE_HTTP_ADMIN_AUTH_TOKEN",
+        "CORROBORE_HTTP_ADMIN_AUTH_TOKEN_FILE",
+    );
     insert(values, "CORROBORE_HTTP_HOST", args.host.clone());
     insert_num(values, "CORROBORE_HTTP_PORT", args.port);
     insert(values, "CORROBORE_HTTP_AUTH_TOKEN", args.auth_token.clone());
+    insert(values, "CORROBORE_HTTP_AUTH_MODE", args.auth_mode.clone());
+    insert_path(
+        values,
+        "CORROBORE_HTTP_AUTH_TOKEN_FILE",
+        args.auth_token_file.as_deref(),
+    );
     insert(
         values,
         "CORROBORE_HTTP_ADMIN_AUTH_TOKEN",
         args.admin_auth_token.clone(),
+    );
+    insert_path(
+        values,
+        "CORROBORE_HTTP_ADMIN_AUTH_TOKEN_FILE",
+        args.admin_auth_token_file.as_deref(),
+    );
+    insert(
+        values,
+        "CORROBORE_OPERATIONAL_ENDPOINT_POLICY",
+        args.operational_endpoint_policy.clone(),
     );
     insert_path(
         values,
@@ -707,6 +821,44 @@ fn apply_cli(args: &ConfigArgs, values: &mut HashMap<String, String>) {
         "CORROBORE_TLS_PRIVATE_KEY_FILE",
         args.tls_private_key_file.as_deref(),
     );
+}
+
+fn reconcile_secret_precedence(
+    lower: &mut HashMap<String, String>,
+    higher: &HashMap<String, String>,
+    inline_key: &str,
+    file_key: &str,
+) {
+    match (
+        higher.contains_key(inline_key),
+        higher.contains_key(file_key),
+    ) {
+        (true, false) => {
+            lower.remove(file_key);
+        }
+        (false, true) => {
+            lower.remove(inline_key);
+        }
+        _ => {}
+    }
+}
+
+fn reconcile_cli_secret_precedence(
+    lower: &mut HashMap<String, String>,
+    has_inline: bool,
+    has_file: bool,
+    inline_key: &str,
+    file_key: &str,
+) {
+    match (has_inline, has_file) {
+        (true, false) => {
+            lower.remove(file_key);
+        }
+        (false, true) => {
+            lower.remove(inline_key);
+        }
+        _ => {}
+    }
 }
 
 fn insert_path(values: &mut HashMap<String, String>, key: &str, value: Option<&Path>) {
@@ -857,6 +1009,10 @@ fn validate_operational(config: &OperationalConfig) -> Result<(), String> {
             return Err("tls.private_key_file: required when TLS is enabled".to_owned());
         }
     }
+    config
+        .server
+        .validate_network_exposure(config.tls.enabled)
+        .map_err(str::to_owned)?;
     Ok(())
 }
 
@@ -900,8 +1056,19 @@ fn startup_failure(error: &(dyn std::error::Error + 'static)) -> ExitCode {
 fn print_effective(config: &OperationalConfig) {
     println!("server.host = {:?}", config.server.host);
     println!("server.port = {}", config.server.port);
+    println!("server.auth_mode = {:?}", config.server.auth_mode.as_str());
     println!("server.auth_token = \"<redacted>\"");
+    if let Some(source) = config.server.auth_token_source {
+        println!("server.auth_token_source = {:?}", source.as_str());
+    }
     println!("server.admin_auth_token = \"<redacted>\"");
+    if let Some(source) = config.server.admin_auth_token_source {
+        println!("server.admin_auth_token_source = {:?}", source.as_str());
+    }
+    println!(
+        "operations.endpoint_policy = {:?}",
+        config.server.operational_endpoint_policy.as_str()
+    );
     println!(
         "server.shutdown_timeout_ms = {}",
         config.server.shutdown_timeout_ms
@@ -963,9 +1130,6 @@ fn print_effective(config: &OperationalConfig) {
 }
 
 async fn start_server(config: OperationalConfig) -> Result<(), Box<dyn std::error::Error>> {
-    if config.tls.enabled {
-        return Err("TLS listener is not available in this release".into());
-    }
     if !config
         .interfaces
         .iter()
@@ -976,6 +1140,27 @@ async fn start_server(config: OperationalConfig) -> Result<(), Box<dyn std::erro
         );
     }
     let web_enabled = config.interfaces.iter().any(|interface| interface == "web");
+    let tls = if config.tls.enabled {
+        let paths = TlsMaterialPaths {
+            certificate_file: PathBuf::from(
+                config
+                    .tls
+                    .certificate_file
+                    .as_ref()
+                    .ok_or("tls.certificate_file is missing")?,
+            ),
+            private_key_file: PathBuf::from(
+                config
+                    .tls
+                    .private_key_file
+                    .as_ref()
+                    .ok_or("tls.private_key_file is missing")?,
+            ),
+        };
+        Some(load_tls_material(&paths).await?)
+    } else {
+        None
+    };
     let mut server = config.server;
     if !web_enabled {
         server.web_dir = None;
@@ -985,19 +1170,31 @@ async fn start_server(config: OperationalConfig) -> Result<(), Box<dyn std::erro
     let addr: SocketAddr = format!("{}:{}", server.host, server.port).parse()?;
     let state = AppState::new(server)?;
     let shutdown_signal = install_shutdown_signal()?;
-    let listener = TcpListener::bind(addr).await?;
     info!(
         %addr,
+        scheme = if tls.is_some() { "https" } else { "http" },
         maintenance_enabled = config.maintenance.enabled,
         maintenance_interval_ms = config.maintenance.interval_ms,
         "corrobore server listening"
     );
-    serve_with_lifecycle(
-        listener,
-        build_router(state.clone()),
-        state,
-        shutdown_signal,
-    )
-    .await?;
+    if let Some(tls) = tls {
+        serve_tls_with_lifecycle(
+            addr,
+            build_router(state.clone()),
+            state,
+            shutdown_signal,
+            tls,
+        )
+        .await?;
+    } else {
+        let listener = TcpListener::bind(addr).await?;
+        serve_with_lifecycle(
+            listener,
+            build_router(state.clone()),
+            state,
+            shutdown_signal,
+        )
+        .await?;
+    }
     Ok(())
 }

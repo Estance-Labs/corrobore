@@ -25,14 +25,23 @@ use axum::{
     response::Response,
 };
 
-use crate::{app::AppState, error::ApiError};
+use crate::{app::AppState, error::ApiError, security::AuthenticationMode};
 
 pub async fn require_bearer_auth(
     State(state): State<AppState>,
     request: Request<axum::body::Body>,
     next: Next,
 ) -> Result<Response, ApiError> {
-    let expected = format!("Bearer {}", state.config.auth_token);
+    if state.config.auth_mode == AuthenticationMode::LocalInsecure {
+        return Ok(next.run(request).await);
+    }
+    let Some(auth_token) = state.config.auth_token.as_deref() else {
+        return Err(ApiError::unauthorized(
+            "AUTH_NOT_CONFIGURED",
+            "bearer authentication is not configured",
+        ));
+    };
+    let expected = format!("Bearer {auth_token}");
 
     let value = request
         .headers()

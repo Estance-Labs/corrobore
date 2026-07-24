@@ -20,8 +20,10 @@ The server resolves configuration in this order:
 CLI arguments > environment variables > TOML file > defaults
 ```
 
-The authentication token has no default and must be supplied by one of those
-sources. Use `corrobore server start --help` to list every CLI override.
+Authentication defaults to `required`. Supply the bearer token inline or,
+preferably, through a protected file. The explicit `local-insecure` mode omits
+authentication only on a loopback bind. Use `corrobore server start --help` to
+list every CLI override.
 
 The following example is a complete starting point:
 
@@ -29,7 +31,8 @@ The following example is a complete starting point:
 [server]
 host = "127.0.0.1"
 port = 8080
-auth_token = "replace-with-a-secret"
+auth_mode = "required"
+auth_token_file = "/run/secrets/corrobore-http-token"
 data_directory = ".corrobore-runtime"
 shutdown_timeout_ms = 5000
 
@@ -58,6 +61,9 @@ enabled = ["http"]
 enabled = false
 interval_ms = 60000
 
+[operations]
+endpoint_policy = "public"
+
 [tls]
 enabled = false
 ```
@@ -68,10 +74,10 @@ Start with that file:
 corrobore server start --config corrobore.toml
 ```
 
-For secrets, prefer environment variables over TOML or command-line arguments:
+For secrets, prefer a file reference over TOML or command-line arguments:
 
 ```console
-CORROBORE_HTTP_AUTH_TOKEN=replace-with-a-secret \
+CORROBORE_HTTP_AUTH_TOKEN_FILE=/run/secrets/corrobore-http-token \
   corrobore server start --config corrobore.toml
 ```
 
@@ -95,13 +101,31 @@ variables:
 | `CORROBORE_LOG_FORMAT` | `json` | Structured log format. Only `json` is currently supported. |
 | `CORROBORE_MAINTENANCE_ENABLED` | `false` | Enables the maintenance policy reported to the server lifecycle. |
 | `CORROBORE_MAINTENANCE_INTERVAL_MS` | `60000` | Maintenance interval. |
-| `CORROBORE_TLS_ENABLED` | `false` | Requests TLS configuration. |
+| `CORROBORE_OPERATIONAL_ENDPOINT_POLICY` | `public` | Operational endpoints are `public` or `authenticated`. Non-loopback binds require `authenticated`. |
+| `CORROBORE_TLS_ENABLED` | `false` | Enables the HTTPS listener. |
 | `CORROBORE_TLS_CERTIFICATE_FILE` | unset | TLS certificate path. |
 | `CORROBORE_TLS_PRIVATE_KEY_FILE` | unset | TLS private-key path. |
 
-TLS configuration is validated, but the TLS listener is intentionally not
-available in this release. `server start` refuses TLS-enabled configuration
-instead of silently serving plaintext.
+Non-loopback binds require TLS, required bearer authentication, and
+authenticated operational endpoints. Startup validates that certificate and
+private-key files are readable, that the key matches the certificate, and that
+the certificate is currently valid before opening the HTTPS listener. TLS and
+secret files are reloaded on process restart; rotating either does not require
+storage migration.
+
+```console
+corrobore server start \
+  --host 0.0.0.0 \
+  --auth-token-file /run/secrets/corrobore-http-token \
+  --operational-endpoint-policy authenticated \
+  --tls-enabled true \
+  --tls-certificate-file /etc/corrobore/tls/server.crt \
+  --tls-private-key-file /etc/corrobore/tls/server.key
+```
+
+Diagnostics identify only the configuration field that failed. Secret values
+and private-key contents are excluded from effective configuration, errors,
+logs, and metrics.
 
 ## Persistent directory ownership and recovery
 

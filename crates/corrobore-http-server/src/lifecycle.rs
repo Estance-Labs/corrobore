@@ -4,6 +4,7 @@
 use std::{
     fs,
     future::{Future, IntoFuture},
+    net::SocketAddr,
     path::Path,
     pin::Pin,
     sync::{
@@ -212,6 +213,61 @@ pub async fn serve_with_lifecycle(
                 reason: error.to_string(),
             });
         }
+        result = signal_started_rx => result.map_err(|error| {
+            ServerLifecycleError::SignalHandlerFailed {
+                reason: error.to_string(),
+            }
+        })?,
+    };
+
+    let timed_out = timeout_ms == 0
+        || tokio::time::timeout(Duration::from_millis(timeout_ms), &mut server)
+            .await
+            .is_err();
+    drop(server);
+    flush_runtime_store(&state)?;
+    state.lifecycle.finish(timed_out);
+    if timed_out {
+        return Err(ServerLifecycleError::ShutdownTimeout { timeout_ms });
+    }
+    Ok(())
+}
+
+/// Serve HTTPS while preserving the same initialization, draining, timeout,
+/// flush, and terminal-state contract as the plaintext listener.
+pub async fn serve_tls_with_lifecycle(
+    addr: SocketAddr,
+    app: Router,
+    state: AppState,
+    signal: ShutdownSignal,
+    tls: axum_server::tls_rustls::RustlsConfig,
+) -> Result<(), ServerLifecycleError> {
+    let lifecycle = Arc::clone(&state.lifecycle);
+    let timeout_ms = state.config.shutdown_timeout_ms;
+    let handle = axum_server::Handle::new();
+    let shutdown_handle = handle.clone();
+    let (signal_started_tx, signal_started_rx) = oneshot::channel();
+    let shutdown = async move {
+        signal.future.await;
+        lifecycle.begin_draining();
+        shutdown_handle.graceful_shutdown(Some(Duration::from_millis(timeout_ms)));
+        let _ = signal_started_tx.send(());
+    };
+    tokio::pin!(shutdown);
+    let mut server = Box::pin(
+        axum_server::bind_rustls(addr, tls)
+            .handle(handle)
+            .serve(app.into_make_service()),
+    );
+
+    tokio::select! {
+        result = &mut server => {
+            state.lifecycle.finish(result.is_err());
+            return result.map_err(|error| ServerLifecycleError::ListenerFailed {
+                reason: error.to_string(),
+            });
+        }
+        () = &mut shutdown => {}
         result = signal_started_rx => result.map_err(|error| {
             ServerLifecycleError::SignalHandlerFailed {
                 reason: error.to_string(),

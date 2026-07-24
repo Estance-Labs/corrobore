@@ -74,6 +74,7 @@ use crate::{
         session::{session_health, session_logs, start_session, stop_session},
         stix_validate::validate_stix,
     },
+    security::OperationalEndpointPolicy,
     session_runtime::SessionRuntime,
     storage_ownership::{DataDirectoryOwnership, DataDirectoryOwnershipError},
     web::attach_web_delivery,
@@ -388,20 +389,31 @@ pub fn build_router(state: AppState) -> Router {
         ))
         .layer(GovernorLayer::new(governor_config));
 
-    let web_dir = state.config.web_dir.clone();
-    let router = Router::new()
+    let operational = Router::new()
         .route("/health", get(health))
         .route("/health/live", get(liveness))
         .route("/health/ready", get(readiness))
         .route("/version", get(version))
-        // 7: unauthenticated Prometheus scrape endpoint, next to `/health`.
-        .route("/metrics", get(metrics))
+        .route("/metrics", get(metrics));
+    let operational =
+        if state.config.operational_endpoint_policy == OperationalEndpointPolicy::Authenticated {
+            operational.route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_bearer_auth,
+            ))
+        } else {
+            operational
+        };
+
+    let web_dir = state.config.web_dir.clone();
+    let router = Router::new()
         .route("/v1/admin/license/status", get(admin_license_status))
         .route(
             "/v1/admin/domain-providers/status",
             get(admin_domain_provider_status),
         )
         .merge(protected)
+        .merge(operational)
         .with_state(state.clone());
 
     attach_web_delivery(router, web_dir.as_deref())

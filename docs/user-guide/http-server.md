@@ -4,8 +4,9 @@
 
 ## Authentication and limits
 
-`GET /health/live`, `GET /health/ready`, `GET /version`, legacy `GET /health`,
-and `GET /metrics` are public. Every `/v1/*` route requires:
+Operational endpoints are public by default on loopback and can be protected
+with `CORROBORE_OPERATIONAL_ENDPOINT_POLICY=authenticated`. Every `/v1/*`
+route requires:
 
 ```http
 Authorization: Bearer <CORROBORE_HTTP_AUTH_TOKEN>
@@ -31,7 +32,10 @@ Application errors use the JSON envelope above. Transport middleware can reject 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
 | `CORROBORE_HTTP_AUTH_TOKEN` | required | Non-empty Bearer token for protected routes. |
+| `CORROBORE_HTTP_AUTH_MODE` | `required` | Authentication policy: `required` or explicit loopback-only `local-insecure`. |
+| `CORROBORE_HTTP_AUTH_TOKEN_FILE` | unset | Protected file containing the bearer token; mutually exclusive with `CORROBORE_HTTP_AUTH_TOKEN`. |
 | `CORROBORE_HTTP_ADMIN_AUTH_TOKEN` | unset | Optional dedicated Bearer token for admin-only endpoints (for example `/v1/admin/license/status`). |
+| `CORROBORE_HTTP_ADMIN_AUTH_TOKEN_FILE` | unset | Protected file containing the admin bearer token; mutually exclusive with `CORROBORE_HTTP_ADMIN_AUTH_TOKEN`. |
 | `CORROBORE_HTTP_HOST` | `127.0.0.1` | Bind host. Set `0.0.0.0` deliberately for containers or remote access. |
 | `CORROBORE_HTTP_PORT` | `8080` | Bind port. |
 | `CORROBORE_HTTP_SESSION_STORE_DIR` | `.corrobore-runtime` | Durable session-state directory. |
@@ -55,6 +59,16 @@ Application errors use the JSON envelope above. Transport middleware can reject 
 | `CORROBORE_STORAGE_DIR` | unset | Required when `CORROBORE_STORAGE_MODE=persistent`; graph storage root path. |
 | `CORROBORE_STORAGE_REQUIRE_FSYNC` | `false` in `ephemeral`, `true` in `persistent` | Durability control for persistent writes. |
 | `CORROBORE_STORAGE_STRICT_RECOVERY` | `false` in `ephemeral`, `true` in `persistent` | When enabled, validates all required append logs and rebuilds derived catalog metadata before readiness. |
+| `CORROBORE_OPERATIONAL_ENDPOINT_POLICY` | `public` | `public` or `authenticated`; non-loopback binds require `authenticated`. |
+| `CORROBORE_TLS_ENABLED` | `false` | Enables HTTPS. Non-loopback binds require TLS. |
+| `CORROBORE_TLS_CERTIFICATE_FILE` | unset | PEM certificate chain loaded and validated at startup. |
+| `CORROBORE_TLS_PRIVATE_KEY_FILE` | unset | PEM private key loaded and matched to the certificate at startup. |
+
+TLS material and token files are re-read on restart, making process restart the
+rotation boundary without any graph-data migration. Invalid, unreadable,
+mismatched, expired, or not-yet-valid TLS material prevents startup. Effective
+configuration, diagnostics, logs, and metrics never include token or private-key
+contents.
 
 The binary loads `.env`, supports `-v`/`-vv` verbosity, and honors `RUST_LOG` as the logging-filter override. Provider configuration is fail-fast: a missing required library, path escape, digest mismatch, incompatible ABI, invalid metadata, missing capability, creation failure, or unhealthy response prevents the HTTP listener from starting. See [the manifest example](../examples/domain-providers.json).
 

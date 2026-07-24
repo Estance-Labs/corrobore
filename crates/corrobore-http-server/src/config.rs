@@ -18,7 +18,7 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
-use std::{collections::HashMap, env, fmt, fs};
+use std::{collections::HashMap, env, fmt, fs, net::IpAddr};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::{DateTime, Utc};
@@ -27,6 +27,8 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
+
+use crate::security::{AuthenticationMode, OperationalEndpointPolicy, SecretSource};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StorageMode {
@@ -48,8 +50,12 @@ impl StorageMode {
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
-    pub auth_token: String,
+    pub auth_mode: AuthenticationMode,
+    pub auth_token: Option<String>,
+    pub auth_token_source: Option<SecretSource>,
     pub admin_auth_token: Option<String>,
+    pub admin_auth_token_source: Option<SecretSource>,
+    pub operational_endpoint_policy: OperationalEndpointPolicy,
     pub session_store_dir: String,
     pub log_dir: String,
     pub request_timeout_ms: u64,
@@ -95,10 +101,23 @@ impl fmt::Debug for ServerConfig {
             .debug_struct("ServerConfig")
             .field("host", &self.host)
             .field("port", &self.port)
+            .field("auth_mode", &self.auth_mode.as_str())
             .field("auth_token", &"<redacted>")
+            .field(
+                "auth_token_source",
+                &self.auth_token_source.map(SecretSource::as_str),
+            )
             .field(
                 "admin_auth_token",
                 &self.admin_auth_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "admin_auth_token_source",
+                &self.admin_auth_token_source.map(SecretSource::as_str),
+            )
+            .field(
+                "operational_endpoint_policy",
+                &self.operational_endpoint_policy.as_str(),
             )
             .field("session_store_dir", &self.session_store_dir)
             .field("log_dir", &self.log_dir)
@@ -134,9 +153,107 @@ pub enum ConfigError {
     MissingEnv(&'static str),
     #[error("invalid environment variable {name}: {value}")]
     InvalidEnv { name: &'static str, value: String },
+    #[error("{field}: inline and file secret sources are mutually exclusive")]
+    SecretSourceConflict { field: &'static str },
+    #[error("{field}: cannot read configured secret file")]
+    SecretFileUnreadable { field: &'static str },
+    #[error("{field}: configured secret must not be empty")]
+    InvalidSecret { field: &'static str },
+}
+
+fn parse_auth_mode(vars: &HashMap<String, String>) -> Result<AuthenticationMode, ConfigError> {
+    match vars
+        .get("CORROBORE_HTTP_AUTH_MODE")
+        .map_or("required", String::as_str)
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "required" => Ok(AuthenticationMode::Required),
+        "local-insecure" => Ok(AuthenticationMode::LocalInsecure),
+        value => Err(ConfigError::InvalidEnv {
+            name: "CORROBORE_HTTP_AUTH_MODE",
+            value: value.to_owned(),
+        }),
+    }
+}
+
+fn parse_operational_endpoint_policy(
+    vars: &HashMap<String, String>,
+) -> Result<OperationalEndpointPolicy, ConfigError> {
+    match vars
+        .get("CORROBORE_OPERATIONAL_ENDPOINT_POLICY")
+        .map_or("public", String::as_str)
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "public" => Ok(OperationalEndpointPolicy::Public),
+        "authenticated" => Ok(OperationalEndpointPolicy::Authenticated),
+        value => Err(ConfigError::InvalidEnv {
+            name: "CORROBORE_OPERATIONAL_ENDPOINT_POLICY",
+            value: value.to_owned(),
+        }),
+    }
+}
+
+fn resolve_secret(
+    vars: &HashMap<String, String>,
+    inline_name: &'static str,
+    file_name: &'static str,
+    field: &'static str,
+    file_field: &'static str,
+) -> Result<(Option<String>, Option<SecretSource>), ConfigError> {
+    let inline = vars.get(inline_name);
+    let file = vars.get(file_name);
+    match (inline, file) {
+        (Some(_), Some(_)) => Err(ConfigError::SecretSourceConflict { field }),
+        (Some(value), None) => {
+            let secret = value.trim().to_owned();
+            if secret.is_empty() {
+                Err(ConfigError::InvalidSecret { field })
+            } else {
+                Ok((Some(secret), Some(SecretSource::Inline)))
+            }
+        }
+        (None, Some(path)) => {
+            let secret = fs::read_to_string(path)
+                .map_err(|_| ConfigError::SecretFileUnreadable { field: file_field })?
+                .trim()
+                .to_owned();
+            if secret.is_empty() {
+                Err(ConfigError::InvalidSecret { field })
+            } else {
+                Ok((Some(secret), Some(SecretSource::File)))
+            }
+        }
+        (None, None) => Ok((None, None)),
+    }
 }
 
 impl ServerConfig {
+    /// Validate the bind address against the resolved transport and endpoint
+    /// policies before a listener is opened.
+    pub fn validate_network_exposure(&self, tls_enabled: bool) -> Result<(), &'static str> {
+        let Ok(host) = self.host.parse::<IpAddr>() else {
+            return Err("server.host: expected an IP address");
+        };
+        if self.auth_mode == AuthenticationMode::LocalInsecure && !host.is_loopback() {
+            return Err("server.host: local-insecure authentication mode is limited to loopback");
+        }
+        if !host.is_loopback() && !tls_enabled {
+            return Err("tls.enabled: TLS is required for non-loopback exposure");
+        }
+        if !host.is_loopback()
+            && self.operational_endpoint_policy == OperationalEndpointPolicy::Public
+        {
+            return Err(
+                "operations.endpoint_policy: authenticated is required for non-loopback exposure",
+            );
+        }
+        Ok(())
+    }
+
     pub fn from_env() -> Result<Self, ConfigError> {
         let mut vars = HashMap::new();
         for (key, value) in env::vars() {
@@ -158,22 +275,25 @@ impl ServerConfig {
                 .unwrap_or("8080"),
         )?;
 
-        let auth_token = vars
-            .get("CORROBORE_HTTP_AUTH_TOKEN")
-            .cloned()
-            .ok_or(ConfigError::MissingEnv("CORROBORE_HTTP_AUTH_TOKEN"))?;
-
-        if auth_token.trim().is_empty() {
-            return Err(ConfigError::InvalidEnv {
-                name: "CORROBORE_HTTP_AUTH_TOKEN",
-                value: auth_token,
-            });
+        let auth_mode = parse_auth_mode(vars)?;
+        let (auth_token, auth_token_source) = resolve_secret(
+            vars,
+            "CORROBORE_HTTP_AUTH_TOKEN",
+            "CORROBORE_HTTP_AUTH_TOKEN_FILE",
+            "server.auth_token",
+            "server.auth_token_file",
+        )?;
+        if auth_mode == AuthenticationMode::Required && auth_token.is_none() {
+            return Err(ConfigError::MissingEnv("CORROBORE_HTTP_AUTH_TOKEN"));
         }
-
-        let admin_auth_token = vars
-            .get("CORROBORE_HTTP_ADMIN_AUTH_TOKEN")
-            .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty());
+        let (admin_auth_token, admin_auth_token_source) = resolve_secret(
+            vars,
+            "CORROBORE_HTTP_ADMIN_AUTH_TOKEN",
+            "CORROBORE_HTTP_ADMIN_AUTH_TOKEN_FILE",
+            "server.admin_auth_token",
+            "server.admin_auth_token_file",
+        )?;
+        let operational_endpoint_policy = parse_operational_endpoint_policy(vars)?;
 
         let session_store_dir = vars
             .get("CORROBORE_HTTP_SESSION_STORE_DIR")
@@ -290,8 +410,12 @@ impl ServerConfig {
         Ok(Self {
             host,
             port,
+            auth_mode,
             auth_token,
+            auth_token_source,
             admin_auth_token,
+            admin_auth_token_source,
+            operational_endpoint_policy,
             session_store_dir,
             log_dir,
             request_timeout_ms,
@@ -732,7 +856,7 @@ mod tests {
         assert_eq!(config.request_timeout_ms, 30_000);
         assert_eq!(config.shutdown_timeout_ms, 5_000);
         assert_eq!(config.session_idle_ttl_ms, 0);
-        assert_eq!(config.auth_token, "token-123");
+        assert_eq!(config.auth_token.as_deref(), Some("token-123"));
         assert_eq!(config.admin_auth_token, None);
 
         // 2.3: explicit body-size posture with a larger allowance for imports.

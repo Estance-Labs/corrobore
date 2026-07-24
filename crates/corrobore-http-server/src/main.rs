@@ -45,6 +45,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = CliArgs::parse();
     let rust_log = std::env::var("RUST_LOG").ok();
     let config = ServerConfig::from_env()?;
+    config
+        .validate_network_exposure(false)
+        .map_err(std::io::Error::other)?;
     let logging_runtime = init_logging(args.verbose, rust_log.as_deref(), &config.log_dir)?;
     let _logging_guard = logging_runtime.guard;
 

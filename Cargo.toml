@@ -35,6 +35,7 @@ documentation = "https://docs.corrobore.org/"
 # additive across the workspace + crate declarations).
 [workspace.dependencies]
 axum = { version = "0.8", features = ["multipart"] }
+axum-server = { version = "0.8", features = ["tls-rustls"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { version = "4", features = ["derive"] }
 # Property-based and benchmark tooling used by the testing-depth crates. Kept in
@@ -46,6 +47,7 @@ http-body-util = "0.1"
 nom = "8"
 proptest = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rustls = "0.23"
 serde = { version = "1", features = ["derive"] }
 # graph-storage relies on byte-stable JSON codec output (records are checksummed
 # on disk). The exact version is pinned by the committed Cargo.lock (used with
@@ -62,6 +64,7 @@ tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 toml = "0.8"
 uuid = { version = "1", features = ["v4"] }
+x509-parser = "0.18.1"
 
 # Workspace-wide lints. `unwrap_used` is a warning so production code cannot
 # silently rely on `unwrap()`; test modules opt out with
