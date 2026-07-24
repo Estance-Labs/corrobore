@@ -1,0 +1,29 @@
+# Production paths for packaging/systemd/corrobore.service.
+# Install as /etc/corrobore/corrobore.toml.
+
+[server]
+host = "0.0.0.0"
+port = 8080
+auth_mode = "required"
+auth_token_file = "/etc/corrobore/secrets/http-token"
+data_directory = "/var/lib/corrobore/runtime"
+shutdown_timeout_ms = 10000
+
+[storage]
+mode = "persistent"
+directory = "/var/lib/corrobore/graph"
+require_fsync = true
+strict_recovery = true
+
+[logging]
+directory = "/var/log/corrobore"
+level = "info"
+format = "json"
+
+[operations]
+endpoint_policy = "authenticated"
+
+[tls]
+enabled = true
+certificate_file = "/etc/corrobore/tls/server.crt"
+private_key_file = "/etc/corrobore/tls/server.key"

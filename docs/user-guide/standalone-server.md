@@ -6,11 +6,17 @@ server:
 ```console
 corrobore server start
 corrobore server validate-config
+corrobore server status
 corrobore server version
 ```
 
 `start` runs in the foreground. A process supervisor should own restarts and
 daemonization.
+
+The complete field/default/precedence matrix is in the
+[standalone configuration reference](standalone-configuration.md). Deployment,
+monitoring, backup, restore, upgrade, and rollback procedures are in the
+[standalone operations guide](standalone-operations.md).
 
 ## Configuration sources and precedence
 
@@ -192,6 +198,8 @@ not echo source lines, so a malformed secret setting is not copied to stderr.
 | `5` | The storage manifest declares an incompatible version or record format. |
 | `6` | Persistent storage recovery or integrity validation failed. |
 | `7` | Graceful shutdown exceeded its bound or the final durability flush failed. |
+| `8` | `server status` could not reach a ready compatible endpoint within the configured timeout. |
+| `9` | `server status` reached the endpoint but its storage compatibility contract is unsupported. |
 
 Validation errors identify the affected field. General startup errors cover
 conditions such as an invalid bind address, an occupied port, or a requested
@@ -248,3 +256,9 @@ systemctl status corrobore.service
 
 The unit does not fork or use an internal daemon mode. `systemctl stop` sends
 `SIGTERM` and leaves shutdown coordination to the standalone process.
+
+Use the dedicated `packaging/systemd/corrobore.toml` with that unit. It places
+writable state under `/var/lib/corrobore` and logs under `/var/log/corrobore`,
+matching the unit's filesystem protections. Do not install the container
+configuration unchanged on a systemd host because its `/data` paths are
+container-specific.
