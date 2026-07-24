@@ -40,10 +40,17 @@ Run the complete local stack (HTTP API + explorer) from repository root:
 ```bash
 cp .env.sample .env
 # Replace CORROBORE_HTTP_AUTH_TOKEN=change-me with a local non-empty token.
+mkdir -p .corrobore-tls
+openssl req -x509 -newkey rsa:2048 -sha256 -nodes \
+  -keyout .corrobore-tls/server.key \
+  -out .corrobore-tls/server.crt \
+  -days 30 -subj '/CN=localhost' \
+  -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1'
 docker compose up --build --wait
 ```
 
-Open <http://localhost:8080>.
+The API is available at <https://localhost:8080>. The example certificate is
+self-signed, so local clients must explicitly trust it or use `--insecure`.
 
 For lifecycle commands, token handling, and security boundaries, see the
 Docker section in `docs/user-guide/http-server.md`.

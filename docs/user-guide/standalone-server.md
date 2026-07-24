@@ -207,6 +207,44 @@ the package version, build target, and compile-time revision metadata:
 corrobore server version
 ```
 
-The legacy `corrobore-http-server` executable remains available for
-environment-only deployments. New automation should use
-`corrobore server start`.
+Release archives and the production container distribute `corrobore` as the
+standalone product entry point. The legacy `corrobore-http-server` target
+remains a development compatibility binary and is not included in standalone
+release archives.
+
+## Native, container, and systemd distribution
+
+Native release archives contain the `corrobore` executable, its SHA-256
+checksum, and compile-time source revision. Validate an extracted artifact
+without runtime configuration:
+
+```console
+corrobore server version
+```
+
+The production image runs the same foreground command:
+
+```text
+corrobore server start --config /etc/corrobore/corrobore.toml
+```
+
+It runs as uid/gid `65532`, declares `/data` as its persistent volume, uses
+`SIGTERM`, and allows fifteen seconds for the configured drain. Authentication
+and TLS files must be mounted read-only under `/run/secrets`; neither is stored
+in the image. OCI labels expose the product version and exact source revision.
+
+The minimal configuration is
+`packaging/corrobore.production.toml`.
+The matching foreground systemd example is
+`packaging/systemd/corrobore.service`.
+Install it with a dedicated `corrobore` user and group, create the writable
+state/log directories, place the configuration under `/etc/corrobore`, then
+use normal systemd supervision:
+
+```console
+sudo systemctl enable --now corrobore.service
+systemctl status corrobore.service
+```
+
+The unit does not fork or use an internal daemon mode. `systemctl stop` sends
+`SIGTERM` and leaves shutdown coordination to the standalone process.

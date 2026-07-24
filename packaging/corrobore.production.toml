@@ -1,0 +1,29 @@
+# Minimal production configuration for the standalone `corrobore` executable.
+# Authentication and TLS material are mounted as read-only external secrets.
+
+[server]
+host = "0.0.0.0"
+port = 8080
+auth_mode = "required"
+auth_token_file = "/run/secrets/corrobore-http-token"
+data_directory = "/data/runtime"
+shutdown_timeout_ms = 10000
+
+[storage]
+mode = "persistent"
+directory = "/data/graph"
+require_fsync = true
+strict_recovery = true
+
+[logging]
+directory = "/data/logs"
+level = "info"
+format = "json"
+
+[operations]
+endpoint_policy = "authenticated"
+
+[tls]
+enabled = true
+certificate_file = "/run/secrets/tls.crt"
+private_key_file = "/run/secrets/tls.key"

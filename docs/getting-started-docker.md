@@ -18,21 +18,32 @@ as documented in [Getting Started](getting-started.md#use-corrobore-in-process).
 - [Docker](https://docs.docker.com/get-docker/) 24 or later
 - `curl` and `jq` for the shell examples
 
-## Quick start (ephemeral)
+## Quick start
 
-The fastest way to run Corrobore locally. Data is lost when the container stops.
+Generate a local TLS certificate and token file:
 
 ```bash
-docker run --rm \
-  -e CORROBORE_HTTP_AUTH_TOKEN=change-me \
+mkdir -p .corrobore-tls .corrobore-secrets
+printf '%s\n' 'change-me' > .corrobore-secrets/http-token
+openssl req -x509 -newkey rsa:2048 -sha256 -nodes \
+  -keyout .corrobore-tls/server.key \
+  -out .corrobore-tls/server.crt \
+  -days 30 -subj '/CN=localhost' \
+  -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1'
+docker run --rm --name corrobore \
   -p 127.0.0.1:8080:8080 \
+  -v corrobore-data:/data \
+  -v "$PWD/.corrobore-secrets/http-token:/run/secrets/corrobore-http-token:ro" \
+  -v "$PWD/.corrobore-tls/server.crt:/run/secrets/tls.crt:ro" \
+  -v "$PWD/.corrobore-tls/server.key:/run/secrets/tls.key:ro" \
   ghcr.io/noetance-labs/corrobore:latest
 ```
 
 Verify the server is up:
 
 ```bash
-curl http://127.0.0.1:8080/health/ready
+curl --insecure https://127.0.0.1:8080/health/ready \
+  -H 'Authorization: Bearer change-me'
 ```
 
 ## Persistent setup with Docker Compose
@@ -43,7 +54,7 @@ Use the provided `docker-compose.yml` for a setup that survives restarts.
 
 ```bash
 cp .env.sample .env
-# open .env and replace the placeholder token with a real secret
+# Replace the token and generate the TLS files referenced by the sample.
 ```
 
 **2. Start the stack:**
@@ -74,7 +85,9 @@ The most common variables to override:
 | :--- | :--- | :--- |
 | `CORROBORE_HTTP_AUTH_TOKEN` | **required** | Bearer token for all protected routes. |
 | `CORROBORE_HTTP_PORT` | `8080` | Published port. |
-| `CORROBORE_STORAGE_MODE` | `ephemeral` | Set to `persistent` to write the graph to disk. |
+| `CORROBORE_TLS_CERTIFICATE_SOURCE` | `.corrobore-tls/server.crt` | Host certificate mounted read-only into the container. |
+| `CORROBORE_TLS_PRIVATE_KEY_SOURCE` | `.corrobore-tls/server.key` | Host private key mounted read-only into the container. |
+| `CORROBORE_STORAGE_MODE` | `persistent` | Set to `ephemeral` only for disposable graph state. |
 | `CORROBORE_STORAGE_DIR` | `/graph-data` in Compose | Graph directory when `persistent` mode is enabled. |
 | `CORROBORE_INGEST_TAXII_ROOT_URL` | unset | Required when TAXII profile is enabled. |
 | `CORROBORE_INGEST_TAXII_COLLECTION_ID` | unset | Required when TAXII profile is enabled. |
@@ -118,17 +131,18 @@ The connector waits for the HTTP runtime health check before starting.
 Once the container is running:
 
 ```bash
-# Health check (no token required)
-curl http://127.0.0.1:8080/health
+# Health check
+curl --insecure https://127.0.0.1:8080/health \
+  -H 'Authorization: Bearer change-me'
 
 # Write a node
-curl -X POST http://127.0.0.1:8080/v1/cypher/write \
+curl --insecure -X POST https://127.0.0.1:8080/v1/cypher/write \
   -H 'Authorization: Bearer change-me' \
   -H 'Content-Type: application/json' \
   -d '{"query":"MERGE (n:Indicator {name: \"phishing.example\"}) RETURN n"}'
 
 # Read it back
-curl -X POST http://127.0.0.1:8080/v1/cypher/read \
+curl --insecure -X POST https://127.0.0.1:8080/v1/cypher/read \
   -H 'Authorization: Bearer change-me' \
   -H 'Content-Type: application/json' \
   -d '{"query":"MATCH (n:Indicator) RETURN n LIMIT 10"}'
@@ -164,24 +178,24 @@ Sessions group writes and reads under a single audit trail.
 
 ```bash
 # Open a session
-SESSION_ID=$(curl -s -X POST http://127.0.0.1:8080/v1/sessions/start \
+SESSION_ID=$(curl --insecure -s -X POST https://127.0.0.1:8080/v1/sessions/start \
   -H 'Authorization: Bearer change-me' \
   -H 'Content-Type: application/json' \
   -d '{"workspace_id":"ws-1","actor_id":"actor-1","actor_kind":"agent"}' \
   | jq -r '.result.session_id')
 
 # Write through the session
-curl -X POST http://127.0.0.1:8080/v1/cypher/write \
+curl --insecure -X POST https://127.0.0.1:8080/v1/cypher/write \
   -H 'Authorization: Bearer change-me' \
   -H 'Content-Type: application/json' \
   -d "{\"query\":\"MERGE (n:Indicator {name: 'beacon.example'}) RETURN n\",\"session_id\":\"${SESSION_ID}\"}"
 
 # Inspect audit logs
-curl "http://127.0.0.1:8080/v1/sessions/${SESSION_ID}/logs?limit=50" \
+curl --insecure "https://127.0.0.1:8080/v1/sessions/${SESSION_ID}/logs?limit=50" \
   -H 'Authorization: Bearer change-me'
 
 # Close the session
-curl -X POST "http://127.0.0.1:8080/v1/sessions/${SESSION_ID}/stop" \
+curl --insecure -X POST "https://127.0.0.1:8080/v1/sessions/${SESSION_ID}/stop" \
   -H 'Authorization: Bearer change-me'
 ```
 

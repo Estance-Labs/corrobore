@@ -1,5 +1,5 @@
-# The image serves the API on http://localhost:8080.
-# Copy `.env.sample` to `.env`, set a local token, then run
+# The image serves the API on https://localhost:8080.
+# Copy `.env.sample` to `.env`, set a token and TLS source paths, then run
 # `docker compose up --build --wait`.
 
 services:
@@ -17,32 +17,29 @@ services:
       CORROBORE_HTTP_HOST: 0.0.0.0
       CORROBORE_HTTP_PORT: "8080"
       CORROBORE_HTTP_SESSION_STORE_DIR: /data
-      # Optional graph durability mode: keep ephemeral by default, set
-      # CORROBORE_STORAGE_MODE=persistent to retain graph records.
-      CORROBORE_STORAGE_MODE: ${CORROBORE_STORAGE_MODE:-ephemeral}
+      CORROBORE_OPERATIONAL_ENDPOINT_POLICY: authenticated
+      CORROBORE_TLS_ENABLED: "true"
+      CORROBORE_TLS_CERTIFICATE_FILE: /run/secrets/tls.crt
+      CORROBORE_TLS_PRIVATE_KEY_FILE: /run/secrets/tls.key
+      # The production container persists graph records by default.
+      CORROBORE_STORAGE_MODE: ${CORROBORE_STORAGE_MODE:-persistent}
       CORROBORE_STORAGE_DIR: ${CORROBORE_STORAGE_DIR:-/graph-data}
     volumes:
       # Persist session state and logs across restarts.
       - corrobore-data:/data
       # Persist graph records when CORROBORE_STORAGE_MODE=persistent.
       - corrobore-graph-data:/graph-data
+      # TLS material is supplied at runtime and remains outside the image.
+      - ${CORROBORE_TLS_CERTIFICATE_SOURCE:?set CORROBORE_TLS_CERTIFICATE_SOURCE}:/run/secrets/tls.crt:ro
+      - ${CORROBORE_TLS_PRIVATE_KEY_SOURCE:?set CORROBORE_TLS_PRIVATE_KEY_SOURCE}:/run/secrets/tls.key:ro
     healthcheck:
-      test:
-        [
-          "CMD",
-          "/usr/local/bin/busybox",
-          "wget",
-          "-q",
-          "-O",
-          "/dev/null",
-          "http://127.0.0.1:8080/health/ready",
-        ]
+      test: ["CMD", "/usr/local/bin/corrobore", "server", "status", "--config", "/etc/corrobore/corrobore.toml"]
       interval: 10s
       timeout: 3s
       retries: 5
       start_period: 10s
     restart: unless-stopped
-    stop_grace_period: 10s
+    stop_grace_period: 15s
 
   # Optional TAXII connector mode.
   # Enable with: docker compose --profile taxii up --build --wait
@@ -59,7 +56,7 @@ services:
       CORROBORE_INGEST_TAXII_TOKEN: ${CORROBORE_INGEST_TAXII_TOKEN:-}
       CORROBORE_INGEST_TAXII_USERNAME: ${CORROBORE_INGEST_TAXII_USERNAME:-}
       CORROBORE_INGEST_TAXII_PASSWORD: ${CORROBORE_INGEST_TAXII_PASSWORD:-}
-      CORROBORE_INGEST_CORROBORE_BASE_URL: ${CORROBORE_INGEST_CORROBORE_BASE_URL:-http://corrobore-http-server:8080}
+      CORROBORE_INGEST_CORROBORE_BASE_URL: ${CORROBORE_INGEST_CORROBORE_BASE_URL:-https://corrobore-http-server:8080}
       CORROBORE_INGEST_CORROBORE_AUTH_TOKEN: ${CORROBORE_INGEST_CORROBORE_AUTH_TOKEN:-${CORROBORE_HTTP_AUTH_TOKEN:?set CORROBORE_HTTP_AUTH_TOKEN}}
       CORROBORE_INGEST_WORKSPACE_ID: ${CORROBORE_INGEST_WORKSPACE_ID:-workspace--ingest-taxii}
       CORROBORE_INGEST_POLL_INTERVAL_MS: ${CORROBORE_INGEST_POLL_INTERVAL_MS:-300000}

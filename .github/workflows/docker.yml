@@ -14,14 +14,47 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build-and-publish:
-    name: Build and publish image
+  smoke-test:
+    name: Smoke-test production image
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+
+      - name: Resolve release metadata
+        id: release
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build actual production image
+        run: |
+          docker build \
+            --build-arg "CORROBORE_BUILD_VERSION=${{ steps.release.outputs.version }}" \
+            --build-arg "CORROBORE_BUILD_REVISION=${GITHUB_SHA}" \
+            --tag "corrobore-smoke:${GITHUB_SHA}" \
+            .
+
+      - name: Validate metadata readiness persistence and restart
+        env:
+          IMAGE: corrobore-smoke:${{ github.sha }}
+          CORROBORE_BUILD_VERSION: ${{ steps.release.outputs.version }}
+          CORROBORE_BUILD_REVISION: ${{ github.sha }}
+        run: scripts/container-smoke.sh
+
+  build-and-publish:
+    name: Build and publish image
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    needs: smoke-test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Resolve release metadata
+        id: release
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "${GITHUB_OUTPUT}"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -45,8 +78,10 @@ jobs:
             type=ref,event=tag
           labels: |
             org.opencontainers.image.title=corrobore
-            org.opencontainers.image.description=Corrobore HTTP server container image
+            org.opencontainers.image.description=Corrobore standalone graph server
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.release.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
 
       - name: Build and push image
         uses: docker/build-push-action@v6
@@ -57,3 +92,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            CORROBORE_BUILD_VERSION=${{ steps.release.outputs.version }}
+            CORROBORE_BUILD_REVISION=${{ github.sha }}

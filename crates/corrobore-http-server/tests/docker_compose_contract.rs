@@ -37,7 +37,11 @@ fn compose_stack_wires_runtime_auth_health_and_persistence() {
     for expected in [
         "CORROBORE_HTTP_AUTH_TOKEN: ${CORROBORE_HTTP_AUTH_TOKEN:?",
         "healthcheck:",
-        "http://127.0.0.1:8080/health/ready",
+        "\"server\", \"status\"",
+        "/etc/corrobore/corrobore.toml",
+        "CORROBORE_TLS_CERTIFICATE_FILE",
+        "CORROBORE_TLS_PRIVATE_KEY_FILE",
+        "stop_grace_period: 15s",
         "corrobore-data:/data",
     ] {
         assert!(
@@ -65,8 +69,8 @@ fn container_image_stays_secret_free_and_backend_only() {
     let dockerfile = repository_file("Dockerfile");
 
     assert!(
-        dockerfile.contains("/bin/busybox"),
-        "distroless runtime should include a bounded healthcheck client"
+        dockerfile.contains("\"server\", \"status\""),
+        "the image should use the product's bounded authenticated TLS probe"
     );
     assert!(
         !dockerfile.contains("web-builder"),
@@ -80,4 +84,62 @@ fn container_image_stays_secret_free_and_backend_only() {
         !dockerfile.contains("CORROBORE_HTTP_AUTH_TOKEN="),
         "the image must never bake the API token"
     );
+    for expected in [
+        "target/release/corrobore",
+        "ENTRYPOINT [\"/usr/local/bin/corrobore\"]",
+        "CMD [\"server\", \"start\"",
+        "USER 65532:65532",
+        "VOLUME [\"/data\"]",
+        "STOPSIGNAL SIGTERM",
+        "HEALTHCHECK",
+        "\"server\", \"status\"",
+        "org.opencontainers.image.version",
+        "org.opencontainers.image.revision",
+    ] {
+        assert!(
+            dockerfile.contains(expected),
+            "production image should include {expected}"
+        );
+    }
+    assert!(
+        !dockerfile.contains("target/release/corrobore-http-server"),
+        "the legacy HTTP-only binary must not be the container entrypoint"
+    );
+}
+
+#[test]
+fn production_configuration_and_systemd_unit_use_the_same_foreground_product() {
+    let config = repository_file("packaging/corrobore.production.toml");
+    for expected in [
+        "host = \"0.0.0.0\"",
+        "auth_token_file = \"/run/secrets/corrobore-http-token\"",
+        "mode = \"persistent\"",
+        "directory = \"/data/graph\"",
+        "endpoint_policy = \"authenticated\"",
+        "enabled = true",
+        "certificate_file = \"/run/secrets/tls.crt\"",
+        "private_key_file = \"/run/secrets/tls.key\"",
+    ] {
+        assert!(
+            config.contains(expected),
+            "production configuration should include {expected}"
+        );
+    }
+
+    let service = repository_file("packaging/systemd/corrobore.service");
+    for expected in [
+        "User=corrobore",
+        "Group=corrobore",
+        "ExecStart=/usr/local/bin/corrobore server start --config /etc/corrobore/corrobore.toml",
+        "KillSignal=SIGTERM",
+        "TimeoutStopSec=15s",
+        "Restart=on-failure",
+        "NoNewPrivileges=true",
+    ] {
+        assert!(
+            service.contains(expected),
+            "systemd unit should include {expected}"
+        );
+    }
+    assert!(!service.contains("--daemon"));
 }
