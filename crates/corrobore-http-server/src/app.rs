@@ -37,10 +37,10 @@ use axum::{
 };
 use corrobore_engine::{CorroboreEngine, EnginePersistence};
 use graph_storage::{
-    FileBackedGraphStore, GraphId, GraphStorageError, GraphStoreOpenMode, GraphStoreOpenOptions,
-    GraphStoreRecoveryReport, RecordFormat, StorageManifest, StorageRoot, StorageTimestamp,
-    StorageVersion, create_storage_root, load_engine_graph_snapshot,
-    open_existing_file_backed_graph_store, persist_engine_graph_snapshot,
+    CanonicalEngineStore, CanonicalProjectionRequest, CanonicalStoreOptions, DurableTransactionId,
+    FileBackedGraphStore, GraphId, GraphStorageError, GraphStoreRecoveryReport, RecordFormat,
+    StorageManifest, StorageTimestamp, StorageVersion, create_storage_root, open_storage_root,
+    read_storage_manifest,
 };
 use thiserror::Error;
 use tower_governor::{
@@ -93,6 +93,7 @@ pub struct PersistentRuntimeStore {
     pub store: FileBackedGraphStore,
     pub recovery_report: GraphStoreRecoveryReport,
     pub manifest: StorageManifest,
+    pub canonical_store: Arc<Mutex<CanonicalEngineStore>>,
     _ownership: Arc<DataDirectoryOwnership>,
 }
 
@@ -154,32 +155,60 @@ impl AppState {
 
 #[derive(Debug)]
 struct PersistentEnginePersistence {
-    root: StorageRoot,
-    require_fsync: bool,
+    store: Arc<Mutex<CanonicalEngineStore>>,
 }
 
 impl EnginePersistence for PersistentEnginePersistence {
     fn load_graph(&self) -> Result<graph_core::Graph, String> {
-        load_engine_graph_snapshot(&self.root).map_err(|error| error.to_string())
+        // Persistent startup stays metadata-only. The first request asks the
+        // adapter for a bounded pager-backed projection.
+        Ok(graph_core::Graph::new())
     }
 
-    fn persist_graph(&mut self, graph: &graph_core::Graph) -> Result<(), String> {
-        persist_engine_graph_snapshot(&self.root, graph, self.require_fsync)
+    fn persist_graph(&mut self, _graph: &graph_core::Graph) -> Result<(), String> {
+        Err("paged persistence requires a graph transition".to_owned())
+    }
+
+    fn prepare_graph_for_request(
+        &mut self,
+        query: &str,
+    ) -> Result<Option<graph_core::Graph>, String> {
+        let request = canonical_projection_for_query(query);
+        self.store
+            .lock()
+            .map_err(|_| "canonical graph store lock is poisoned".to_owned())?
+            .load_projection(request)
+            .map(Some)
+            .map_err(|error| error.to_string())
+    }
+
+    fn persist_graph_transition(
+        &mut self,
+        previous: &graph_core::Graph,
+        current: &graph_core::Graph,
+    ) -> Result<(), String> {
+        let transaction_id =
+            DurableTransactionId::new(format!("tx--standalone-{}", Uuid::new_v4()))
+                .map_err(|error| error.to_string())?;
+        self.store
+            .lock()
+            .map_err(|_| "canonical graph store lock is poisoned".to_owned())?
+            .commit_transition(previous, current, transaction_id, None)
+            .map(|_| ())
             .map_err(|error| error.to_string())
     }
 }
 
 fn initialize_engine(
     runtime_store: &RuntimeStoreProvider,
-    require_fsync: bool,
+    _require_fsync: bool,
 ) -> Result<CorroboreEngine, AppStateInitError> {
     let RuntimeStoreProvider::Persistent(runtime) = runtime_store else {
         return Ok(CorroboreEngine::strict_default());
     };
     CorroboreEngine::builder()
         .persistence(Box::new(PersistentEnginePersistence {
-            root: runtime.store.root().clone(),
-            require_fsync,
+            store: Arc::clone(&runtime.canonical_store),
         }))
         .build()
         .map_err(|error| AppStateInitError::PersistentStorageRecoveryFailed {
@@ -220,8 +249,16 @@ fn initialize_runtime_store(
                 .as_deref()
                 .ok_or(AppStateInitError::MissingPersistentStorageDir)?;
             let root_path = PathBuf::from(storage_dir);
-            initialize_persistent_runtime_store(root_path, config.storage_strict_recovery)
-                .map(|store| RuntimeStoreProvider::Persistent(Box::new(store)))
+            initialize_persistent_runtime_store(
+                root_path,
+                config.storage_strict_recovery,
+                CanonicalStoreOptions {
+                    max_hot_nodes: config.storage_max_hot_nodes,
+                    max_hot_relationships: config.storage_max_hot_relationships,
+                    max_warm_adjacency_entries: config.storage_max_warm_adjacency_entries,
+                },
+            )
+            .map(|store| RuntimeStoreProvider::Persistent(Box::new(store)))
         }
     }
 }
@@ -229,6 +266,7 @@ fn initialize_runtime_store(
 fn initialize_persistent_runtime_store(
     root_path: PathBuf,
     strict_recovery: bool,
+    store_options: CanonicalStoreOptions,
 ) -> Result<PersistentRuntimeStore, AppStateInitError> {
     // Ownership must be acquired before manifest creation, recovery, or any
     // writable handle is exposed. The Arc retains it across AppState clones.
@@ -259,21 +297,28 @@ fn initialize_persistent_runtime_store(
         initialize_required_record_logs(&root_path)?;
     }
 
-    let mut outcome = open_existing_file_backed_graph_store(
-        root_path.clone(),
-        GraphStoreOpenOptions {
-            mode: if strict_recovery {
-                GraphStoreOpenMode::RebuildCatalogFromAppendLogs
-            } else {
-                GraphStoreOpenMode::LoadCatalogWhenAvailable
-            },
-            ..GraphStoreOpenOptions::default()
-        },
-    )
-    .map_err(|error| classify_storage_open_error(&root_path, error))?;
+    let root = open_storage_root(root_path.clone())
+        .map_err(|error| classify_storage_open_error(&root_path, error))?;
+    let canonical =
+        CanonicalEngineStore::open_with_strict_recovery(root, store_options, strict_recovery)
+            .map_err(|error| classify_storage_open_error(&root_path, error))?;
+    let store = canonical
+        .file_backed_store()
+        .map_err(|error| classify_storage_open_error(&root_path, error))?;
+    let manifest = read_storage_manifest(store.root())
+        .map_err(|error| classify_storage_open_error(&root_path, error))?;
+    let startup = canonical.startup_report();
+    let mut recovery_report = GraphStoreRecoveryReport {
+        manifest_validated: true,
+        required_components_validated: true,
+        catalog_recovered: true,
+        adjacency_storage_recovered: true,
+        catalog_rebuild_report: None,
+        warnings: startup.warnings.clone(),
+    };
 
     if ownership.recovered_stale_owner() {
-        outcome.recovery_report.warnings.push(format!(
+        recovery_report.warnings.push(format!(
             "recovered stale ownership metadata from {} for {}",
             ownership.lock_path().display(),
             ownership.root_path().display()
@@ -282,11 +327,51 @@ fn initialize_persistent_runtime_store(
 
     Ok(PersistentRuntimeStore {
         root_path,
-        store: outcome.store,
-        recovery_report: outcome.recovery_report,
-        manifest: outcome.manifest,
+        store,
+        recovery_report,
+        manifest,
+        canonical_store: Arc::new(Mutex::new(canonical)),
         _ownership: ownership,
     })
+}
+
+fn canonical_projection_for_query(query: &str) -> CanonicalProjectionRequest {
+    let Ok(ast) = cypher_parser::parse_query(query) else {
+        return CanonicalProjectionRequest::all();
+    };
+    let Some(parsed) = ast.query else {
+        return CanonicalProjectionRequest::all();
+    };
+    if let Some(match_clause) = parsed.match_clause {
+        if let Some((relationship, _)) = parsed
+            .merge_clause
+            .as_ref()
+            .and_then(|merge| merge.relationship.as_ref())
+        {
+            return CanonicalProjectionRequest::all()
+                .with_relationships(relationship.rel_type.clone());
+        }
+        let relationship_type = match_clause
+            .relationship
+            .as_ref()
+            .and_then(|(relationship, _)| relationship.rel_type.clone());
+        let mut request = match match_clause.start.label {
+            Some(label) => CanonicalProjectionRequest::for_label(label),
+            None => CanonicalProjectionRequest::all_nodes(),
+        };
+        if match_clause.relationship.is_some() {
+            request = request.with_relationships(relationship_type);
+        }
+        return request;
+    }
+    if let Some(merge_clause) = parsed.merge_clause {
+        return merge_clause
+            .pattern
+            .label
+            .map(CanonicalProjectionRequest::for_label)
+            .unwrap_or_else(CanonicalProjectionRequest::all_nodes);
+    }
+    CanonicalProjectionRequest::default()
 }
 
 fn classify_storage_open_error(root_path: &Path, error: GraphStorageError) -> AppStateInitError {
@@ -500,7 +585,7 @@ async fn lifecycle_request_gate(
 mod tests {
     use std::{collections::HashMap, fs};
 
-    use super::{AppState, RuntimeStoreProvider};
+    use super::{AppState, RuntimeStoreProvider, canonical_projection_for_query};
     use crate::config::{ServerConfig, StorageMode};
 
     fn base_vars() -> HashMap<String, String> {
@@ -519,6 +604,25 @@ mod tests {
             state.runtime_store,
             RuntimeStoreProvider::Ephemeral
         ));
+    }
+
+    #[test]
+    fn canonical_projection_selection_distinguishes_create_match_and_traversal() {
+        let create = canonical_projection_for_query("CREATE (n:Indicator {name: 'new'}) RETURN n");
+        assert!(!create.include_nodes);
+        assert!(!create.include_relationships);
+
+        let match_all = canonical_projection_for_query("MATCH (n) RETURN n");
+        assert!(match_all.include_nodes);
+        assert_eq!(match_all.node_label, None);
+        assert!(!match_all.include_relationships);
+
+        let traversal =
+            canonical_projection_for_query("MATCH (a:Indicator)-[r:LINKS]->(b) RETURN a, r, b");
+        assert!(traversal.include_nodes);
+        assert_eq!(traversal.node_label.as_deref(), Some("Indicator"));
+        assert_eq!(traversal.relationship_type.as_deref(), Some("LINKS"));
+        assert!(traversal.include_relationships);
     }
 
     #[test]

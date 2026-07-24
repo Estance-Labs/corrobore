@@ -37,9 +37,8 @@ The gap to OpenCTI parity remains material:
   `KnowledgeDataEngine` operations from the PRD;
 - the current STIX importer maps a small property subset and maps unsupported
   object types to `Identity`;
-- the server persistence adapter commits a graph snapshot after a successful
-  mutation; it is not yet wired to the finer-grained atomic mutation path for
-  the OpenCTI workload;
+- the persistent standalone server uses the WAL-backed, record-level paged
+  store; OpenCTI-specific lookup/query semantics remain separate adapter work;
 - there is no embedded full-text index, OpenCTI security policy adapter, file
   extraction worker, aggregation planner or OpenCTI routing/shadow provider.
 

@@ -378,6 +378,16 @@ async fn health_contract_returns_ok_payload() {
     assert_eq!(payload["durability"]["checkpoint_sequence"], Value::Null);
     assert_eq!(payload["durability"]["checkpoint_age_seconds"], Value::Null);
     assert_eq!(payload["durability"]["compaction_backlog_bytes"], 0);
+    assert_eq!(payload["durability"]["page_ins"], 0);
+    assert_eq!(payload["durability"]["cache_hits"], 0);
+    assert_eq!(
+        payload["durability"]["recovery"]["replayed_transaction_count"],
+        0
+    );
+    assert_eq!(
+        payload["durability"]["recovery"]["recovery_path"],
+        Value::Null
+    );
     assert_eq!(payload["domain_providers"]["configured"], 0);
     assert_eq!(payload["domain_providers"]["ready"], 0);
     assert_eq!(payload["session_ttl_metrics"]["total_expired_sessions"], 0);
@@ -425,6 +435,15 @@ async fn health_contract_exposes_persistent_recovery_and_controls() {
         true
     );
     assert_eq!(payload["durability"]["wal_bytes"].as_u64(), Some(0));
+    assert_eq!(
+        payload["durability"]["recovery"]["replayed_transaction_count"],
+        0
+    );
+    assert_eq!(
+        payload["durability"]["recovery"]["recovery_path"],
+        "full_replay"
+    );
+    assert_eq!(payload["durability"]["resident_hot_nodes"], 0);
 
     let _ = fs::remove_dir_all(storage_root);
 }
@@ -2587,6 +2606,12 @@ async fn metrics_contract_exposes_prometheus_exposition_without_auth() {
         "# TYPE corrobore_storage_checkpoint_age_seconds gauge",
         "# TYPE corrobore_storage_compaction_backlog_bytes gauge",
         "# TYPE corrobore_storage_recovery_warning_count gauge",
+        "# TYPE corrobore_storage_page_ins_total counter",
+        "# TYPE corrobore_storage_cache_hits_total counter",
+        "# TYPE corrobore_storage_resident_records gauge",
+        "# TYPE corrobore_storage_index_entries gauge",
+        "# TYPE corrobore_storage_recovery_outcome gauge",
+        "# TYPE corrobore_storage_replayed_transactions gauge",
         "# TYPE corrobore_domain_providers_configured gauge",
         "corrobore_domain_providers_configured 0",
         "# TYPE corrobore_domain_providers_ready gauge",

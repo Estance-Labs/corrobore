@@ -158,6 +158,61 @@ corrobore server status --config /etc/corrobore/corrobore.toml
 
 An unavailable endpoint exits `8`; an incompatible storage contract exits `9`.
 
+## Persistent graph recovery and working set
+
+Persistent mode uses the graph root's append-only node and relationship logs as
+the canonical record source. Each mutation writes and synchronizes WAL intent,
+appends changed records and projection journals, records the applied marker,
+and only then returns success. It does not rewrite
+`runtime/engine-graph.json`.
+
+Startup validates the manifest, restores the latest safe checkpoint, and
+replays newer committed transactions before readiness. Catalog, label,
+relationship-type and adjacency indexes are projections: deleting their
+persisted metadata triggers deterministic reconstruction from committed
+transaction records. Node and relationship payloads remain cold until a query
+selects them through the catalog.
+
+The request working set is bounded by:
+
+- `storage.max_hot_nodes`;
+- `storage.max_hot_relationships`;
+- `storage.max_warm_adjacency_entries`.
+
+A request whose required projection exceeds a budget fails explicitly instead
+of silently loading the complete graph. Monitor
+`corrobore_storage_page_ins_total`,
+`corrobore_storage_cache_hits_total`,
+`corrobore_storage_resident_records`,
+`corrobore_storage_index_entries`, WAL lag, checkpoint age and compaction
+backlog before changing these limits.
+
+### One-time migration from the legacy graph snapshot
+
+On the first compatible startup, a legacy
+`runtime/engine-graph.json` is verified, imported through one canonical WAL
+transaction and compared by record identity, version history and current
+payload equality. Only after that integrity gate succeeds is the source renamed to
+`runtime/engine-graph.rollback.json`. The migration record
+`runtime/engine-graph-migration.json` documents the source size, counts and
+rollback boundary.
+
+Do not copy the rollback file back into place while the migrated store is
+writable. To roll back:
+
+1. stop Corrobore;
+2. preserve the complete migrated graph directory;
+3. restore a pre-migration backup into an empty directory, or deliberately
+   restore `engine-graph.rollback.json` with the older compatible binary;
+4. validate configuration and storage before starting;
+5. retain both directories until representative reads pass.
+
+The storage acceptance and small-profile write-amplification checks run with:
+
+```console
+cargo test -p graph-storage --test canonical_engine_store --locked
+```
+
 ## Logging and correlation
 
 The standalone service writes structured JSONL logs under `logging.directory`

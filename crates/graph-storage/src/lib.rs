@@ -56,6 +56,7 @@
 mod adjacency_storage;
 mod atomic_mutation;
 mod backup_restore;
+mod canonical_engine_store;
 mod catalog;
 mod catalog_indexes;
 mod catalog_metadata;
@@ -94,6 +95,10 @@ pub use backup_restore::{
     AtomicPersistentBackupOutcome, AtomicPersistentBackupValidationReport,
     AtomicPersistentRestoreOutcome, create_atomic_persistent_backup,
     restore_atomic_persistent_backup, validate_atomic_persistent_backup,
+};
+pub use canonical_engine_store::{
+    CanonicalEngineStore, CanonicalProjectionRequest, CanonicalStartupReport,
+    CanonicalStoreOptions, CanonicalStoreStats,
 };
 pub use catalog::{
     GraphCatalog, HistoricalRecordCatalogEntry, LatestRecordCatalogEntry,

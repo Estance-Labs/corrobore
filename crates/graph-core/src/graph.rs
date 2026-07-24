@@ -56,6 +56,23 @@ pub struct GraphPersistenceSnapshot {
     next_relationship_version_sequence: u64,
 }
 
+/// Global identifier sequence floors carried by a paged graph projection.
+///
+/// A projection may contain only a subset of canonical records. These floors
+/// keep newly generated IDs globally monotonic instead of deriving them from
+/// the currently resident subset.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GraphSequenceFloor {
+    /// Highest allocated node sequence.
+    pub node: u64,
+    /// Highest allocated node-version sequence.
+    pub node_version: u64,
+    /// Highest allocated relationship sequence.
+    pub relationship: u64,
+    /// Highest allocated relationship-version sequence.
+    pub relationship_version: u64,
+}
+
 impl Graph {
     /// Creates a new instance.
     pub fn new() -> Self {
@@ -169,6 +186,78 @@ impl Graph {
             }
         }
         Ok(graph)
+    }
+
+    /// Reconstructs an operational graph projection from current records only.
+    ///
+    /// Persistent paged stores use this boundary after selecting and paging the
+    /// records needed for one request. Historical versions remain canonical in
+    /// append-only storage; the projection retains current version pointers and
+    /// advances generated identifier sequences beyond every loaded identifier.
+    pub fn from_current_records(
+        nodes: Vec<Node>,
+        relationships: Vec<Relationship>,
+        sequence_floor: GraphSequenceFloor,
+    ) -> Result<Self, GraphError> {
+        let snapshot = GraphPersistenceSnapshot {
+            nodes,
+            relationships,
+            next_node_sequence: sequence_floor.node,
+            next_node_version_sequence: sequence_floor.node_version,
+            next_relationship_sequence: sequence_floor.relationship,
+            next_relationship_version_sequence: sequence_floor.relationship_version,
+        };
+        Self::from_persistence_snapshot(snapshot)
+    }
+
+    /// Returns every current node record, including tombstones.
+    ///
+    /// The durable transition layer needs tombstones because they are canonical
+    /// record versions even though normal graph reads intentionally hide them.
+    pub fn current_node_records(&self) -> Result<Vec<Node>, GraphError> {
+        let mut records = self
+            .nodes
+            .keys()
+            .map(|node_id| self.current_node_version(node_id))
+            .collect::<Result<Vec<_>, _>>()?;
+        records.sort_by(|left, right| left.id().as_str().cmp(right.id().as_str()));
+        Ok(records)
+    }
+
+    /// Returns every current relationship record, including tombstones.
+    pub fn current_relationship_records(&self) -> Result<Vec<Relationship>, GraphError> {
+        let mut records = self
+            .relationships
+            .keys()
+            .map(|relationship_id| self.current_relationship_version(relationship_id))
+            .collect::<Result<Vec<_>, _>>()?;
+        records.sort_by(|left, right| left.id().as_str().cmp(right.id().as_str()));
+        Ok(records)
+    }
+
+    /// Returns every node version in stable identifier/version order.
+    pub fn all_node_records(&self) -> Vec<Node> {
+        let mut records: Vec<Node> = self.nodes.values().flatten().cloned().collect();
+        records.sort_by(|left, right| {
+            left.id()
+                .as_str()
+                .cmp(right.id().as_str())
+                .then(left.version().cmp(&right.version()))
+        });
+        records
+    }
+
+    /// Returns every relationship version in stable identifier/version order.
+    pub fn all_relationship_records(&self) -> Vec<Relationship> {
+        let mut records: Vec<Relationship> =
+            self.relationships.values().flatten().cloned().collect();
+        records.sort_by(|left, right| {
+            left.id()
+                .as_str()
+                .cmp(right.id().as_str())
+                .then(left.version().cmp(&right.version()))
+        });
+        records
     }
 
     /// Creates the node.

@@ -42,6 +42,12 @@ use crate::{
     write_outgoing_adjacency_by_node_id,
 };
 
+// A checkpoint is intentionally periodic rather than mutation-scoped. The WAL
+// and projection journals remain the durable per-mutation boundary; rewriting a
+// complete catalog on every small update would recreate the write amplification
+// that the append-only store replaces.
+const CHECKPOINT_INTERVAL_TRANSACTIONS: u64 = 128;
+
 /// In-memory runtime state maintained by the atomic persistent mutation boundary.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AtomicPersistentRuntimeState {
@@ -306,8 +312,6 @@ pub fn apply_atomic_persistent_mutation_batch(
         "apply_atomic_persistent_mutation_batch",
     )?;
 
-    persist_graph_catalog_metadata(root, &working_state.catalog)?;
-
     if crash_stage == Some(MutationCrashStage::BeforeCheckpointWrite) {
         return Err(GraphStorageError::OperationFailed {
             operation: "apply_atomic_persistent_mutation_batch",
@@ -315,12 +319,20 @@ pub fn apply_atomic_persistent_mutation_batch(
         });
     }
 
-    write_checkpoint(root, mutation_sequence, &working_state)?;
+    if should_write_checkpoint(mutation_sequence) {
+        persist_graph_catalog_metadata(root, &working_state.catalog)?;
+        write_checkpoint(root, mutation_sequence, &working_state)?;
+    }
     *state = working_state;
     Ok(AtomicPersistentMutationOutcome {
         applied: true,
         mutation_sequence_number: Some(mutation_sequence),
     })
+}
+
+fn should_write_checkpoint(mutation_sequence: WalSequenceNumber) -> bool {
+    let transaction_ordinal = mutation_sequence.0.saturating_add(1) / 3;
+    transaction_ordinal == 1 || transaction_ordinal.is_multiple_of(CHECKPOINT_INTERVAL_TRANSACTIONS)
 }
 
 /// Recovers runtime state from atomic persistent mutation logs.
@@ -639,7 +651,10 @@ fn persist_node_mutations(
         let storage_ref =
             append_encoded_node_record_envelope(&mut log, &node.envelope, &node.encoded_record)?;
         index_appended_node_record(&mut state.catalog, &node.envelope, storage_ref.clone())?;
-        if let (PersistedRecordId::Node(node_id), Some(GraphRecordVersion::Node { .. })) = (
+        if let (
+            PersistedRecordId::Node(node_id),
+            Some(GraphRecordVersion::Node { current: true, .. }),
+        ) = (
             &node.envelope.record_id,
             node.envelope.graph_record_version.clone(),
         ) {
@@ -688,7 +703,7 @@ fn persist_relationship_mutations(
         )?;
         if let (
             PersistedRecordId::Relationship(relationship_id),
-            Some(GraphRecordVersion::Relationship { .. }),
+            Some(GraphRecordVersion::Relationship { current: true, .. }),
         ) = (
             &relationship.envelope.record_id,
             relationship.envelope.graph_record_version.clone(),
@@ -822,7 +837,10 @@ fn replay_node_mutations(
             &record.envelope,
             record.storage_ref.clone(),
         )?;
-        if let (PersistedRecordId::Node(node_id), Some(GraphRecordVersion::Node { .. })) = (
+        if let (
+            PersistedRecordId::Node(node_id),
+            Some(GraphRecordVersion::Node { current: true, .. }),
+        ) = (
             &record.envelope.record_id,
             record.envelope.graph_record_version.clone(),
         ) {
@@ -861,7 +879,7 @@ fn replay_relationship_mutations(
         )?;
         if let (
             PersistedRecordId::Relationship(relationship_id),
-            Some(GraphRecordVersion::Relationship { .. }),
+            Some(GraphRecordVersion::Relationship { current: true, .. }),
         ) = (
             &record.envelope.record_id,
             record.envelope.graph_record_version.clone(),

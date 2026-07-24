@@ -89,6 +89,12 @@ pub struct ServerConfig {
     pub storage_require_fsync: bool,
     /// Durability control: enforce strict recovery checks in persistent mode.
     pub storage_strict_recovery: bool,
+    /// Maximum node payloads resident in a persistent request projection.
+    pub storage_max_hot_nodes: u64,
+    /// Maximum relationship payloads resident in a persistent request projection.
+    pub storage_max_hot_relationships: u64,
+    /// Maximum lightweight adjacency entries resident in a persistent projection.
+    pub storage_max_warm_adjacency_entries: u64,
     /// Trusted root containing enterprise domain provider libraries.
     pub domain_provider_dir: Option<String>,
     /// Deployment manifest describing required provider libraries and hashes.
@@ -138,6 +144,15 @@ impl fmt::Debug for ServerConfig {
             .field("storage_dir", &self.storage_dir)
             .field("storage_require_fsync", &self.storage_require_fsync)
             .field("storage_strict_recovery", &self.storage_strict_recovery)
+            .field("storage_max_hot_nodes", &self.storage_max_hot_nodes)
+            .field(
+                "storage_max_hot_relationships",
+                &self.storage_max_hot_relationships,
+            )
+            .field(
+                "storage_max_warm_adjacency_entries",
+                &self.storage_max_warm_adjacency_entries,
+            )
             .field("domain_provider_dir", &self.domain_provider_dir)
             .field(
                 "domain_provider_manifest_file",
@@ -375,6 +390,24 @@ impl ServerConfig {
             "CORROBORE_STORAGE_STRICT_RECOVERY",
             matches!(storage_mode, StorageMode::Persistent),
         )?;
+        let storage_max_hot_nodes = parse_positive_u64(
+            "CORROBORE_STORAGE_MAX_HOT_NODES",
+            vars.get("CORROBORE_STORAGE_MAX_HOT_NODES")
+                .map(String::as_str)
+                .unwrap_or("16384"),
+        )?;
+        let storage_max_hot_relationships = parse_positive_u64(
+            "CORROBORE_STORAGE_MAX_HOT_RELATIONSHIPS",
+            vars.get("CORROBORE_STORAGE_MAX_HOT_RELATIONSHIPS")
+                .map(String::as_str)
+                .unwrap_or("32768"),
+        )?;
+        let storage_max_warm_adjacency_entries = parse_positive_u64(
+            "CORROBORE_STORAGE_MAX_WARM_ADJACENCY_ENTRIES",
+            vars.get("CORROBORE_STORAGE_MAX_WARM_ADJACENCY_ENTRIES")
+                .map(String::as_str)
+                .unwrap_or("65536"),
+        )?;
         let (domain_provider_dir, domain_provider_manifest_file) =
             Self::parse_domain_provider_config(vars)?;
 
@@ -435,6 +468,9 @@ impl ServerConfig {
             storage_dir,
             storage_require_fsync,
             storage_strict_recovery,
+            storage_max_hot_nodes,
+            storage_max_hot_relationships,
+            storage_max_warm_adjacency_entries,
             domain_provider_dir,
             domain_provider_manifest_file,
         })
@@ -809,6 +845,17 @@ fn parse_u64(name: &'static str, value: &str) -> Result<u64, ConfigError> {
     })
 }
 
+fn parse_positive_u64(name: &'static str, value: &str) -> Result<u64, ConfigError> {
+    let parsed = parse_u64(name, value)?;
+    if parsed == 0 {
+        return Err(ConfigError::InvalidEnv {
+            name,
+            value: value.to_owned(),
+        });
+    }
+    Ok(parsed)
+}
+
 fn parse_u32(name: &'static str, value: &str) -> Result<u32, ConfigError> {
     value.parse::<u32>().map_err(|_| ConfigError::InvalidEnv {
         name,
@@ -874,6 +921,9 @@ mod tests {
         assert_eq!(config.license_is_nfr, None);
         assert_eq!(config.storage_mode, StorageMode::Ephemeral);
         assert_eq!(config.storage_dir, None);
+        assert_eq!(config.storage_max_hot_nodes, 16_384);
+        assert_eq!(config.storage_max_hot_relationships, 32_768);
+        assert_eq!(config.storage_max_warm_adjacency_entries, 65_536);
         assert_eq!(config.domain_provider_dir, None);
         assert_eq!(config.domain_provider_manifest_file, None);
     }
@@ -1341,6 +1391,7 @@ mod tests {
         );
         assert!(config.storage_require_fsync);
         assert!(config.storage_strict_recovery);
+        assert_eq!(config.storage_max_hot_nodes, 16_384);
     }
 
     #[test]
@@ -1443,6 +1494,47 @@ mod tests {
                 value: "always".to_owned(),
             }
         );
+    }
+
+    #[test]
+    fn config_contract_parses_and_validates_persistent_working_set_budgets() {
+        let vars = HashMap::from([
+            (
+                "CORROBORE_HTTP_AUTH_TOKEN".to_owned(),
+                "token-123".to_owned(),
+            ),
+            (
+                "CORROBORE_STORAGE_MAX_HOT_NODES".to_owned(),
+                "128".to_owned(),
+            ),
+            (
+                "CORROBORE_STORAGE_MAX_HOT_RELATIONSHIPS".to_owned(),
+                "256".to_owned(),
+            ),
+            (
+                "CORROBORE_STORAGE_MAX_WARM_ADJACENCY_ENTRIES".to_owned(),
+                "512".to_owned(),
+            ),
+        ]);
+        let config = ServerConfig::from_map(&vars).expect("budgets should parse");
+        assert_eq!(config.storage_max_hot_nodes, 128);
+        assert_eq!(config.storage_max_hot_relationships, 256);
+        assert_eq!(config.storage_max_warm_adjacency_entries, 512);
+
+        let invalid = HashMap::from([
+            (
+                "CORROBORE_HTTP_AUTH_TOKEN".to_owned(),
+                "token-123".to_owned(),
+            ),
+            ("CORROBORE_STORAGE_MAX_HOT_NODES".to_owned(), "0".to_owned()),
+        ]);
+        assert!(matches!(
+            ServerConfig::from_map(&invalid),
+            Err(ConfigError::InvalidEnv {
+                name: "CORROBORE_STORAGE_MAX_HOT_NODES",
+                ..
+            })
+        ));
     }
 
     fn public_key_pem(verifying_key: &ed25519_dalek::VerifyingKey) -> String {

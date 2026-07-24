@@ -26,7 +26,8 @@ use std::{
 };
 
 use graph_storage::{
-    DurableWalEntry, DurableWalEntryKind, GraphStoreRecoveryReport, RecordFormat, StorageVersion,
+    AtomicPersistentRecoveryPath, DurableWalEntry, DurableWalEntryKind, GraphStoreRecoveryReport,
+    RecordFormat, StorageVersion,
 };
 use serde::Serialize;
 
@@ -50,6 +51,8 @@ pub struct DurabilityRecoverySnapshot {
     pub adjacency_storage_recovered: bool,
     pub warning_count: usize,
     pub derived_state_rebuilt: bool,
+    pub replayed_transaction_count: usize,
+    pub recovery_path: Option<&'static str>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -62,6 +65,17 @@ pub struct DurabilityObservabilitySnapshot {
     pub checkpoint_sequence: Option<u64>,
     pub checkpoint_age_seconds: Option<u64>,
     pub compaction_backlog_bytes: u64,
+    pub page_ins: u64,
+    pub cache_hits: u64,
+    pub resident_hot_nodes: u64,
+    pub resident_hot_relationships: u64,
+    pub resident_warm_adjacency_entries: u64,
+    pub resident_cold_nodes: u64,
+    pub resident_cold_relationships: u64,
+    pub node_index_entries: u64,
+    pub relationship_index_entries: u64,
+    pub label_index_entries: u64,
+    pub relationship_type_index_entries: u64,
     pub recovery: DurabilityRecoverySnapshot,
 }
 
@@ -81,6 +95,17 @@ pub fn collect_durability_snapshot(state: &AppState) -> DurabilityObservabilityS
             checkpoint_sequence: None,
             checkpoint_age_seconds: None,
             compaction_backlog_bytes: 0,
+            page_ins: 0,
+            cache_hits: 0,
+            resident_hot_nodes: 0,
+            resident_hot_relationships: 0,
+            resident_warm_adjacency_entries: 0,
+            resident_cold_nodes: 0,
+            resident_cold_relationships: 0,
+            node_index_entries: 0,
+            relationship_index_entries: 0,
+            label_index_entries: 0,
+            relationship_type_index_entries: 0,
             recovery: durability_recovery_snapshot(state.config.storage_mode, None),
         },
         RuntimeStoreProvider::Persistent(runtime) => {
@@ -98,6 +123,26 @@ pub fn collect_durability_snapshot(state: &AppState) -> DurabilityObservabilityS
                 .zip(latest_checkpoint.sequence)
                 .map(|(commit, checkpoint)| commit.saturating_sub(checkpoint))
                 .unwrap_or(0);
+            let store_stats = runtime
+                .canonical_store
+                .lock()
+                .ok()
+                .map(|store| store.stats().clone())
+                .unwrap_or_default();
+
+            let mut recovery = durability_recovery_snapshot(
+                state.config.storage_mode,
+                Some(&runtime.recovery_report),
+            );
+            if let Ok(store) = runtime.canonical_store.lock() {
+                recovery.derived_state_rebuilt = store.startup_report().derived_indexes_rebuilt;
+                recovery.replayed_transaction_count =
+                    store.startup_report().replayed_transaction_count;
+                recovery.recovery_path = store
+                    .startup_report()
+                    .recovery_path
+                    .map(recovery_path_label);
+            }
 
             DurabilityObservabilitySnapshot {
                 controls,
@@ -108,10 +153,18 @@ pub fn collect_durability_snapshot(state: &AppState) -> DurabilityObservabilityS
                 checkpoint_sequence: latest_checkpoint.sequence,
                 checkpoint_age_seconds: latest_checkpoint.age_seconds,
                 compaction_backlog_bytes: directory_size(&segments_dir),
-                recovery: durability_recovery_snapshot(
-                    state.config.storage_mode,
-                    Some(&runtime.recovery_report),
-                ),
+                page_ins: store_stats.page_ins,
+                cache_hits: store_stats.cache_hits,
+                resident_hot_nodes: store_stats.resident_hot_nodes,
+                resident_hot_relationships: store_stats.resident_hot_relationships,
+                resident_warm_adjacency_entries: store_stats.resident_warm_adjacency_entries,
+                resident_cold_nodes: store_stats.resident_cold_nodes,
+                resident_cold_relationships: store_stats.resident_cold_relationships,
+                node_index_entries: store_stats.node_index_entries,
+                relationship_index_entries: store_stats.relationship_index_entries,
+                label_index_entries: store_stats.label_index_entries,
+                relationship_type_index_entries: store_stats.relationship_type_index_entries,
+                recovery,
             }
         }
     }
@@ -144,6 +197,8 @@ fn durability_recovery_snapshot(
             adjacency_storage_recovered: report.adjacency_storage_recovered,
             warning_count: report.warnings.len(),
             derived_state_rebuilt: report.catalog_rebuild_report.is_some(),
+            replayed_transaction_count: 0,
+            recovery_path: None,
         },
         None => DurabilityRecoverySnapshot {
             outcome: if matches!(mode, StorageMode::Ephemeral) {
@@ -157,7 +212,16 @@ fn durability_recovery_snapshot(
             adjacency_storage_recovered: false,
             warning_count: 0,
             derived_state_rebuilt: false,
+            replayed_transaction_count: 0,
+            recovery_path: None,
         },
+    }
+}
+
+fn recovery_path_label(path: AtomicPersistentRecoveryPath) -> &'static str {
+    match path {
+        AtomicPersistentRecoveryPath::CheckpointAndBoundedReplay => "checkpoint_and_bounded_replay",
+        AtomicPersistentRecoveryPath::FullReplay => "full_replay",
     }
 }
 

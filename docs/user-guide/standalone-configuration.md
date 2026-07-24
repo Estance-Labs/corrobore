@@ -96,6 +96,9 @@ rejected.
 | `storage.directory` | `CORROBORE_STORAGE_DIR` | `--storage-dir` | unset; required in persistent mode |
 | `storage.require_fsync` | `CORROBORE_STORAGE_REQUIRE_FSYNC` | `--storage-require-fsync` | `false` in ephemeral mode, `true` in persistent mode |
 | `storage.strict_recovery` | `CORROBORE_STORAGE_STRICT_RECOVERY` | `--storage-strict-recovery` | `false` in ephemeral mode, `true` in persistent mode |
+| `storage.max_hot_nodes` | `CORROBORE_STORAGE_MAX_HOT_NODES` | `--storage-max-hot-nodes` | `16384` |
+| `storage.max_hot_relationships` | `CORROBORE_STORAGE_MAX_HOT_RELATIONSHIPS` | `--storage-max-hot-relationships` | `32768` |
+| `storage.max_warm_adjacency_entries` | `CORROBORE_STORAGE_MAX_WARM_ADJACENCY_ENTRIES` | `--storage-max-warm-adjacency-entries` | `65536` |
 | `logging.directory` | `CORROBORE_HTTP_LOG_DIR` | `--log-dir` | `<server.data_directory>/logs` |
 | `logging.level` | `CORROBORE_LOG_LEVEL` | `--log-level` | `info`; `RUST_LOG` is a compatibility alias |
 | `logging.format` | `CORROBORE_LOG_FORMAT` | `--log-format` | `json` |

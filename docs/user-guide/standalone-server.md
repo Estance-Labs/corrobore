@@ -47,6 +47,9 @@ mode = "persistent"
 directory = ".corrobore-runtime/graph"
 require_fsync = true
 strict_recovery = true
+max_hot_nodes = 16384
+max_hot_relationships = 32768
+max_warm_adjacency_entries = 65536
 
 [logging]
 directory = ".corrobore-runtime/logs"

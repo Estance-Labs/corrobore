@@ -182,6 +182,21 @@ async fn persistent_http_mutation_survives_app_state_restart() {
         "{}",
         String::from_utf8_lossy(&write_body)
     );
+    assert!(
+        !storage_dir
+            .join("runtime")
+            .join("engine-graph.json")
+            .exists(),
+        "successful persistent mutations must not rewrite a whole-graph snapshot"
+    );
+    assert!(
+        storage_dir
+            .join("transactions")
+            .join("transaction_wal.log")
+            .metadata()
+            .is_ok_and(|metadata| metadata.len() > 0),
+        "successful persistent mutations must be represented in the durable WAL"
+    );
 
     let restarted = persistent_test_state(&storage_dir);
     let read = Request::builder()

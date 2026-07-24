@@ -59,6 +59,9 @@ Application errors use the JSON envelope above. Transport middleware can reject 
 | `CORROBORE_STORAGE_DIR` | unset | Required when `CORROBORE_STORAGE_MODE=persistent`; graph storage root path. |
 | `CORROBORE_STORAGE_REQUIRE_FSYNC` | `false` in `ephemeral`, `true` in `persistent` | Durability control for persistent writes. |
 | `CORROBORE_STORAGE_STRICT_RECOVERY` | `false` in `ephemeral`, `true` in `persistent` | When enabled, validates all required append logs and rebuilds derived catalog metadata before readiness. |
+| `CORROBORE_STORAGE_MAX_HOT_NODES` | `16384` | Maximum node payloads admitted into one persistent request projection. |
+| `CORROBORE_STORAGE_MAX_HOT_RELATIONSHIPS` | `32768` | Maximum relationship payloads admitted into one persistent request projection. |
+| `CORROBORE_STORAGE_MAX_WARM_ADJACENCY_ENTRIES` | `65536` | Maximum lightweight adjacency entries retained for one persistent request projection. |
 | `CORROBORE_OPERATIONAL_ENDPOINT_POLICY` | `public` | `public` or `authenticated`; non-loopback binds require `authenticated`. |
 | `CORROBORE_TLS_ENABLED` | `false` | Enables HTTPS. Non-loopback binds require TLS. |
 | `CORROBORE_TLS_CERTIFICATE_FILE` | unset | PEM certificate chain loaded and validated at startup. |

@@ -92,6 +92,9 @@ The most common variables to override:
 | `CORROBORE_TLS_PRIVATE_KEY_SOURCE` | `.corrobore-tls/server.key` | Host private key mounted read-only into the container. |
 | `CORROBORE_STORAGE_MODE` | `persistent` | Set to `ephemeral` only for disposable graph state. |
 | `CORROBORE_STORAGE_DIR` | `/graph-data` in Compose | Graph directory when `persistent` mode is enabled. |
+| `CORROBORE_STORAGE_MAX_HOT_NODES` | `16384` | Bound on node payloads in one persistent request projection. |
+| `CORROBORE_STORAGE_MAX_HOT_RELATIONSHIPS` | `32768` | Bound on relationship payloads in one persistent request projection. |
+| `CORROBORE_STORAGE_MAX_WARM_ADJACENCY_ENTRIES` | `65536` | Bound on lightweight adjacency entries in one request projection. |
 | `CORROBORE_INGEST_TAXII_ROOT_URL` | unset | Required when TAXII profile is enabled. |
 | `CORROBORE_INGEST_TAXII_COLLECTION_ID` | unset | Required when TAXII profile is enabled. |
 | `CORROBORE_INGEST_CORROBORE_BASE_URL` | `https://corrobore-http-server:8080` in Compose | Corrobore target URL for connector imports. |
