@@ -1,0 +1,24 @@
+[Unit]
+Description=Corrobore standalone graph server
+Documentation=https://noetance-labs.github.io/corrobore/user-guide/standalone-server/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=corrobore
+Group=corrobore
+EnvironmentFile=-/etc/corrobore/corrobore.env
+ExecStart=/usr/local/bin/corrobore server start --config /etc/corrobore/corrobore.toml
+Restart=on-failure
+RestartSec=5s
+KillSignal=SIGTERM
+TimeoutStopSec=15s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/corrobore /var/log/corrobore
+
+[Install]
+WantedBy=multi-user.target

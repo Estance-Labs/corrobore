@@ -422,7 +422,7 @@ async fn probe_operational_endpoints(
     let readiness_response = readiness_request
         .send()
         .await
-        .map_err(|error| StatusProbeError::Unavailable(error.to_string()))?;
+        .map_err(|error| StatusProbeError::Unavailable(format!("{error:?}")))?;
     if !readiness_response.status().is_success() {
         return Err(StatusProbeError::Unavailable(format!(
             "readiness endpoint returned HTTP {}",
@@ -453,7 +453,7 @@ async fn probe_operational_endpoints(
     let version_response = version_request
         .send()
         .await
-        .map_err(|error| StatusProbeError::Unavailable(error.to_string()))?;
+        .map_err(|error| StatusProbeError::Unavailable(format!("{error:?}")))?;
     if !version_response.status().is_success() {
         return Err(StatusProbeError::Unavailable(format!(
             "version endpoint returned HTTP {}",

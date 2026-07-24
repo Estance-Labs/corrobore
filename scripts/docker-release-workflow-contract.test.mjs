@@ -44,3 +44,36 @@ test("release builds do not depend on the GitHub Actions build cache", async () 
   assert.doesNotMatch(workflow, /cache-from: type=gha/);
   assert.doesNotMatch(workflow, /cache-to: type=gha/);
 });
+
+test("release CI smoke-tests the actual image before publishing", async () => {
+  const workflow = await readWorkflow();
+
+  assert.match(workflow, /smoke-test:/);
+  assert.match(workflow, /docker build/);
+  assert.match(workflow, /scripts\/container-smoke\.sh/);
+  assert.match(workflow, /needs: smoke-test/);
+  assert.match(workflow, /CORROBORE_BUILD_VERSION/);
+  assert.match(workflow, /CORROBORE_BUILD_REVISION/);
+});
+
+test("container smoke test covers identity metadata readiness persistence and restart", async () => {
+  const smoke = await readFile(
+    new URL("./container-smoke.sh", import.meta.url),
+    "utf8",
+  );
+
+  for (const expected of [
+    "CONTAINER_ENGINE",
+    "inspect",
+    "65532",
+    "org.opencontainers.image.version",
+    "org.opencontainers.image.revision",
+    "/health/ready",
+    "/v1/cypher/write",
+    "/v1/cypher/read",
+    "stop",
+    "volume",
+  ]) {
+    assert.match(smoke, new RegExp(expected.replaceAll("/", "\\/")));
+  }
+});

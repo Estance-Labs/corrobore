@@ -457,8 +457,9 @@ frontend consumes these backend routes:
 
 ### API stack with Docker Compose
 
-The repository Compose stack runs the Rust HTTP service only, persists session
-state in a named volume, and waits for `GET /health` to pass. Docker Compose v2
+The repository Compose stack runs the Rust standalone service only, persists
+session and graph state in named volumes, and waits for authenticated
+`GET /health/ready` over HTTPS to pass. Docker Compose v2
 with support for `docker compose up --wait` is required.
 
 From the repository root:
@@ -468,8 +469,10 @@ cp .env.sample .env
 ```
 
 Edit `.env` and replace `CORROBORE_HTTP_AUTH_TOKEN=change-me` with a non-empty local
-token. Do not add surrounding whitespace and never commit `.env`. Validate the
-resolved configuration before starting containers:
+token. Generate or install the TLS certificate and private key referenced by
+`CORROBORE_TLS_CERTIFICATE_SOURCE` and `CORROBORE_TLS_PRIVATE_KEY_SOURCE`. Do
+not add surrounding whitespace and never commit `.env` or private keys.
+Validate the resolved configuration before starting containers:
 
 ```bash
 docker compose config
@@ -481,9 +484,10 @@ Then build, start, and wait for the service healthcheck:
 docker compose up --build --wait
 ```
 
-Open <http://localhost:8080>. The port is published on `127.0.0.1` by default,
-so the stack is not exposed to the local network. Change `CORROBORE_HTTP_PORT`
-in `.env` when port 8080 is unavailable, then open the matching localhost port.
+Connect to <https://localhost:8080>. The port is published on `127.0.0.1` by
+default, so the stack is not exposed to the local network. Local self-signed
+certificates require explicit client trust. Change `CORROBORE_HTTP_PORT` in
+`.env` when port 8080 is unavailable, then use the matching localhost port.
 
 Inspect status and follow logs with:
 
