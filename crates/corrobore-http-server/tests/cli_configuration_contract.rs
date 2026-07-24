@@ -188,6 +188,8 @@ fn start_help_covers_the_operational_configuration_surface() {
     for option in [
         "--host",
         "--port",
+        "--auth-mode",
+        "--auth-token-file",
         "--data-dir",
         "--storage-mode",
         "--storage-dir",
@@ -203,6 +205,7 @@ fn start_help_covers_the_operational_configuration_surface() {
         "--tls-enabled",
         "--tls-certificate-file",
         "--tls-private-key-file",
+        "--operational-endpoint-policy",
     ] {
         assert!(stdout.contains(option), "missing CLI option: {option}");
     }
@@ -410,14 +413,14 @@ fn environment_only_configuration_remains_supported() {
         .args(["server", "validate-config", "--print-effective"])
         .env_clear()
         .env("CORROBORE_HTTP_AUTH_TOKEN", "environment-only-secret")
-        .env("CORROBORE_HTTP_HOST", "0.0.0.0")
+        .env("CORROBORE_HTTP_HOST", "127.0.0.1")
         .env("CORROBORE_HTTP_PORT", "18081")
         .output()
         .expect("corrobore command should execute");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success());
-    assert!(stdout.contains("0.0.0.0"));
+    assert!(stdout.contains("127.0.0.1"));
     assert!(stdout.contains("18081"));
     assert!(!stdout.contains("environment-only-secret"));
 }
@@ -593,7 +596,7 @@ certificate_file = "server.crt"
 }
 
 #[test]
-fn start_rejects_tls_instead_of_silently_serving_plaintext() {
+fn start_rejects_invalid_tls_material_instead_of_serving_plaintext() {
     let directory = temp_dir("tls-start");
     let config = write_config(
         &directory,
@@ -616,7 +619,7 @@ private_key_file = "server.key"
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert_eq!(output.status.code(), Some(STARTUP_EXIT_CODE));
-    assert!(stderr.contains("TLS listener"));
+    assert!(stderr.contains("tls.certificate_file"));
     assert!(!stderr.contains("never-print-this"));
 }
 
@@ -638,4 +641,223 @@ fn invalid_toml_diagnostics_never_echo_secret_source_lines() {
     assert_eq!(output.status.code(), Some(CONFIG_EXIT_CODE));
     assert!(stderr.contains("config.file"));
     assert!(!stderr.contains("must-never-appear"));
+}
+
+#[test]
+fn required_authentication_can_load_tokens_from_protected_files() {
+    let directory = temp_dir("auth-token-files");
+    let primary = directory.join("primary.token");
+    let admin = directory.join("admin.token");
+    fs::write(&primary, "primary-file-secret\n").expect("primary secret should be written");
+    fs::write(&admin, "admin-file-secret\n").expect("admin secret should be written");
+    let config = write_config(
+        &directory,
+        &format!(
+            r#"
+[server]
+auth_mode = "required"
+auth_token_file = "{}"
+admin_auth_token_file = "{}"
+"#,
+            primary.display(),
+            admin.display()
+        ),
+    );
+
+    let output = run(corrobore().args([
+        "server",
+        "validate-config",
+        "--config",
+        config.to_str().expect("UTF-8 path"),
+        "--print-effective",
+    ]));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stderr}");
+    for secret in ["primary-file-secret", "admin-file-secret"] {
+        assert!(!stdout.contains(secret));
+        assert!(!stderr.contains(secret));
+    }
+    assert!(stdout.contains("server.auth_mode = \"required\""));
+    assert!(stdout.contains("server.auth_token = \"<redacted>\""));
+    assert!(stdout.contains("server.auth_token_source = \"file\""));
+}
+
+#[test]
+fn inline_and_file_secret_sources_are_mutually_exclusive() {
+    let directory = temp_dir("auth-source-conflict");
+    let token_file = directory.join("token");
+    fs::write(&token_file, "file-secret").expect("secret should be written");
+    let output = corrobore()
+        .args([
+            "server",
+            "validate-config",
+            "--auth-mode",
+            "required",
+            "--auth-token",
+            "inline-secret",
+            "--auth-token-file",
+            token_file.to_str().expect("UTF-8 path"),
+        ])
+        .env_clear()
+        .output()
+        .expect("command should execute");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(output.status.code(), Some(CONFIG_EXIT_CODE));
+    assert!(stderr.contains("server.auth_token"));
+    assert!(stderr.contains("mutually exclusive"));
+    assert!(!stderr.contains("inline-secret"));
+    assert!(!stderr.contains("file-secret"));
+}
+
+#[test]
+fn higher_precedence_secret_source_replaces_lower_precedence_source_kind() {
+    let directory = temp_dir("auth-source-precedence");
+    let token_file = directory.join("token");
+    fs::write(&token_file, "file-secret").expect("secret should be written");
+    let config = write_config(
+        &directory,
+        &format!(
+            "[server]\nauth_token_file = {:?}\n",
+            token_file.to_str().expect("UTF-8 path")
+        ),
+    );
+    let output = corrobore()
+        .args([
+            "server",
+            "validate-config",
+            "--config",
+            config.to_str().expect("UTF-8 path"),
+            "--auth-token",
+            "higher-precedence-secret",
+            "--print-effective",
+        ])
+        .env_clear()
+        .output()
+        .expect("command should execute");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stderr}");
+    assert!(stdout.contains("server.auth_token_source = \"inline\""));
+    for secret in ["file-secret", "higher-precedence-secret"] {
+        assert!(!stdout.contains(secret));
+        assert!(!stderr.contains(secret));
+    }
+}
+
+#[test]
+fn local_insecure_mode_is_explicit_and_limited_to_loopback() {
+    let local = run(corrobore().args([
+        "server",
+        "validate-config",
+        "--host",
+        "127.0.0.1",
+        "--auth-mode",
+        "local-insecure",
+        "--print-effective",
+    ]));
+    assert!(
+        local.status.success(),
+        "{}",
+        String::from_utf8_lossy(&local.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&local.stdout).contains("server.auth_mode = \"local-insecure\"")
+    );
+
+    let public = run(corrobore().args([
+        "server",
+        "validate-config",
+        "--host",
+        "0.0.0.0",
+        "--auth-mode",
+        "local-insecure",
+    ]));
+    let stderr = String::from_utf8_lossy(&public.stderr);
+    assert_eq!(public.status.code(), Some(CONFIG_EXIT_CODE));
+    assert!(stderr.contains("server.host"));
+    assert!(stderr.contains("local-insecure"));
+}
+
+#[test]
+fn non_loopback_exposure_requires_tls_authentication_and_protected_operations() {
+    let directory = temp_dir("public-policy");
+    let certificate = directory.join("server.crt");
+    let private_key = directory.join("server.key");
+
+    let plaintext = run(corrobore().args([
+        "server",
+        "validate-config",
+        "--host",
+        "0.0.0.0",
+        "--auth-token",
+        "public-secret",
+    ]));
+    let plaintext_stderr = String::from_utf8_lossy(&plaintext.stderr);
+    assert_eq!(plaintext.status.code(), Some(CONFIG_EXIT_CODE));
+    assert!(plaintext_stderr.contains("tls.enabled"));
+    assert!(!plaintext_stderr.contains("public-secret"));
+
+    let public_operations = run(corrobore().args([
+        "server",
+        "validate-config",
+        "--host",
+        "0.0.0.0",
+        "--auth-token",
+        "public-secret",
+        "--tls-enabled",
+        "true",
+        "--tls-certificate-file",
+        certificate.to_str().expect("UTF-8 path"),
+        "--tls-private-key-file",
+        private_key.to_str().expect("UTF-8 path"),
+        "--operational-endpoint-policy",
+        "public",
+    ]));
+    let operations_stderr = String::from_utf8_lossy(&public_operations.stderr);
+    assert_eq!(public_operations.status.code(), Some(CONFIG_EXIT_CODE));
+    assert!(operations_stderr.contains("operations.endpoint_policy"));
+    assert!(!operations_stderr.contains("public-secret"));
+
+    let secure = run(corrobore().args([
+        "server",
+        "validate-config",
+        "--host",
+        "0.0.0.0",
+        "--auth-token",
+        "public-secret",
+        "--tls-enabled",
+        "true",
+        "--tls-certificate-file",
+        certificate.to_str().expect("UTF-8 path"),
+        "--tls-private-key-file",
+        private_key.to_str().expect("UTF-8 path"),
+        "--operational-endpoint-policy",
+        "authenticated",
+    ]));
+    assert!(
+        secure.status.success(),
+        "{}",
+        String::from_utf8_lossy(&secure.stderr)
+    );
+}
+
+#[test]
+fn unreadable_secret_file_has_actionable_non_secret_diagnostics() {
+    let directory = temp_dir("missing-secret");
+    let missing = directory.join("missing.token");
+    let output = run(corrobore().args([
+        "server",
+        "validate-config",
+        "--auth-token-file",
+        missing.to_str().expect("UTF-8 path"),
+    ]));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(output.status.code(), Some(CONFIG_EXIT_CODE));
+    assert!(stderr.contains("server.auth_token_file"));
+    assert!(stderr.contains("cannot read"));
 }

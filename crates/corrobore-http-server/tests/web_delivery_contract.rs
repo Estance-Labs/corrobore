@@ -39,8 +39,13 @@ fn config(web_dir: Option<String>) -> ServerConfig {
     ServerConfig {
         host: "127.0.0.1".to_owned(),
         port: 0,
-        auth_token: "test-token".to_owned(),
+        auth_mode: corrobore_http_server::security::AuthenticationMode::Required,
+        auth_token: Some("test-token".to_owned()),
+        auth_token_source: Some(corrobore_http_server::security::SecretSource::Inline),
         admin_auth_token: None,
+        admin_auth_token_source: None,
+        operational_endpoint_policy:
+            corrobore_http_server::security::OperationalEndpointPolicy::Public,
         session_store_dir: web_root().to_string_lossy().into_owned(),
         log_dir: web_root().join("logs").to_string_lossy().into_owned(),
         request_timeout_ms: 1_000,
