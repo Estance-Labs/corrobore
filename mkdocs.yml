@@ -88,6 +88,7 @@ nav:
   - Developer Guide:
     - Contributing: developer-guide/contributing.md
     - Architecture Internals: developer-guide/internals.md
+    - OpenCTI Compatibility Inventory: developer-guide/opencti-compatibility.md
     - Standalone Acceptance Matrix: acceptance/standalone-server.md
     - Release Notes Process: developer-guide/release-notes-process.md
   - Release Notes:

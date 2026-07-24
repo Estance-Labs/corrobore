@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "opencti": {
+    "repository": "https://github.com/OpenCTI-Platform/opencti.git",
+    "tag": "7.260722.0",
+    "commit": "e41adc1c3fd98a849602db33dbe550f689fe6d83",
+    "source_root": "opencti-platform/opencti-graphql/src"
+  },
+  "elasticsearch": {
+    "image": "docker.elastic.co/elasticsearch/elasticsearch:8.19.18",
+    "source": "opencti-platform/opencti-dev/docker-compose.yml"
+  },
+  "opensearch": {
+    "image": "opensearchproject/opensearch:3.7.0",
+    "source": "opencti-platform/opencti-dev/opensearch/Dockerfile"
+  }
+}

@@ -1,0 +1,51 @@
+name: OpenCTI compatibility inventory
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/opencti-compatibility.yml"
+      - "compatibility/opencti/**"
+      - "docs/developer-guide/opencti-compatibility.md"
+      - "scripts/opencti-compatibility.mjs"
+      - "scripts/opencti-compatibility.test.mjs"
+      - "scripts/opencti-reference-benchmark.mjs"
+      - "scripts/opencti-reference-benchmark.sh"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/opencti-compatibility.yml"
+      - "compatibility/opencti/**"
+      - "docs/developer-guide/opencti-compatibility.md"
+      - "scripts/opencti-compatibility.mjs"
+      - "scripts/opencti-compatibility.test.mjs"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify pinned OpenCTI callsites and corpus
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Corrobore
+        uses: actions/checkout@v7
+
+      - name: Checkout pinned OpenCTI source
+        uses: actions/checkout@v7
+        with:
+          repository: OpenCTI-Platform/opencti
+          ref: e41adc1c3fd98a849602db33dbe550f689fe6d83
+          path: tmp/opencti
+          persist-credentials: false
+          sparse-checkout: |
+            opencti-platform/opencti-graphql/src
+
+      - name: Run compatibility contract tests
+        run: node --test scripts/opencti-compatibility.test.mjs
+
+      - name: Detect uncovered, stale or remapped upstream callsites
+        run: >-
+          node scripts/opencti-compatibility.mjs verify
+          --source tmp/opencti/opencti-platform/opencti-graphql/src
