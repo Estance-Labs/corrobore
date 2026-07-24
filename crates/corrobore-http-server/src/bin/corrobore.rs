@@ -135,6 +135,12 @@ struct ConfigArgs {
     /// Override the import request body limit.
     #[arg(long)]
     import_max_body_bytes: Option<usize>,
+    /// Override the maximum OpenCTI mutations accepted per synchronization batch.
+    #[arg(long)]
+    opencti_sync_max_operations: Option<usize>,
+    /// Override the bounded replay and dead-letter retention.
+    #[arg(long)]
+    opencti_sync_max_replay_identities: Option<usize>,
     /// Override the sustained request rate.
     #[arg(long)]
     rate_limit_per_second: Option<u64>,
@@ -235,6 +241,8 @@ struct FileLimits {
     request_timeout_ms: Option<u64>,
     max_body_bytes: Option<usize>,
     import_max_body_bytes: Option<usize>,
+    opencti_sync_max_operations: Option<usize>,
+    opencti_sync_max_replay_identities: Option<usize>,
     rate_limit_per_second: Option<u64>,
     rate_limit_burst: Option<u32>,
 }
@@ -669,6 +677,16 @@ fn apply_file(path: &Path, values: &mut HashMap<String, String>) -> Result<(), S
     );
     insert_num(
         values,
+        "CORROBORE_OPENCTI_SYNC_MAX_OPERATIONS",
+        config.limits.opencti_sync_max_operations,
+    );
+    insert_num(
+        values,
+        "CORROBORE_OPENCTI_SYNC_MAX_REPLAY_IDENTITIES",
+        config.limits.opencti_sync_max_replay_identities,
+    );
+    insert_num(
+        values,
         "CORROBORE_HTTP_RATE_LIMIT_PER_SECOND",
         config.limits.rate_limit_per_second,
     );
@@ -823,6 +841,16 @@ fn apply_cli(args: &ConfigArgs, values: &mut HashMap<String, String>) {
         values,
         "CORROBORE_HTTP_IMPORT_MAX_BODY_BYTES",
         args.import_max_body_bytes,
+    );
+    insert_num(
+        values,
+        "CORROBORE_OPENCTI_SYNC_MAX_OPERATIONS",
+        args.opencti_sync_max_operations,
+    );
+    insert_num(
+        values,
+        "CORROBORE_OPENCTI_SYNC_MAX_REPLAY_IDENTITIES",
+        args.opencti_sync_max_replay_identities,
     );
     insert_num(
         values,
@@ -1130,6 +1158,14 @@ fn print_effective(config: &OperationalConfig) {
     println!(
         "limits.import_max_body_bytes = {}",
         config.server.import_max_body_bytes
+    );
+    println!(
+        "limits.opencti_sync_max_operations = {}",
+        config.server.opencti_sync_max_operations
+    );
+    println!(
+        "limits.opencti_sync_max_replay_identities = {}",
+        config.server.opencti_sync_max_replay_identities
     );
     println!(
         "limits.rate_limit_per_second = {}",

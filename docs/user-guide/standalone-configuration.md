@@ -62,6 +62,8 @@ same overrides.
 | `--shutdown-timeout-ms` | Override the graceful-shutdown budget. |
 | `--max-body-bytes` | Override the standard request-body limit. |
 | `--import-max-body-bytes` | Override the import request-body limit. |
+| `--opencti-sync-max-operations` | Override the maximum mutations accepted in one OpenCTI synchronization batch. |
+| `--opencti-sync-max-replay-identities` | Override bounded replay-identity and dead-letter retention. |
 | `--rate-limit-per-second` | Override the sustained protected-route rate. |
 | `--rate-limit-burst` | Override the protected-route burst allowance. |
 | `--interfaces` | Supply a comma-separated set containing `http` and optionally `web`. |
@@ -105,6 +107,8 @@ rejected.
 | `limits.request_timeout_ms` | `CORROBORE_HTTP_REQUEST_TIMEOUT_MS` | `--query-timeout-ms` | `30000` |
 | `limits.max_body_bytes` | `CORROBORE_HTTP_MAX_BODY_BYTES` | `--max-body-bytes` | `2097152` |
 | `limits.import_max_body_bytes` | `CORROBORE_HTTP_IMPORT_MAX_BODY_BYTES` | `--import-max-body-bytes` | `33554432` |
+| `limits.opencti_sync_max_operations` | `CORROBORE_OPENCTI_SYNC_MAX_OPERATIONS` | `--opencti-sync-max-operations` | `512` |
+| `limits.opencti_sync_max_replay_identities` | `CORROBORE_OPENCTI_SYNC_MAX_REPLAY_IDENTITIES` | `--opencti-sync-max-replay-identities` | `4096` |
 | `limits.rate_limit_per_second` | `CORROBORE_HTTP_RATE_LIMIT_PER_SECOND` | `--rate-limit-per-second` | `50` |
 | `limits.rate_limit_burst` | `CORROBORE_HTTP_RATE_LIMIT_BURST` | `--rate-limit-burst` | `200` |
 | `interfaces.enabled` | `CORROBORE_SERVER_INTERFACES` | `--interfaces` | `["http"]` |

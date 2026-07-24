@@ -336,6 +336,39 @@ impl Graph {
         Ok(id.clone())
     }
 
+    /// Replace the complete current node payload with a new canonical version.
+    ///
+    /// Synchronization adapters use this operation when a source record may
+    /// remove labels or properties. Patch semantics cannot represent removal,
+    /// while replacement preserves graph identity and version history.
+    pub fn replace_node(&mut self, id: &NodeId, input: NodeInput) -> Result<NodeId, GraphError> {
+        input.validate()?;
+        let current = self.current_node_version(id)?;
+        if current.status == RecordStatus::Tombstoned {
+            return Err(GraphError::RecordAlreadyTombstoned(id.as_str().to_owned()));
+        }
+        let version_id = self.next_node_version_id()?;
+        let next = Node {
+            id: id.clone(),
+            version_id: version_id.clone(),
+            version: current.version + 1,
+            current: true,
+            previous_version_id: Some(current.version_id.clone()),
+            labels: input.labels,
+            properties: input.properties,
+            status: input.status,
+            confidence: input.confidence,
+            source_reliability: input.source_reliability,
+            information_credibility: input.information_credibility,
+            extraction_run_id: input.extraction_run_id,
+            evidence_refs: input.evidence_refs,
+            temporal: input.temporal,
+            transaction: input.transaction,
+        };
+        self.append_node_version(id, &current.version_id, version_id, next)?;
+        Ok(id.clone())
+    }
+
     /// Tombstone node.
     pub fn tombstone_node(&mut self, id: &NodeId) -> Result<NodeId, GraphError> {
         let current = self.current_node_version(id)?;
@@ -476,6 +509,58 @@ impl Graph {
         next.current = true;
         next.previous_version_id = Some(current.version_id.clone());
         Self::apply_relationship_patch(&mut next, patch)?;
+        self.append_relationship_version(id, &current.version_id, version_id, next)?;
+        Ok(id.clone())
+    }
+
+    /// Replace the complete current relationship payload with a new version.
+    ///
+    /// Endpoint changes update both adjacency directions atomically in the
+    /// in-memory projection while the stable relationship identity is retained.
+    pub fn replace_relationship(
+        &mut self,
+        id: &RelationshipId,
+        input: RelationshipInput,
+    ) -> Result<RelationshipId, GraphError> {
+        if self.get_node(&input.source)?.is_none() {
+            return Err(GraphError::SourceNodeNotFound(input.source));
+        }
+        if self.get_node(&input.target)?.is_none() {
+            return Err(GraphError::TargetNodeNotFound(input.target));
+        }
+        let current = self.current_relationship_version(id)?;
+        if current.status == RecordStatus::Tombstoned {
+            return Err(GraphError::RecordAlreadyTombstoned(id.as_str().to_owned()));
+        }
+        let version_id = self.next_relationship_version_id()?;
+        let source = input.source.clone();
+        let target = input.target.clone();
+        let next = Relationship {
+            id: id.clone(),
+            version_id: version_id.clone(),
+            version: current.version + 1,
+            current: true,
+            previous_version_id: Some(current.version_id.clone()),
+            source: source.clone(),
+            target: target.clone(),
+            rel_type: input.rel_type,
+            properties: input.properties,
+            status: input.status,
+            confidence: input.confidence,
+            source_reliability: input.source_reliability,
+            information_credibility: input.information_credibility,
+            extraction_run_id: input.extraction_run_id,
+            evidence_refs: input.evidence_refs,
+            temporal: input.temporal,
+            transaction: input.transaction,
+        };
+        self.adjacency.record_replaced_relationship(
+            id,
+            &current.source,
+            &current.target,
+            &source,
+            &target,
+        )?;
         self.append_relationship_version(id, &current.version_id, version_id, next)?;
         Ok(id.clone())
     }
@@ -751,6 +836,7 @@ impl Graph {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::PropertyValue;
 
     fn setup_graph_with_relationship() -> (Graph, NodeId, NodeId, RelationshipId) {
         let mut graph = Graph::new();
@@ -768,6 +854,90 @@ mod tests {
             .expect("relationship creation should succeed");
 
         (graph, source, target, relationship)
+    }
+
+    #[test]
+    fn replace_node_removes_stale_labels_and_properties() {
+        let mut graph = Graph::new();
+        let node_id = graph
+            .create_node(
+                NodeInput::new(["Legacy"])
+                    .with_property("removed", PropertyValue::String("stale".to_owned())),
+            )
+            .expect("node creation should succeed");
+
+        graph
+            .replace_node(
+                &node_id,
+                NodeInput::new(["Current"])
+                    .with_property("retained", PropertyValue::String("fresh".to_owned())),
+            )
+            .expect("node replacement should succeed");
+
+        let current = graph
+            .get_node(&node_id)
+            .expect("node lookup should succeed")
+            .expect("node should remain visible");
+        assert_eq!(current.version(), 2);
+        assert_eq!(current.labels(), &["Current"]);
+        assert!(current.property("removed").is_none());
+        assert_eq!(
+            current.property("retained"),
+            Some(&PropertyValue::String("fresh".to_owned()))
+        );
+    }
+
+    #[test]
+    fn replace_relationship_moves_adjacency_to_new_endpoints() {
+        let (mut graph, old_source, old_target, relationship_id) = setup_graph_with_relationship();
+        let new_source = graph
+            .create_node(NodeInput::new(["Actor"]))
+            .expect("new source creation should succeed");
+        let new_target = graph
+            .create_node(NodeInput::new(["Indicator"]))
+            .expect("new target creation should succeed");
+
+        graph
+            .replace_relationship(
+                &relationship_id,
+                RelationshipInput::new(new_source.clone(), "USES", new_target.clone())
+                    .expect("replacement input should be valid"),
+            )
+            .expect("relationship replacement should succeed");
+
+        assert!(
+            graph
+                .outgoing(&old_source)
+                .expect("old outgoing lookup should succeed")
+                .is_empty()
+        );
+        assert!(
+            graph
+                .incoming(&old_target)
+                .expect("old incoming lookup should succeed")
+                .is_empty()
+        );
+        assert_eq!(
+            graph
+                .outgoing(&new_source)
+                .expect("new outgoing lookup should succeed")
+                .len(),
+            1
+        );
+        assert_eq!(
+            graph
+                .incoming(&new_target)
+                .expect("new incoming lookup should succeed")
+                .len(),
+            1
+        );
+        let current = graph
+            .get_relationship(&relationship_id)
+            .expect("relationship lookup should succeed")
+            .expect("relationship should remain visible");
+        assert_eq!(current.version(), 2);
+        assert_eq!(current.source(), &new_source);
+        assert_eq!(current.target(), &new_target);
     }
 
     #[test]

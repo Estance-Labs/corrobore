@@ -32,7 +32,12 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use corrobore_ingest::{CursorStore, IngestConfig, IngestConfigError, TaxiiAuth, run_poll_cycle};
+use corrobore_ingest::{
+    CorroboreImportClient, CursorStore, IngestConfig, IngestConfigError, TaxiiAuth, run_poll_cycle,
+};
+use opencti_adapter::{
+    MutationClass, OpenCtiMutation, OpenCtiSyncBatch, OperationStatus, SyncPhase,
+};
 use serde_json::{Value, json};
 
 // ---------------------------------------------------------------------------
@@ -192,6 +197,7 @@ async fn spawn_mock_corrobore(response: Value) -> (SocketAddr, CorroboreMockStat
 
     let app = Router::new()
         .route("/v1/import/stix", post(corrobore_mock_handler))
+        .route("/v1/opencti/sync/batches", post(corrobore_mock_handler))
         .with_state(state.clone());
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -219,6 +225,81 @@ fn import_success_response(processed: usize) -> Value {
             "errors": []
         }
     })
+}
+
+#[tokio::test]
+async fn opencti_sync_client_preserves_batch_boundary_auth_and_checkpoint_response() {
+    let (addr, state) = spawn_mock_corrobore(json!({
+        "ok": true,
+        "result": {
+            "batch": {
+                "transaction_id": "tx--opencti-sync-test",
+                "operations": [{
+                    "operation_id": "operation--1",
+                    "sequence": 1,
+                    "status": "applied",
+                    "diagnostic": null
+                }],
+                "acknowledged_sequence": 1,
+                "queue_depth": 0
+            },
+            "checkpoint": {
+                "source_id": "opencti--connector",
+                "snapshot_id": "snapshot--connector",
+                "phase": "catch_up",
+                "last_acknowledged_sequence": 1,
+                "high_water_mark": 1,
+                "queue_depth": 0,
+                "retry_count": 0,
+                "rejected_operations": 0,
+                "quarantined_operations": 0,
+                "replay_identities": [],
+                "dead_letters": []
+            },
+            "validation": null
+        }
+    }))
+    .await;
+    let client = CorroboreImportClient::new(
+        format!("http://{addr}"),
+        "corrobore-token",
+        "workspace--unused",
+    );
+    let batch = OpenCtiSyncBatch::new(
+        "opencti--connector",
+        "snapshot--connector",
+        SyncPhase::Snapshot,
+        1,
+        true,
+        vec![
+            OpenCtiMutation::new(
+                "operation--1",
+                1,
+                MutationClass::Upsert,
+                json!({"id": "indicator--1", "type": "indicator"}),
+            )
+            .expect("mutation should be valid"),
+        ],
+    )
+    .expect("batch should be valid");
+
+    let response = client
+        .synchronize_opencti(batch, None)
+        .await
+        .expect("synchronization should succeed");
+    assert_eq!(
+        response.batch.operations[0].status,
+        OperationStatus::Applied
+    );
+    assert_eq!(response.checkpoint.last_acknowledged_sequence, 1);
+
+    let imports = state.imports.lock().expect("corrobore mock lock");
+    assert_eq!(imports.len(), 1);
+    assert_eq!(imports[0].0["batch"]["high_water_mark"], 1);
+    assert_eq!(
+        imports[0].1.get("authorization").map(String::as_str),
+        Some("Bearer corrobore-token")
+    );
 }
 
 fn config_for(taxii_addr: SocketAddr, corrobore_addr: SocketAddr, state_dir: &str) -> IngestConfig {

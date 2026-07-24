@@ -661,6 +661,91 @@ async fn import_stix_contract_rejects_missing_auth_header() {
 }
 
 #[tokio::test]
+async fn opencti_sync_http_contract_commits_and_reports_checkpoint_status() {
+    let storage_root = unique_store_dir("opencti-sync-http-root");
+    let app = test_app_with_store_dir_and_extra_env(
+        unique_store_dir("opencti-sync-http-sessions"),
+        HashMap::from([
+            ("CORROBORE_STORAGE_MODE".to_owned(), "persistent".to_owned()),
+            (
+                "CORROBORE_STORAGE_DIR".to_owned(),
+                storage_root.display().to_string(),
+            ),
+        ]),
+    );
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/opencti/sync/batches")
+        .header(header::AUTHORIZATION, "Bearer token-123")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({
+                "batch": {
+                    "source_id": "opencti--http-contract",
+                    "snapshot_id": "snapshot--http-contract",
+                    "phase": "snapshot",
+                    "high_water_mark": 1,
+                    "snapshot_complete": true,
+                    "operations": [{
+                        "operation_id": "operation--http-1",
+                        "sequence": 1,
+                        "class": "upsert",
+                        "record": {
+                            "id": "indicator--http-1",
+                            "type": "indicator",
+                            "name": "HTTP synchronization"
+                        }
+                    }]
+                }
+            })
+            .to_string(),
+        ))
+        .expect("request should build");
+
+    let response = app
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("synchronization should respond");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body should be readable");
+    let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
+    assert_eq!(
+        payload["result"]["batch"]["operations"][0]["status"],
+        "applied"
+    );
+    assert_eq!(
+        payload["result"]["checkpoint"]["last_acknowledged_sequence"],
+        1
+    );
+
+    let status = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/opencti/sync/status")
+                .header(header::AUTHORIZATION, "Bearer token-123")
+                .body(Body::empty())
+                .expect("status request should build"),
+        )
+        .await
+        .expect("status should respond");
+    assert_eq!(status.status(), StatusCode::OK);
+    let body = to_bytes(status.into_body(), usize::MAX)
+        .await
+        .expect("status body should be readable");
+    let payload: Value = serde_json::from_slice(&body).expect("status payload should be json");
+    assert_eq!(payload["result"]["initialized"], true);
+    assert_eq!(payload["result"]["last_acknowledged_sequence"], 1);
+    assert_eq!(payload["result"]["lag"], 0);
+    assert_eq!(payload["result"]["shadow_reads_enabled"], false);
+
+    let _ = fs::remove_dir_all(storage_root);
+}
+
+#[tokio::test]
 async fn stix_validate_contract_rejects_missing_auth_header() {
     let app = test_app();
     let request = Request::builder()
@@ -2612,6 +2697,12 @@ async fn metrics_contract_exposes_prometheus_exposition_without_auth() {
         "# TYPE corrobore_storage_index_entries gauge",
         "# TYPE corrobore_storage_recovery_outcome gauge",
         "# TYPE corrobore_storage_replayed_transactions gauge",
+        "# TYPE corrobore_opencti_sync_lag gauge",
+        "# TYPE corrobore_opencti_sync_queue_depth gauge",
+        "# TYPE corrobore_opencti_sync_retries_total counter",
+        "# TYPE corrobore_opencti_sync_rejected_total counter",
+        "# TYPE corrobore_opencti_sync_checkpoint gauge",
+        "# TYPE corrobore_opencti_sync_shadow_reads gauge",
         "# TYPE corrobore_domain_providers_configured gauge",
         "corrobore_domain_providers_configured 0",
         "# TYPE corrobore_domain_providers_ready gauge",

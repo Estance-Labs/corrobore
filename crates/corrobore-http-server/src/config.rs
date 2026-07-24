@@ -65,6 +65,10 @@ pub struct ServerConfig {
     pub max_body_bytes: usize,
     /// Maximum request body size (bytes) for STIX import routes (2.3).
     pub import_max_body_bytes: usize,
+    /// Maximum OpenCTI mutations accepted in one synchronization batch.
+    pub opencti_sync_max_operations: usize,
+    /// Maximum replay identities and dead-letter diagnostics retained.
+    pub opencti_sync_max_replay_identities: usize,
     /// Sustained request rate per second for the global rate limiter (2.3).
     pub rate_limit_per_second: u64,
     /// Burst allowance for the global rate limiter (2.3).
@@ -132,6 +136,14 @@ impl fmt::Debug for ServerConfig {
             .field("session_idle_ttl_ms", &self.session_idle_ttl_ms)
             .field("max_body_bytes", &self.max_body_bytes)
             .field("import_max_body_bytes", &self.import_max_body_bytes)
+            .field(
+                "opencti_sync_max_operations",
+                &self.opencti_sync_max_operations,
+            )
+            .field(
+                "opencti_sync_max_replay_identities",
+                &self.opencti_sync_max_replay_identities,
+            )
             .field("rate_limit_per_second", &self.rate_limit_per_second)
             .field("rate_limit_burst", &self.rate_limit_burst)
             .field("web_dir", &self.web_dir)
@@ -355,6 +367,20 @@ impl ServerConfig {
                 .unwrap_or("33554432"),
         )?;
 
+        let opencti_sync_max_operations = parse_positive_usize(
+            "CORROBORE_OPENCTI_SYNC_MAX_OPERATIONS",
+            vars.get("CORROBORE_OPENCTI_SYNC_MAX_OPERATIONS")
+                .map(String::as_str)
+                .unwrap_or("512"),
+        )?;
+
+        let opencti_sync_max_replay_identities = parse_positive_usize(
+            "CORROBORE_OPENCTI_SYNC_MAX_REPLAY_IDENTITIES",
+            vars.get("CORROBORE_OPENCTI_SYNC_MAX_REPLAY_IDENTITIES")
+                .map(String::as_str)
+                .unwrap_or("4096"),
+        )?;
+
         let rate_limit_per_second = parse_u64(
             "CORROBORE_HTTP_RATE_LIMIT_PER_SECOND",
             vars.get("CORROBORE_HTTP_RATE_LIMIT_PER_SECOND")
@@ -456,6 +482,8 @@ impl ServerConfig {
             session_idle_ttl_ms,
             max_body_bytes,
             import_max_body_bytes,
+            opencti_sync_max_operations,
+            opencti_sync_max_replay_identities,
             rate_limit_per_second,
             rate_limit_burst,
             web_dir,
@@ -870,6 +898,17 @@ fn parse_usize(name: &'static str, value: &str) -> Result<usize, ConfigError> {
     })
 }
 
+fn parse_positive_usize(name: &'static str, value: &str) -> Result<usize, ConfigError> {
+    let parsed = parse_usize(name, value)?;
+    if parsed == 0 {
+        return Err(ConfigError::InvalidEnv {
+            name,
+            value: value.to_owned(),
+        });
+    }
+    Ok(parsed)
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -909,6 +948,8 @@ mod tests {
         // 2.3: explicit body-size posture with a larger allowance for imports.
         assert_eq!(config.max_body_bytes, 2 * 1024 * 1024);
         assert_eq!(config.import_max_body_bytes, 32 * 1024 * 1024);
+        assert_eq!(config.opencti_sync_max_operations, 512);
+        assert_eq!(config.opencti_sync_max_replay_identities, 4_096);
 
         // 2.3: rate-limiting defaults are permissive but present.
         assert_eq!(config.rate_limit_per_second, 50);
@@ -1047,6 +1088,14 @@ mod tests {
             "64".to_owned(),
         );
         vars.insert(
+            "CORROBORE_OPENCTI_SYNC_MAX_OPERATIONS".to_owned(),
+            "7".to_owned(),
+        );
+        vars.insert(
+            "CORROBORE_OPENCTI_SYNC_MAX_REPLAY_IDENTITIES".to_owned(),
+            "11".to_owned(),
+        );
+        vars.insert(
             "CORROBORE_HTTP_RATE_LIMIT_PER_SECOND".to_owned(),
             "1".to_owned(),
         );
@@ -1055,6 +1104,8 @@ mod tests {
         let config = ServerConfig::from_map(&vars).expect("config should parse");
         assert_eq!(config.max_body_bytes, 10);
         assert_eq!(config.import_max_body_bytes, 64);
+        assert_eq!(config.opencti_sync_max_operations, 7);
+        assert_eq!(config.opencti_sync_max_replay_identities, 11);
         assert_eq!(config.rate_limit_per_second, 1);
         assert_eq!(config.rate_limit_burst, 1);
     }
@@ -1366,6 +1417,29 @@ mod tests {
             ConfigError::InvalidEnv {
                 name: "CORROBORE_HTTP_PORT",
                 value: "x".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn config_contract_rejects_zero_opencti_sync_limits() {
+        let mut vars = HashMap::new();
+        vars.insert(
+            "CORROBORE_HTTP_AUTH_TOKEN".to_owned(),
+            "token-123".to_owned(),
+        );
+        vars.insert(
+            "CORROBORE_OPENCTI_SYNC_MAX_OPERATIONS".to_owned(),
+            "0".to_owned(),
+        );
+
+        let error =
+            ServerConfig::from_map(&vars).expect_err("zero synchronization limit should fail");
+        assert_eq!(
+            error,
+            ConfigError::InvalidEnv {
+                name: "CORROBORE_OPENCTI_SYNC_MAX_OPERATIONS",
+                value: "0".to_owned(),
             }
         );
     }

@@ -79,3 +79,27 @@ and abort the rebuild instead of selecting a winner implicitly.
 
 Access metadata is descriptive adapter output. Authorization and tenant-policy
 decisions remain outside this crate and outside the scope of the mapping.
+
+## Snapshot and mutation synchronization
+
+`OpenCtiSynchronizer` applies a consistent snapshot followed by an ordered
+catch-up stream. Every mutation carries a stable replay identity and monotonic
+source sequence. A durable checkpoint records the snapshot phase, high-water
+mark, last contiguous acknowledgement, retry queue depth, bounded replay
+fingerprints, and bounded dead-letter diagnostics.
+
+The supported mutation classes are object upsert/delete, relationship
+upsert/delete, and access-policy replacement for either record kind. Upserts
+replace the complete canonical payload so fields removed upstream do not remain
+as stale graph properties. Relationship replacements also move adjacency
+entries when endpoints change.
+
+The HTTP runtime commits each accepted source batch as one canonical WAL
+transaction, then fsyncs and atomically renames the synchronization checkpoint.
+If the response or checkpoint write is lost after the graph commit, the same
+batch can be replayed without duplicating canonical records.
+
+Parity validation compares active records, lossless properties, identifier
+projections, relationship endpoints and types, access-policy inputs, and
+derived-projection freshness. Shadow reads remain disabled until every
+dimension matches.

@@ -42,6 +42,7 @@ use graph_storage::{
     StorageManifest, StorageTimestamp, StorageVersion, create_storage_root, open_storage_root,
     read_storage_manifest,
 };
+use opencti_adapter::BulkLimits;
 use thiserror::Error;
 use tower_governor::{
     GovernorLayer, governor::GovernorConfigBuilder, key_extractor::GlobalKeyExtractor,
@@ -70,11 +71,13 @@ use crate::{
         import::{import_stix_bundle, import_stix_bundle_file},
         license::{admin_license_status, license_status},
         metrics::metrics,
+        opencti_sync::{apply_opencti_sync_batch, opencti_sync_status},
         operational::{liveness, readiness, version},
         seed::seed_search,
         session::{session_health, session_logs, start_session, stop_session},
         stix_validate::validate_stix,
     },
+    opencti_sync::OpenCtiSyncRuntime,
     security::OperationalEndpointPolicy,
     session_runtime::SessionRuntime,
     storage_ownership::{DataDirectoryOwnership, DataDirectoryOwnershipError},
@@ -113,6 +116,8 @@ pub enum AppStateInitError {
     PersistentStorageRecoveryFailed { path: String, reason: String },
     #[error("failed to initialize enterprise domain providers: {reason}")]
     DomainProviderInitFailed { reason: String },
+    #[error("failed to restore OpenCTI synchronization state: {reason}")]
+    OpenCtiSyncStateFailed { reason: String },
 }
 
 #[derive(Clone)]
@@ -124,6 +129,7 @@ pub struct AppState {
     pub timeline: Arc<Mutex<ExplorerTimelineStore>>,
     pub config: Arc<ServerConfig>,
     pub lifecycle: Arc<ServerLifecycle>,
+    pub opencti_sync: Arc<Mutex<OpenCtiSyncRuntime>>,
     pub(crate) domain_providers: Option<Arc<crate::enterprise::registry::DomainProviderRegistry>>,
     pub started_at: Instant,
 }
@@ -132,6 +138,24 @@ impl AppState {
     pub fn new(config: ServerConfig) -> Result<Self, AppStateInitError> {
         let runtime_store = initialize_runtime_store(&config)?;
         let engine = initialize_engine(&runtime_store, config.storage_require_fsync)?;
+        let sync_state_path = match &runtime_store {
+            RuntimeStoreProvider::Persistent(runtime) => Some(
+                runtime
+                    .root_path
+                    .join("runtime")
+                    .join("opencti-sync-state.json"),
+            ),
+            RuntimeStoreProvider::Ephemeral => None,
+        };
+        let opencti_sync = OpenCtiSyncRuntime::open(
+            sync_state_path,
+            BulkLimits {
+                max_operations: config.opencti_sync_max_operations,
+                max_payload_bytes: config.import_max_body_bytes,
+                max_replay_identities: config.opencti_sync_max_replay_identities,
+            },
+        )
+        .map_err(|reason| AppStateInitError::OpenCtiSyncStateFailed { reason })?;
         let domain_providers = initialize_domain_providers(&config)?;
         let timeline = ExplorerTimelineStore::new(&config.session_store_dir);
         let lifecycle = Arc::new(ServerLifecycle::initializing());
@@ -145,6 +169,7 @@ impl AppState {
             timeline: Arc::new(Mutex::new(timeline)),
             config: Arc::new(config),
             lifecycle: Arc::clone(&lifecycle),
+            opencti_sync: Arc::new(Mutex::new(opencti_sync)),
             domain_providers,
             started_at: Instant::now(),
         };
@@ -492,6 +517,8 @@ pub fn build_router(state: AppState) -> Router {
     let import_routes = Router::new()
         .route("/v1/import/stix", post(import_stix_bundle))
         .route("/v1/import/stix/file", post(import_stix_bundle_file))
+        .route("/v1/opencti/sync/batches", post(apply_opencti_sync_batch))
+        .route("/v1/opencti/sync/status", get(opencti_sync_status))
         .layer(DefaultBodyLimit::max(state.config.import_max_body_bytes));
 
     // 2.3: a global token-bucket rate limiter guards all protected routes.

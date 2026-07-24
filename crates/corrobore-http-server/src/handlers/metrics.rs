@@ -79,7 +79,7 @@ pub async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
         .map(|registry| (registry.provider_count(), registry.ready_count()))
         .unwrap_or((0, 0));
 
-    let body = format!(
+    let mut body = format!(
         concat!(
             "# HELP corrobore_build_info Build information for the running server, versioned via labels.\n",
             "# TYPE corrobore_build_info gauge\n",
@@ -191,6 +191,39 @@ pub async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
         shutdown_started = shutdown_started,
         shutdown_failures = shutdown_failures,
     );
+    let sync = state
+        .opencti_sync
+        .lock()
+        .map(|runtime| runtime.status())
+        .unwrap_or_default();
+    body.push_str(&format!(
+        concat!(
+            "# HELP corrobore_opencti_sync_lag Source sequences behind the latest observed high-water mark.\n",
+            "# TYPE corrobore_opencti_sync_lag gauge\n",
+            "corrobore_opencti_sync_lag {lag}\n",
+            "# HELP corrobore_opencti_sync_queue_depth Retryable OpenCTI operations awaiting contiguous replay.\n",
+            "# TYPE corrobore_opencti_sync_queue_depth gauge\n",
+            "corrobore_opencti_sync_queue_depth {queue_depth}\n",
+            "# HELP corrobore_opencti_sync_retries_total Cumulative retryable OpenCTI operations.\n",
+            "# TYPE corrobore_opencti_sync_retries_total counter\n",
+            "corrobore_opencti_sync_retries_total {retry_count}\n",
+            "# HELP corrobore_opencti_sync_rejected_total Cumulative permanently rejected OpenCTI operations.\n",
+            "# TYPE corrobore_opencti_sync_rejected_total counter\n",
+            "corrobore_opencti_sync_rejected_total {rejected}\n",
+            "# HELP corrobore_opencti_sync_checkpoint Last acknowledged OpenCTI source sequence.\n",
+            "# TYPE corrobore_opencti_sync_checkpoint gauge\n",
+            "corrobore_opencti_sync_checkpoint {checkpoint}\n",
+            "# HELP corrobore_opencti_sync_shadow_reads Whether divergence validation permits shadow reads.\n",
+            "# TYPE corrobore_opencti_sync_shadow_reads gauge\n",
+            "corrobore_opencti_sync_shadow_reads {shadow_reads}\n",
+        ),
+        lag = sync.lag,
+        queue_depth = sync.queue_depth,
+        retry_count = sync.retry_count,
+        rejected = sync.rejected_operations,
+        checkpoint = sync.last_acknowledged_sequence,
+        shadow_reads = u8::from(sync.shadow_reads_enabled),
+    ));
 
     ([(header::CONTENT_TYPE, PROMETHEUS_CONTENT_TYPE)], body)
 }
