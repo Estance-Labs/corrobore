@@ -45,6 +45,9 @@ openssl req -x509 -newkey rsa:2048 -sha256 -nodes \
   -keyout .corrobore-tls/server.key \
   -out .corrobore-tls/server.crt \
   -days 30 -subj '/CN=localhost' \
+  -addext 'basicConstraints=critical,CA:FALSE' \
+  -addext 'keyUsage=critical,digitalSignature,keyEncipherment' \
+  -addext 'extendedKeyUsage=serverAuth' \
   -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1'
 docker compose up --build --wait
 ```

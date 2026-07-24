@@ -74,6 +74,8 @@ nav:
   - Architecture: architecture.md
   - User Guide:
     - Standalone Server CLI: user-guide/standalone-server.md
+    - Standalone Configuration: user-guide/standalone-configuration.md
+    - Standalone Operations: user-guide/standalone-operations.md
     - Cypher Support: user-guide/cypher.md
     - Intelligence Domains: user-guide/domains.md
     - Domain Provider Operations: user-guide/domain-provider-operations.md

@@ -29,6 +29,9 @@ openssl req -x509 -newkey rsa:2048 -sha256 -nodes \
   -keyout .corrobore-tls/server.key \
   -out .corrobore-tls/server.crt \
   -days 30 -subj '/CN=localhost' \
+  -addext 'basicConstraints=critical,CA:FALSE' \
+  -addext 'keyUsage=critical,digitalSignature,keyEncipherment' \
+  -addext 'extendedKeyUsage=serverAuth' \
   -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1'
 docker run --rm --name corrobore \
   -p 127.0.0.1:8080:8080 \
@@ -91,7 +94,7 @@ The most common variables to override:
 | `CORROBORE_STORAGE_DIR` | `/graph-data` in Compose | Graph directory when `persistent` mode is enabled. |
 | `CORROBORE_INGEST_TAXII_ROOT_URL` | unset | Required when TAXII profile is enabled. |
 | `CORROBORE_INGEST_TAXII_COLLECTION_ID` | unset | Required when TAXII profile is enabled. |
-| `CORROBORE_INGEST_CORROBORE_BASE_URL` | `http://corrobore-http-server:8080` in Compose | Corrobore target URL for connector imports. |
+| `CORROBORE_INGEST_CORROBORE_BASE_URL` | `https://corrobore-http-server:8080` in Compose | Corrobore target URL for connector imports. |
 | `CORROBORE_INGEST_CORROBORE_AUTH_TOKEN` | defaults to `CORROBORE_HTTP_AUTH_TOKEN` in Compose | Auth token used by the connector toward Corrobore. |
 
 See the [HTTP Server reference](user-guide/http-server.md#configuration) for the full list.
@@ -202,6 +205,8 @@ curl --insecure -X POST "https://127.0.0.1:8080/v1/sessions/${SESSION_ID}/stop" 
 ## Next steps
 
 - [HTTP Server reference](user-guide/http-server.md) — full route catalogue and configuration.
+- [Standalone configuration reference](user-guide/standalone-configuration.md) — every TOML field, environment variable, CLI override, and default.
+- [Standalone operations guide](user-guide/standalone-operations.md) — native, Docker, systemd, backup, restore, upgrade, and rollback runbooks.
 - [TAXII Ingestion](user-guide/ingestion.md) — connector variables and polling behavior.
 - [Cypher support](user-guide/cypher.md) — which Cypher features are available.
 - [Intelligence Domains](user-guide/domains.md) — built-in node schemas for CTI, FIMI, and Crisis.
