@@ -173,6 +173,21 @@ pub enum EngineError {
     /// Deterministic export planning or rendering failed.
     #[error("export failed: {0}")]
     Export(String),
+    /// A configured durable engine adapter failed to load or commit graph state.
+    #[error("engine persistence failed: {0}")]
+    Persistence(String),
+}
+
+/// Optional durable graph adapter used by standalone hosts.
+///
+/// The embedded engine remains persistence-agnostic unless a host explicitly
+/// supplies this boundary.
+pub trait EnginePersistence: std::fmt::Debug + Send {
+    /// Loads the graph before the engine accepts requests.
+    fn load_graph(&self) -> Result<Graph, String>;
+
+    /// Atomically commits the graph after a successful mutation.
+    fn persist_graph(&mut self, graph: &Graph) -> Result<(), String>;
 }
 
 /// Options controlling an embedded STIX bundle export.
@@ -212,6 +227,7 @@ pub struct CorroboreEngineBuilder {
     runtime_policy: Option<RuntimePolicy>,
     budget: Option<RuntimeBudget>,
     execution_policy: Option<ExecutionPolicy>,
+    persistence: Option<Box<dyn EnginePersistence>>,
 }
 
 impl CorroboreEngineBuilder {
@@ -254,6 +270,12 @@ impl CorroboreEngineBuilder {
     /// Overrides the execution policy.
     pub fn execution_policy(mut self, policy: ExecutionPolicy) -> Self {
         self.execution_policy = Some(policy);
+        self
+    }
+
+    /// Configures an explicit durable graph adapter for a standalone host.
+    pub fn persistence(mut self, persistence: Box<dyn EnginePersistence>) -> Self {
+        self.persistence = Some(persistence);
         self
     }
 
@@ -301,11 +323,18 @@ impl CorroboreEngineBuilder {
             read_only_by_default: false,
         });
 
+        let persistence = self.persistence;
+        let graph = persistence
+            .as_ref()
+            .map_or_else(|| Ok(Graph::new()), |adapter| adapter.load_graph())
+            .map_err(EngineError::Persistence)?;
+
         Ok(CorroboreEngine {
-            gateway: CypherGateway::with_policies(runtime_policy, budget, execution_policy),
+            gateway: CypherGateway::with_graph(runtime_policy, budget, execution_policy, graph),
             workspace_id,
             session_id,
             budget_ref,
+            persistence,
         })
     }
 }
@@ -317,6 +346,7 @@ pub struct CorroboreEngine {
     workspace_id: WorkspaceId,
     session_id: SessionId,
     budget_ref: CypherBudgetRef,
+    persistence: Option<Box<dyn EnginePersistence>>,
 }
 
 impl CorroboreEngine {
@@ -374,6 +404,8 @@ impl CorroboreEngine {
             EngineRequestMode::Mutation => shared_runtime::CypherRequestMode::Mutation,
             EngineRequestMode::ValidateOnly => shared_runtime::CypherRequestMode::ValidateOnly,
         };
+        let durable_mutation =
+            mode == shared_runtime::CypherRequestMode::Mutation && self.persistence.is_some();
         let runtime_request = CypherRequest::new(
             request.query,
             CypherParameters::new(request.parameters),
@@ -383,7 +415,19 @@ impl CorroboreEngine {
             budget_ref,
         )?;
 
-        Ok(self.gateway.execute(&runtime_request)?)
+        let previous_graph = durable_mutation.then(|| self.gateway.graph().clone());
+        let response = self.gateway.execute(&runtime_request)?;
+        if durable_mutation && response.status == CypherResponseStatus::Success {
+            let committed_graph = self.gateway.graph().clone();
+            if let Some(adapter) = self.persistence.as_mut()
+                && let Err(error) = adapter.persist_graph(&committed_graph)
+            {
+                self.gateway
+                    .replace_graph(previous_graph.expect("durable mutation captured rollback"));
+                return Err(EngineError::Persistence(error));
+            }
+        }
+        Ok(response)
     }
 
     /// Executes a query, auto-detecting read or mutation mode.

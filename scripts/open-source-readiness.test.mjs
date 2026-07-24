@@ -47,6 +47,18 @@ test('tracked repository content excludes local and generated artifacts', () => 
   assert.deepEqual(forbidden, []);
 });
 
+test('standalone acceptance assets are public and executable', () => {
+  for (const required of [
+    'scripts/standalone-acceptance.sh',
+    '.github/workflows/standalone-acceptance.yml',
+  ]) {
+    assert.equal(fs.existsSync(repositoryPath(required)), true, `${required} must exist`);
+  }
+
+  const harnessMode = fs.statSync(repositoryPath('scripts/standalone-acceptance.sh')).mode;
+  assert.notEqual(harnessMode & 0o111, 0, 'standalone-acceptance.sh must be executable');
+});
+
 test('public Markdown links resolve inside the repository', () => {
   const projectDocumentsRoot = repositoryPath('project-documents');
   const files = [

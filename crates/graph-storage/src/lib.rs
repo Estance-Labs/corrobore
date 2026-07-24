@@ -61,6 +61,7 @@ mod catalog_indexes;
 mod catalog_metadata;
 mod catalog_rebuild;
 mod codec;
+mod engine_snapshot;
 mod error;
 mod graph_pager;
 mod log;
@@ -126,6 +127,7 @@ pub use codec::{
     decode_persisted_record_envelope, encode_persisted_record_envelope,
     validate_encoded_record_checksum,
 };
+pub use engine_snapshot::{load_engine_graph_snapshot, persist_engine_graph_snapshot};
 pub use error::{GraphStorageError, GraphStorageResult};
 pub use graph_pager::{
     FileBackedGraphPager, FileBackedGraphStore, create_file_backed_graph_pager,

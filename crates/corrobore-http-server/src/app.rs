@@ -35,11 +35,12 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use corrobore_engine::CorroboreEngine;
+use corrobore_engine::{CorroboreEngine, EnginePersistence};
 use graph_storage::{
     FileBackedGraphStore, GraphId, GraphStorageError, GraphStoreOpenMode, GraphStoreOpenOptions,
-    GraphStoreRecoveryReport, RecordFormat, StorageManifest, StorageTimestamp, StorageVersion,
-    create_storage_root, open_existing_file_backed_graph_store,
+    GraphStoreRecoveryReport, RecordFormat, StorageManifest, StorageRoot, StorageTimestamp,
+    StorageVersion, create_storage_root, load_engine_graph_snapshot,
+    open_existing_file_backed_graph_store, persist_engine_graph_snapshot,
 };
 use thiserror::Error;
 use tower_governor::{
@@ -129,11 +130,12 @@ pub struct AppState {
 impl AppState {
     pub fn new(config: ServerConfig) -> Result<Self, AppStateInitError> {
         let runtime_store = initialize_runtime_store(&config)?;
+        let engine = initialize_engine(&runtime_store, config.storage_require_fsync)?;
         let domain_providers = initialize_domain_providers(&config)?;
         let timeline = ExplorerTimelineStore::new(&config.session_store_dir);
         let lifecycle = Arc::new(ServerLifecycle::initializing());
         let state = Self {
-            engine: Arc::new(Mutex::new(CorroboreEngine::strict_default())),
+            engine: Arc::new(Mutex::new(engine)),
             runtime_store,
             sessions: Arc::new(Mutex::new(SessionRuntime::new(
                 config.session_store_dir.clone(),
@@ -148,6 +150,42 @@ impl AppState {
         lifecycle.mark_ready();
         Ok(state)
     }
+}
+
+#[derive(Debug)]
+struct PersistentEnginePersistence {
+    root: StorageRoot,
+    require_fsync: bool,
+}
+
+impl EnginePersistence for PersistentEnginePersistence {
+    fn load_graph(&self) -> Result<graph_core::Graph, String> {
+        load_engine_graph_snapshot(&self.root).map_err(|error| error.to_string())
+    }
+
+    fn persist_graph(&mut self, graph: &graph_core::Graph) -> Result<(), String> {
+        persist_engine_graph_snapshot(&self.root, graph, self.require_fsync)
+            .map_err(|error| error.to_string())
+    }
+}
+
+fn initialize_engine(
+    runtime_store: &RuntimeStoreProvider,
+    require_fsync: bool,
+) -> Result<CorroboreEngine, AppStateInitError> {
+    let RuntimeStoreProvider::Persistent(runtime) = runtime_store else {
+        return Ok(CorroboreEngine::strict_default());
+    };
+    CorroboreEngine::builder()
+        .persistence(Box::new(PersistentEnginePersistence {
+            root: runtime.store.root().clone(),
+            require_fsync,
+        }))
+        .build()
+        .map_err(|error| AppStateInitError::PersistentStorageRecoveryFailed {
+            path: runtime.root_path.display().to_string(),
+            reason: error.to_string(),
+        })
 }
 
 fn initialize_domain_providers(

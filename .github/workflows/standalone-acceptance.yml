@@ -1,0 +1,101 @@
+name: Standalone acceptance
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/standalone-acceptance.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "Dockerfile"
+      - "crates/**"
+      - "packaging/**"
+      - "scripts/standalone-acceptance*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: standalone-acceptance-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Acceptance contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Validate acceptance wiring and traceability
+        run: node --test scripts/standalone-acceptance-contract.test.mjs
+
+  acceptance:
+    name: Native, container, and embedded acceptance
+    needs: contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CORROBORE_ACCEPTANCE_TIMEOUT_SECONDS: "30"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry and build outputs
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-standalone-acceptance-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-standalone-acceptance-
+
+      - name: Build native standalone executable
+        run: cargo build --release --locked -p corrobore-http-server --bin corrobore
+
+      - name: Run native standalone acceptance
+        env:
+          CORROBORE_ACCEPTANCE_BINARY: target/release/corrobore
+          CORROBORE_ACCEPTANCE_ARTIFACT_DIR: acceptance-artifacts/native
+          CORROBORE_ACCEPTANCE_PORT: "18084"
+        run: scripts/standalone-acceptance.sh native
+
+      - name: Build actual production image
+        run: |
+          docker build \
+            --build-arg "CORROBORE_BUILD_VERSION=acceptance" \
+            --build-arg "CORROBORE_BUILD_REVISION=${GITHUB_SHA}" \
+            --tag "corrobore-acceptance:${GITHUB_SHA}" \
+            .
+
+      - name: Run container standalone acceptance
+        env:
+          IMAGE: corrobore-acceptance:${{ github.sha }}
+          CORROBORE_ACCEPTANCE_ARTIFACT_DIR: acceptance-artifacts/container
+          CORROBORE_ACCEPTANCE_PORT: "18085"
+        run: scripts/standalone-acceptance.sh container
+
+      - name: Build and test embedded mode without server dependencies
+        run: |
+          cargo test -p corrobore-engine --locked
+          cargo tree -p corrobore-engine --edges normal | tee acceptance-artifacts/embedded-cargo-tree.txt
+          cargo test -p corrobore-http-server --test engine_boundary_contract --locked dependency_boundary_keeps_server_dependencies_out_of_the_embedded_engine
+
+      - name: Preserve actionable diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: standalone-acceptance-diagnostics
+          path: acceptance-artifacts/
+          if-no-files-found: warn
+          retention-days: 14
