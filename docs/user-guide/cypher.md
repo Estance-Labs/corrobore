@@ -49,7 +49,7 @@ Use `/v1/cypher/write` or `CorroboreEngine::write`. A write route does not overr
 
 ## Parameters and modes
 
-HTTP requests accept a `params` JSON object alongside `query`. The shared runtime uses string-valued Cypher parameters; the HTTP adapter validates JSON values before conversion.
+HTTP requests accept a `params` JSON object alongside `query`. The shared runtime binds string-valued parameters outside quoted literals and escapes them as Cypher string literals; an undeclared placeholder rejects the request. The HTTP adapter validates JSON values before conversion.
 
 `POST /v1/cypher/execute` accepts `mode` values `read`, `write`, `validate`, or `auto`. `auto` detects mutation keywords. Validate-only mode currently has a known defect tracked in issue #228 and must not be relied on for mutation safety; use the explicit read route or a read-only policy.
 

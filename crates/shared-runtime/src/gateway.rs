@@ -20,6 +20,65 @@
 // THE SOFTWARE.
 use crate::*;
 
+// Bind only declared string parameters as Cypher literals before parsing,
+// rejecting missing placeholders and preserving quoted text.
+fn bind_parameters(
+    query_text: &str,
+    parameters: &CypherParameters,
+) -> Result<String, RuntimeError> {
+    let mut bound = String::with_capacity(query_text.len());
+    let mut characters = query_text.chars().peekable();
+    let mut in_string = false;
+    let mut escaped = false;
+    while let Some(character) = characters.next() {
+        if in_string {
+            bound.push(character);
+            if character == '\\' && !escaped {
+                escaped = true;
+            } else {
+                if character == '\'' && !escaped {
+                    in_string = false;
+                }
+                escaped = false;
+            }
+            continue;
+        }
+        if character == '\'' {
+            in_string = true;
+            bound.push(character);
+            continue;
+        }
+        if character != '$' {
+            bound.push(character);
+            continue;
+        }
+        let mut name = String::new();
+        while characters
+            .peek()
+            .is_some_and(|next| next.is_ascii_alphanumeric() || *next == '_')
+        {
+            name.push(characters.next().expect("peeked parameter character"));
+        }
+        if name.is_empty() {
+            bound.push('$');
+            continue;
+        }
+        let value = parameters
+            .values()
+            .get(&name)
+            .ok_or(RuntimeError::MalformedCypherRequest("parameters"))?;
+        bound.push('\'');
+        for value_character in value.chars() {
+            if value_character == '\\' || value_character == '\'' {
+                bound.push('\\');
+            }
+            bound.push(value_character);
+        }
+        bound.push('\'');
+    }
+    Ok(bound)
+}
+
 #[derive(Clone, Debug)]
 /// Cypher gateway.
 pub struct CypherGateway {
@@ -82,8 +141,9 @@ impl CypherGateway {
             return Ok(runtime_error_to_rejected_response(error));
         }
 
+        let query_text = bind_parameters(&request.query_text, &request.parameters)?;
         if request.mode == CypherRequestMode::ValidateOnly {
-            return Ok(match self.executor.validate(&request.query_text) {
+            return Ok(match self.executor.validate(&query_text) {
                 Ok(validation_result) => map_execution_result_to_response(validation_result),
                 Err(error) => {
                     runtime_error_to_rejected_response(execution_error_to_runtime_error(error))
@@ -93,7 +153,7 @@ impl CypherGateway {
 
         let execution_result = self
             .executor
-            .execute(&request.query_text)
+            .execute(&query_text)
             .map_err(execution_error_to_runtime_error)?;
 
         Ok(map_execution_result_to_response(execution_result))

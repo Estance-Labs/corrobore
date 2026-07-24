@@ -66,6 +66,43 @@ fn parse_query_classifies_read_mutation_and_mixed_kinds() {
     assert_eq!(mixed.kind, QueryKind::Mixed);
 }
 
+#[test]
+fn parse_merge_relationship_preserves_source_edge_and_target_patterns() {
+    let ast = parse_query(
+        "MATCH (s:Entity {id: 'source'}) MERGE (s)-[r:TARGETS]->(o:Entity {id: 'target'}) RETURN r",
+    )
+    .expect("relationship MERGE should parse");
+
+    let parsed = ast.query.expect("structured query should be attached");
+    let merge = parsed.merge_clause.expect("MERGE clause should exist");
+    assert_eq!(merge.pattern.variable, "s");
+    let (relationship, target) = merge
+        .relationship
+        .expect("relationship and target patterns should be retained");
+    assert_eq!(relationship.variable.as_deref(), Some("r"));
+    assert_eq!(relationship.rel_type.as_deref(), Some("TARGETS"));
+    assert_eq!(target.variable, "o");
+    assert_eq!(target.label.as_deref(), Some("Entity"));
+}
+
+#[test]
+fn parse_create_relationship_preserves_source_edge_and_target_patterns() {
+    let ast = parse_query(
+        "MATCH (s:Entity {id: 'source'}) CREATE (s)-[r:TARGETS]->(o:Entity {id: 'target'}) RETURN r",
+    )
+    .expect("relationship CREATE should parse");
+
+    let parsed = ast.query.expect("structured query should be attached");
+    let create = parsed.create_clause.expect("CREATE clause should exist");
+    let (relationship, target) = create
+        .relationship
+        .expect("relationship and target patterns should be retained");
+    assert_eq!(relationship.variable.as_deref(), Some("r"));
+    assert_eq!(relationship.rel_type.as_deref(), Some("TARGETS"));
+    assert_eq!(target.variable, "o");
+    assert_eq!(target.label.as_deref(), Some("Entity"));
+}
+
 // ---------------------------------------------------------------------------
 // Mutation parsing: CREATE
 // ---------------------------------------------------------------------------

@@ -132,6 +132,8 @@ pub struct ParsedQuery {
 pub struct CreateClause {
     /// Node patterns to create.
     pub nodes: Vec<NodePattern>,
+    /// Optional relationship pattern following the source node.
+    pub relationship: Option<(RelationshipPattern, NodePattern)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -770,19 +772,68 @@ fn parse_match_where_return_only_match(
 ///
 /// Expected input shape: `(n:Label {key: value})` (without the CREATE keyword).
 fn parse_create_clause(input: &str) -> Result<CreateClause, ParseError> {
-    let (node, _rest) = parse_node_pattern(input)?;
-    Ok(CreateClause { nodes: vec![node] })
+    let (node, rest) = parse_node_pattern(input)?;
+    Ok(CreateClause {
+        nodes: vec![node],
+        relationship: parse_create_relationship(rest)?,
+    })
+}
+
+// Retain and validate an optional directed edge and target node after CREATE.
+fn parse_create_relationship(
+    input: &str,
+) -> Result<Option<(RelationshipPattern, NodePattern)>, ParseError> {
+    parse_directed_relationship(input, "CREATE")
 }
 
 /// Parse MERGE body — a single node pattern with optional relationship.
 ///
 /// Expected input shape: `(n:Label {key: value})` (without the MERGE keyword).
 fn parse_merge_clause(input: &str) -> Result<MergeClause, ParseError> {
-    let (pattern, _rest) = parse_node_pattern(input)?;
+    let (pattern, rest) = parse_node_pattern(input)?;
     Ok(MergeClause {
         pattern,
-        relationship: None,
+        relationship: parse_directed_relationship(rest, "MERGE")?,
     })
+}
+
+// Retain and validate the optional directed edge and target node after MERGE.
+fn parse_directed_relationship(
+    input: &str,
+    clause: &str,
+) -> Result<Option<(RelationshipPattern, NodePattern)>, ParseError> {
+    let rest = input.trim();
+    if rest.is_empty() {
+        return Ok(None);
+    }
+    let relationship_start = rest.strip_prefix("-[").ok_or_else(|| ParseError {
+        code: ParseErrorCode::InvalidSyntax,
+        message: format!("{clause} relationship must follow the source node as -[...]->(...)"),
+        suggestion: None,
+    })?;
+    let relationship_end = relationship_start.find(']').ok_or_else(|| ParseError {
+        code: ParseErrorCode::InvalidSyntax,
+        message: format!("{clause} relationship must include a closing ']'"),
+        suggestion: None,
+    })?;
+    let relationship = parse_relationship_pattern(&relationship_start[..relationship_end]);
+    let target_input = relationship_start[relationship_end + 1..]
+        .trim()
+        .strip_prefix("->")
+        .ok_or_else(|| ParseError {
+            code: ParseErrorCode::InvalidSyntax,
+            message: format!("{clause} relationship must be directed with '->'"),
+            suggestion: None,
+        })?;
+    let (target, trailing) = parse_node_pattern(target_input)?;
+    if !trailing.trim().is_empty() {
+        return Err(ParseError {
+            code: ParseErrorCode::InvalidSyntax,
+            message: format!("unexpected token after {clause} relationship target"),
+            suggestion: None,
+        });
+    }
+    Ok(Some((relationship, target)))
 }
 
 /// Parse SET body — comma-separated property assignments.
