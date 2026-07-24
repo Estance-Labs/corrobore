@@ -1,5 +1,5 @@
 [package]
-name = "graph-core"
+name = "opencti-adapter"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,11 +8,9 @@ repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
 
-[lib]
-name = "graph_core"
-path = "src/lib.rs"
-
 [dependencies]
+chrono = { workspace = true }
+graph-core = { path = "../graph-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

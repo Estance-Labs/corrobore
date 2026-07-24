@@ -40,6 +40,7 @@ ed25519-dalek = { version = "2.2", features = ["pkcs8"] }
 graph-core = { path = "../graph-core" }
 graph-storage = { path = "../graph-storage" }
 libloading = "0.8"
+opencti-adapter = { path = "../opencti-adapter" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }

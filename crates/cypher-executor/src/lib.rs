@@ -991,6 +991,7 @@ fn property_value_to_string(value: &PropertyValue) -> String {
             .map(|v| v.to_string())
             .collect::<Vec<String>>()
             .join(","),
+        PropertyValue::Json(value) => value.to_string(),
     }
 }
 
@@ -1243,6 +1244,12 @@ mod tests {
         assert_eq!(
             property_value_to_string(&PropertyValue::BoolList(vec![true, false])),
             "true,false"
+        );
+        assert_eq!(
+            property_value_to_string(&PropertyValue::Json(serde_json::json!({
+                "nested": [true, 42]
+            }))),
+            "{\"nested\":[true,42]}"
         );
     }
 }

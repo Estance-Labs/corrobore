@@ -1,0 +1,326 @@
+{
+  "schema_version": 1,
+  "opencti_version": "7.260722.0",
+  "source_commit": "e41adc1c3fd98a849602db33dbe550f689fe6d83",
+  "records": [
+    {
+      "fixture_id": "stix-domain-object",
+      "family": "stix_domain_object",
+      "record": {
+        "id": "attack-pattern--00000000-0000-4000-8000-000000000101",
+        "internal_id": "internal--00000000-0000-4000-8000-000000000101",
+        "standard_id": "attack-pattern--00000000-0000-4000-8000-000000000101",
+        "x_opencti_stix_ids": [
+          "attack-pattern--00000000-0000-4000-8000-000000000100"
+        ],
+        "i_aliases_ids": [
+          "dedup--credential-phishing"
+        ],
+        "type": "attack-pattern",
+        "entity_type": "Attack-Pattern",
+        "base_type": "ENTITY",
+        "parent_types": [
+          "Basic-Object",
+          "Stix-Object",
+          "Stix-Core-Object",
+          "Stix-Domain-Object"
+        ],
+        "name": "Synthetic credential phishing",
+        "aliases": [
+          "Synthetic phishing"
+        ],
+        "x_opencti_aliases": [
+          "Documentation lure"
+        ],
+        "created": "2026-01-01T00:00:00.000Z",
+        "modified": "2026-01-02T00:00:00.000Z",
+        "created_at": "2026-01-01T00:00:01.000Z",
+        "updated_at": "2026-01-02T00:00:01.000Z",
+        "created_by_ref": "identity--00000000-0000-4000-8000-000000000110",
+        "object_marking_refs": [
+          "marking-definition--00000000-0000-4000-8000-000000000111"
+        ],
+        "objectOrganization": [
+          "identity--00000000-0000-4000-8000-000000000112"
+        ],
+        "restricted_members": [
+          {
+            "id": "user--00000000-0000-4000-8000-000000000113",
+            "access_right": "admin",
+            "groups_restriction_ids": [
+              "group--00000000-0000-4000-8000-000000000114"
+            ]
+          }
+        ],
+        "authorized_members": [
+          {
+            "id": "group--00000000-0000-4000-8000-000000000119",
+            "access_right": "read"
+          }
+        ],
+        "x_opencti_tenant_refs": [
+          "grouping--00000000-0000-4000-8000-000000000115"
+        ],
+        "tenants": [
+          "grouping--00000000-0000-4000-8000-000000000118"
+        ],
+        "owner_id": "identity--00000000-0000-4000-8000-000000000116",
+        "objectOwner": [
+          "identity--00000000-0000-4000-8000-000000000117"
+        ],
+        "sharing_policy": {
+          "mode": "restricted",
+          "allowed": [
+            "identity--00000000-0000-4000-8000-000000000112"
+          ]
+        },
+        "external_references": [
+          {
+            "source_name": "capec",
+            "external_id": "CAPEC-98",
+            "url": "https://example.org/capec/98"
+          }
+        ],
+        "x_opencti_extension": {
+          "confidence_history": [
+            {
+              "score": 70,
+              "at": "2026-01-02T00:00:00.000Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "fixture_id": "stix-cyber-observable",
+      "family": "stix_cyber_observable",
+      "record": {
+        "id": "ipv4-addr--00000000-0000-4000-8000-000000000120",
+        "internal_id": "internal--00000000-0000-4000-8000-000000000120",
+        "standard_id": "ipv4-addr--00000000-0000-4000-8000-000000000120",
+        "type": "ipv4-addr",
+        "entity_type": "IPv4-Addr",
+        "base_type": "ENTITY",
+        "parent_types": [
+          "Basic-Object",
+          "Stix-Object",
+          "Stix-Core-Object",
+          "Stix-Cyber-Observable"
+        ],
+        "value": "192.0.2.120",
+        "x_opencti_score": 80,
+        "labels": [
+          "synthetic",
+          "documentation"
+        ],
+        "extensions": {
+          "x_opencti_observable_extension": {
+            "observable_value": "192.0.2.120",
+            "rank": 2
+          }
+        }
+      }
+    },
+    {
+      "fixture_id": "stix-meta-object",
+      "family": "stix_meta_object",
+      "record": {
+        "id": "external-reference--00000000-0000-4000-8000-000000000130",
+        "internal_id": "internal--00000000-0000-4000-8000-000000000130",
+        "standard_id": "external-reference--00000000-0000-4000-8000-000000000130",
+        "type": "external-reference",
+        "entity_type": "External-Reference",
+        "base_type": "ENTITY",
+        "parent_types": [
+          "Basic-Object",
+          "Stix-Object",
+          "Stix-Meta-Object"
+        ],
+        "source_name": "synthetic-advisory",
+        "external_id": "SYNTH-2026-130",
+        "url": "https://example.net/advisories/130"
+      }
+    },
+    {
+      "fixture_id": "internal-object",
+      "family": "internal_object",
+      "record": {
+        "id": "user--00000000-0000-4000-8000-000000000140",
+        "internal_id": "user--00000000-0000-4000-8000-000000000140",
+        "standard_id": "user--00000000-0000-4000-8000-000000000140",
+        "type": "user",
+        "entity_type": "User",
+        "base_type": "ENTITY",
+        "parent_types": [
+          "Basic-Object",
+          "Internal-Object"
+        ],
+        "name": "Synthetic Analyst",
+        "user_email": "analyst@example.com",
+        "objectOrganization": [
+          "identity--00000000-0000-4000-8000-000000000112"
+        ],
+        "restricted_members": [
+          {
+            "id": "user--00000000-0000-4000-8000-000000000140",
+            "access_right": "view",
+            "groups_restriction_ids": []
+          }
+        ],
+        "authorized_authorities": [
+          "synthetic-authority"
+        ]
+      }
+    },
+    {
+      "fixture_id": "stix-core-relationship",
+      "family": "stix_core_relationship",
+      "record": {
+        "id": "relationship--00000000-0000-4000-8000-000000000150",
+        "internal_id": "internal--00000000-0000-4000-8000-000000000150",
+        "standard_id": "relationship--00000000-0000-4000-8000-000000000150",
+        "type": "relationship",
+        "entity_type": "uses",
+        "base_type": "RELATION",
+        "parent_types": [
+          "basic-relationship",
+          "stix-relationship",
+          "stix-core-relationship"
+        ],
+        "relationship_type": "uses",
+        "source_ref": "threat-actor--00000000-0000-4000-8000-000000000151",
+        "target_ref": "malware--00000000-0000-4000-8000-000000000152",
+        "start_time": "2026-01-01T00:00:00.000Z",
+        "stop_time": "2026-01-31T00:00:00.000Z",
+        "confidence": 80,
+        "object_marking_refs": [
+          "marking-definition--00000000-0000-4000-8000-000000000111"
+        ],
+        "history_changes": [
+          {
+            "field": "confidence",
+            "changes_added": [
+              {
+                "raw": "80",
+                "translated": "80"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "fixture_id": "stix-ref-relationship",
+      "family": "stix_ref_relationship",
+      "record": {
+        "id": "relationship--00000000-0000-4000-8000-000000000160",
+        "internal_id": "internal--00000000-0000-4000-8000-000000000160",
+        "standard_id": "relationship--00000000-0000-4000-8000-000000000160",
+        "type": "relationship",
+        "entity_type": "object-marking",
+        "base_type": "RELATION",
+        "parent_types": [
+          "basic-relationship",
+          "stix-relationship",
+          "stix-ref-relationship",
+          "stix-meta-relationship"
+        ],
+        "relationship_type": "object-marking",
+        "source_ref": "attack-pattern--00000000-0000-4000-8000-000000000101",
+        "target_ref": "marking-definition--00000000-0000-4000-8000-000000000111",
+        "created_at": "2026-01-02T00:00:00.000Z"
+      }
+    },
+    {
+      "fixture_id": "stix-sighting-relationship",
+      "family": "stix_sighting_relationship",
+      "record": {
+        "id": "sighting--00000000-0000-4000-8000-000000000170",
+        "internal_id": "internal--00000000-0000-4000-8000-000000000170",
+        "standard_id": "sighting--00000000-0000-4000-8000-000000000170",
+        "type": "sighting",
+        "entity_type": "stix-sighting-relationship",
+        "base_type": "RELATION",
+        "parent_types": [
+          "basic-relationship",
+          "stix-relationship",
+          "stix-sighting-relationship"
+        ],
+        "relationship_type": "sighting",
+        "source_ref": "indicator--00000000-0000-4000-8000-000000000171",
+        "target_ref": "identity--00000000-0000-4000-8000-000000000172",
+        "sighting_of_ref": "indicator--00000000-0000-4000-8000-000000000171",
+        "where_sighted_refs": [
+          "identity--00000000-0000-4000-8000-000000000172"
+        ],
+        "first_seen": "2026-01-03T00:00:00.000Z",
+        "last_seen": "2026-01-04T00:00:00.000Z",
+        "count": 3
+      }
+    },
+    {
+      "fixture_id": "internal-relationship",
+      "family": "internal_relationship",
+      "record": {
+        "id": "relationship--00000000-0000-4000-8000-000000000180",
+        "internal_id": "internal--00000000-0000-4000-8000-000000000180",
+        "standard_id": "relationship--00000000-0000-4000-8000-000000000180",
+        "type": "relationship",
+        "entity_type": "member-of",
+        "base_type": "RELATION",
+        "parent_types": [
+          "basic-relationship",
+          "internal-relationship"
+        ],
+        "relationship_type": "member-of",
+        "source_ref": "user--00000000-0000-4000-8000-000000000140",
+        "target_ref": "group--00000000-0000-4000-8000-000000000181",
+        "role": "analyst"
+      }
+    },
+    {
+      "fixture_id": "future-object",
+      "family": "unknown_object",
+      "record": {
+        "id": "future-opencti-type--00000000-0000-4000-8000-000000000190",
+        "internal_id": "internal--00000000-0000-4000-8000-000000000190",
+        "standard_id": "future-opencti-type--00000000-0000-4000-8000-000000000190",
+        "type": "future-opencti-type",
+        "entity_type": "Future-OpenCTI-Type",
+        "base_type": "ENTITY",
+        "name": "Synthetic future object",
+        "x_future_extension": {
+          "enabled": true,
+          "weights": [
+            1,
+            2.5,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "fixture_id": "future-relationship",
+      "family": "unknown_relationship",
+      "record": {
+        "id": "future-relationship--00000000-0000-4000-8000-000000000191",
+        "internal_id": "internal--00000000-0000-4000-8000-000000000191",
+        "standard_id": "future-relationship--00000000-0000-4000-8000-000000000191",
+        "type": "future-relationship",
+        "entity_type": "Future-Relationship",
+        "base_type": "RELATION",
+        "relationship_type": "future-connects",
+        "source_ref": "future-opencti-type--00000000-0000-4000-8000-000000000190",
+        "target_ref": "identity--00000000-0000-4000-8000-000000000112",
+        "x_future_relationship_extension": {
+          "evidence": [
+            {
+              "kind": "synthetic",
+              "weight": 0.75
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

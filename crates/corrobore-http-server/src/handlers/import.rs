@@ -24,7 +24,9 @@ use axum::{
     Json,
     extract::{Multipart, State},
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use corrobore_engine::{CypherResponseStatus, EngineError, EngineRequest, EngineRequestMode};
+use opencti_adapter::{MappedRecord, OpenCtiAdapter};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -271,30 +273,45 @@ fn build_query_for_object(object: &Value) -> Result<String, ApiError> {
         .get("type")
         .and_then(Value::as_str)
         .ok_or_else(|| ApiError::bad_request("INVALID_STIX_OBJECT", "object.type is required"))?;
+    let mapped = OpenCtiAdapter::pinned()
+        .map(object.clone())
+        .map_err(|error| ApiError::bad_request("INVALID_STIX_OBJECT", error.to_string()))?;
+    // The MVP Cypher SET parser separates assignments on commas without
+    // interpreting quoted JSON. Base64 keeps the lossless payload scalar until
+    // the HTTP importer can write typed `PropertyValue::Json` directly.
+    let raw = STANDARD.encode(object.to_string());
+    let mapping_version = mapped.mapping_version();
+    let mapping_version = format!("{}.{}", mapping_version.major, mapping_version.minor);
 
-    if object_type.eq_ignore_ascii_case("relationship") {
+    if let MappedRecord::Relationship(relationship) = &mapped {
         let relationship_id = escape_cypher_string(required_str_field(object, "id")?);
-        let source_ref = escape_cypher_string(required_str_field(object, "source_ref")?);
-        let target_ref = escape_cypher_string(required_str_field(object, "target_ref")?);
-        let relationship_type = object
-            .get("relationship_type")
-            .and_then(Value::as_str)
-            .unwrap_or("related-to");
-        let relationship_label = sanitize_relationship_type(relationship_type);
+        let source_ref = escape_cypher_string(relationship.source_ref());
+        let target_ref = escape_cypher_string(relationship.target_ref());
+        let relationship_label = sanitize_relationship_type(relationship.relationship_type());
+        let family = mapped.family().as_str();
 
         return Ok(format!(
-            "MATCH (source {{stix_id: '{source_ref}'}}) MATCH (target {{stix_id: '{target_ref}'}}) MERGE (source)-[r:{relationship_label}]->(target) SET r.stix_id = '{relationship_id}' RETURN r"
+            "MATCH (source {{stix_id: '{source_ref}'}}) MATCH (target {{stix_id: '{target_ref}'}}) MERGE (source)-[r:{relationship_label}]->(target) SET r.stix_id = '{relationship_id}', r.opencti_raw = '{raw}', r.opencti_raw_encoding = 'base64-json', r.opencti_type = '{object_type}', r.opencti_family = '{family}', r.opencti_mapping_version = '{mapping_version}' RETURN r"
         ));
     }
 
     let stix_id = escape_cypher_string(required_str_field(object, "id")?);
     let label = map_stix_type_to_label(object_type);
+    let family = mapped.family().as_str();
     let mut query = format!("MERGE (n:{label} {{stix_id: '{stix_id}'}})");
+    let mut assignments = vec![
+        format!("n.opencti_raw = '{raw}'"),
+        "n.opencti_raw_encoding = 'base64-json'".to_owned(),
+        format!("n.opencti_type = '{}'", escape_cypher_string(object_type)),
+        format!("n.opencti_family = '{family}'"),
+        format!("n.opencti_mapping_version = '{mapping_version}'"),
+    ];
 
     if let Some(name) = object.get("name").and_then(Value::as_str) {
-        query.push_str(&format!(" SET n.name = '{}'", escape_cypher_string(name)));
+        assignments.push(format!("n.name = '{}'", escape_cypher_string(name)));
     }
 
+    query.push_str(&format!(" SET {}", assignments.join(", ")));
     query.push_str(" RETURN n");
     Ok(query)
 }
@@ -317,7 +334,7 @@ fn map_stix_type_to_label(object_type: &str) -> &'static str {
         "identity" => "Identity",
         "location" => "Location",
         "report" => "Report",
-        _ => "Identity",
+        _ => "OpenCtiObject",
     }
 }
 
@@ -340,4 +357,48 @@ fn sanitize_relationship_type(value: &str) -> String {
 
 fn escape_cypher_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('\'', "\\'")
+}
+
+#[cfg(test)]
+mod tests {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use corrobore_engine::{CorroboreEngine, CypherResponseStatus};
+    use graph_core::PropertyValue;
+    use serde_json::json;
+
+    use super::build_query_for_object;
+
+    #[test]
+    fn unknown_opencti_type_uses_generic_label_and_preserves_raw_record() {
+        let raw = json!({
+            "type": "future-opencti-type",
+            "id": "future-opencti-type--1",
+            "x_future": {"nested": [true, 42]}
+        });
+
+        let query = build_query_for_object(&raw).expect("future type should map generically");
+
+        assert!(query.contains("MERGE (n:OpenCtiObject"));
+        assert!(!query.contains("MERGE (n:Identity"));
+        assert!(query.contains("n.opencti_raw"));
+        assert!(query.contains("n.opencti_raw_encoding = 'base64-json'"));
+        assert!(query.contains("n.opencti_mapping_version = '1.0'"));
+
+        let mut engine = CorroboreEngine::strict_default();
+        let response = engine
+            .write(&query)
+            .expect("generated query should execute");
+        assert_eq!(response.status, CypherResponseStatus::Success);
+        let nodes = engine
+            .graph()
+            .list_nodes()
+            .expect("generated query should create one graph node");
+        assert_eq!(nodes.len(), 1, "query={query}; response={response:?}");
+        assert!(nodes[0].has_label("OpenCtiObject"));
+        assert!(!nodes[0].has_label("Identity"));
+        assert_eq!(
+            nodes[0].property("opencti_raw"),
+            Some(&PropertyValue::String(STANDARD.encode(raw.to_string())))
+        );
+    }
 }
