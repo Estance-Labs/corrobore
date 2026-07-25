@@ -2,7 +2,6 @@
 .github
 .corrobore-runtime
 target
-tmp
 web/node_modules
 web/dist
 web/coverage
