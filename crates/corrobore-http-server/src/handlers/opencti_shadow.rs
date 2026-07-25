@@ -259,7 +259,9 @@ async fn execute_corrobore(
     permit: Option<OwnedSemaphorePermit>,
 ) -> Result<ProviderExecution, String> {
     let started = Instant::now();
-    request.context.deadline_unix_ms = None;
+    if permit.is_some() {
+        request.context.deadline_unix_ms = None;
+    }
     let envelope = tokio::task::spawn_blocking(move || {
         let _permit = permit;
         let mut engine = engine

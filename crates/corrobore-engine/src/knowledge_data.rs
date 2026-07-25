@@ -1604,6 +1604,18 @@ impl KnowledgeDataEngine for CorroboreKnowledgeDataProvider<'_> {
             KnowledgeDataOperation::Neighbors(request) => self.neighbors(request, &access_policy),
             KnowledgeDataOperation::Traverse(request) => self.traverse(request, &access_policy),
             KnowledgeDataOperation::Subgraph(request) => self.subgraph(request, &access_policy),
+            KnowledgeDataOperation::Create(request) => self
+                .engine
+                .execute_knowledge_data_mutation(&KnowledgeDataOperation::Create(request), context),
+            KnowledgeDataOperation::Update(request) => self
+                .engine
+                .execute_knowledge_data_mutation(&KnowledgeDataOperation::Update(request), context),
+            KnowledgeDataOperation::Delete(request) => self
+                .engine
+                .execute_knowledge_data_mutation(&KnowledgeDataOperation::Delete(request), context),
+            KnowledgeDataOperation::Bulk(request) => self
+                .engine
+                .execute_knowledge_data_mutation(&KnowledgeDataOperation::Bulk(request), context),
             unsupported => {
                 let operation = unsupported.kind();
                 let _ = context;
@@ -1654,6 +1666,10 @@ fn validate_operation_before_projection(
     operation: &KnowledgeDataOperation,
 ) -> Result<(), KnowledgeDataError> {
     match operation {
+        KnowledgeDataOperation::Create(_)
+        | KnowledgeDataOperation::Update(_)
+        | KnowledgeDataOperation::Delete(_)
+        | KnowledgeDataOperation::Bulk(_) => Ok(()),
         KnowledgeDataOperation::GetById(request) if request.id.trim().is_empty() => {
             Err(KnowledgeDataError::new(
                 KnowledgeDataErrorCode::InvalidRequest,
@@ -1962,9 +1978,7 @@ fn capability_status(operation: OperationKind) -> ProviderCapabilityStatus {
         OperationKind::Create
         | OperationKind::Update
         | OperationKind::Delete
-        | OperationKind::Bulk => {
-            unsupported_status("typed transactional writes are delivered by issue #50")
-        }
+        | OperationKind::Bulk => ProviderCapabilityStatus::Supported,
         OperationKind::Merge => {
             unsupported_status("merge and reconciliation are delivered by issue #51")
         }
@@ -2011,6 +2025,24 @@ fn validate_request(
                 request.contract_version.major,
                 request.contract_version.minor
             ),
+            false,
+        ));
+    }
+    if matches!(
+        request.operation,
+        KnowledgeDataOperation::Create(_)
+            | KnowledgeDataOperation::Update(_)
+            | KnowledgeDataOperation::Delete(_)
+            | KnowledgeDataOperation::Bulk(_)
+    ) && request
+        .context
+        .idempotency_key
+        .as_deref()
+        .is_none_or(|key| key.trim().is_empty())
+    {
+        return Err(KnowledgeDataError::new(
+            KnowledgeDataErrorCode::InvalidRequest,
+            "transactional mutation requires an idempotency_key",
             false,
         ));
     }

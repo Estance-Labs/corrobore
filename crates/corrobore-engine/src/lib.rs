@@ -282,6 +282,18 @@ pub trait EnginePersistence: std::fmt::Debug + Send {
     ) -> Result<(), String> {
         self.persist_graph(current)
     }
+
+    /// Execute a typed transactional mutation directly against a host-owned
+    /// durable store. Paged hosts use this boundary to keep idempotency,
+    /// optimistic concurrency, WAL acknowledgement, and bulk results outside
+    /// the generic in-memory query executor.
+    fn execute_knowledge_data_mutation(
+        &mut self,
+        _operation: &KnowledgeDataOperation,
+        _context: &RequestContext,
+    ) -> Result<Option<KnowledgeDataResponse>, KnowledgeDataError> {
+        Ok(None)
+    }
 }
 
 /// Options controlling an embedded STIX bundle export.
@@ -590,6 +602,30 @@ impl CorroboreEngine {
             return Ok(Some(stats));
         }
         Ok(None)
+    }
+
+    /// Delegate one typed write to the host persistence boundary, mapping
+    /// absence to a stable availability error and preserving typed storage
+    /// conflicts without exposing payloads in diagnostics.
+    fn execute_knowledge_data_mutation(
+        &mut self,
+        operation: &KnowledgeDataOperation,
+        context: &RequestContext,
+    ) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
+        let Some(persistence) = self.persistence.as_mut() else {
+            return Err(KnowledgeDataError {
+                code: KnowledgeDataErrorCode::BackendUnavailable,
+                message: "transactional writes require durable host persistence".to_owned(),
+                retryable: false,
+            });
+        };
+        persistence
+            .execute_knowledge_data_mutation(operation, context)?
+            .ok_or_else(|| KnowledgeDataError {
+                code: KnowledgeDataErrorCode::BackendUnavailable,
+                message: "durable host does not expose transactional writes".to_owned(),
+                retryable: false,
+            })
     }
 
     /// Executes a query, auto-detecting read or mutation mode.

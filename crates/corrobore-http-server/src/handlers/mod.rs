@@ -30,6 +30,7 @@ pub mod metrics;
 pub mod opencti_routing;
 pub mod opencti_shadow;
 pub mod opencti_sync;
+pub mod opencti_write;
 pub mod operational;
 pub mod seed;
 pub mod session;

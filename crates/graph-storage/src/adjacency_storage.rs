@@ -356,7 +356,6 @@ fn index_adjacency_storage_ref(
     expected_direction: AdjacencyDirection,
 ) -> GraphStorageResult<()> {
     validate_adjacency_catalog_entry(catalog, &entry, expected_direction)?;
-    remove_cataloged_adjacency_ref(catalog, &entry.owner_node_id, expected_direction);
     catalog
         .historical_records
         .push(HistoricalRecordCatalogEntry {
@@ -611,22 +610,6 @@ fn relationship_types_for_entries(entries: &[PersistedAdjacencyEntry]) -> Vec<Re
         }
     }
     relationship_types
-}
-
-fn remove_cataloged_adjacency_ref(
-    catalog: &mut GraphCatalog,
-    owner_node_id: &NodeId,
-    direction: AdjacencyDirection,
-) {
-    catalog.historical_records.retain(|entry| {
-        !matches!(
-        &entry.record_id,
-        PersistedRecordId::Adjacency {
-        owner_node_id: entry_owner_node_id,
-        direction: entry_direction,
-        } if entry_owner_node_id == owner_node_id && *entry_direction == direction
-        )
-    });
 }
 
 fn find_cataloged_adjacency_ref(

@@ -20,7 +20,7 @@
 // THE SOFTWARE.
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use graph_core::{AdjacencyDirection, RelationshipType};
@@ -33,14 +33,15 @@ use crate::{
     GraphStorageError, GraphStorageResult, LabelIndexNodeMetadata, NodeReadIndexDocument,
     PersistedAdjacencyEntry, PersistedAdjacencyRecord, PersistedRecordEnvelope, PersistedRecordId,
     RelationshipTypeIndexRelationshipMetadata, StorageRoot, WalSequenceNumber,
-    append_encoded_node_record_envelope, append_encoded_relationship_record_envelope,
+    append_encoded_node_record_envelopes, append_encoded_relationship_record_envelopes,
     classify_transaction_replay_status, index_appended_node_record,
-    index_appended_relationship_record, index_relationship_type, open_append_only_node_record_log,
-    open_append_only_relationship_record_log, persist_graph_catalog_metadata,
-    read_persisted_graph_catalog_metadata, replace_node_read_indexes,
-    replace_relationship_access_index, restore_persisted_adjacency_records,
-    snapshot_persisted_adjacency_records, validate_durable_wal_entry,
-    write_incoming_adjacency_by_node_id, write_outgoing_adjacency_by_node_id,
+    index_appended_relationship_record, index_relationship_type, index_relationship_types_bulk,
+    open_append_only_node_record_log, open_append_only_relationship_record_log,
+    persist_graph_catalog_metadata, read_persisted_graph_catalog_metadata,
+    replace_node_read_indexes, replace_relationship_access_index,
+    restore_persisted_adjacency_records, snapshot_persisted_adjacency_records,
+    validate_durable_wal_entry, write_incoming_adjacency_by_node_id,
+    write_outgoing_adjacency_by_node_id,
 };
 
 // A checkpoint is intentionally periodic rather than mutation-scoped. The WAL
@@ -117,6 +118,10 @@ pub struct AtomicPersistentMutationBatch {
 /// Deterministic crash-injection stage used by acceptance tests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MutationCrashStage {
+    /// Fail after WAL intent is fsynced but before payload records are appended.
+    AfterWalIntent,
+    /// Fail after canonical payload/projection journals but before audit receipt persistence.
+    AfterPayloadRecords,
     /// Fail after WAL and payload writes but before the applied marker is persisted.
     BeforeAppliedMarker,
     /// Fail after the applied marker is persisted but before checkpoint materialization.
@@ -306,11 +311,23 @@ pub fn apply_atomic_persistent_mutation_batch(
         },
     ];
     append_wal_entries(root, &wal_entries)?;
+    if crash_stage == Some(MutationCrashStage::AfterWalIntent) {
+        return Err(GraphStorageError::OperationFailed {
+            operation: "apply_atomic_persistent_mutation_batch",
+            message: "injected crash after durable WAL intent".to_owned(),
+        });
+    }
 
     let mut working_state = state.clone();
     persist_node_mutations(root, &mut working_state, &batch, mutation_sequence)?;
     persist_relationship_mutations(root, &mut working_state, &batch, mutation_sequence)?;
     persist_adjacency_mutations(root, &mut working_state, &batch, mutation_sequence)?;
+    if crash_stage == Some(MutationCrashStage::AfterPayloadRecords) {
+        return Err(GraphStorageError::OperationFailed {
+            operation: "apply_atomic_persistent_mutation_batch",
+            message: "injected crash after durable payload records".to_owned(),
+        });
+    }
     persist_audit_events(root, &batch, mutation_sequence)?;
 
     if crash_stage == Some(MutationCrashStage::BeforeAppliedMarker) {
@@ -403,6 +420,37 @@ pub fn recover_atomic_persistent_runtime_state_with_report(
             warnings,
         },
     })
+}
+
+/// Return audit events only for a transaction whose WAL commit and applied
+/// marker agree. This makes mutation receipts part of the same recovery
+/// visibility boundary as canonical records and every projection.
+pub fn read_atomic_persistent_audit_events(
+    root: &StorageRoot,
+    transaction_id: &DurableTransactionId,
+) -> GraphStorageResult<Vec<String>> {
+    if !root.path().is_dir() {
+        return Err(GraphStorageError::StorageRootNotFound {
+            path: root.path().to_path_buf(),
+        });
+    }
+    let committed = read_committed_mutation_sequences(root)?;
+    let applied = read_applied_mutation_index(root)?;
+    let eligible = eligible_sequences(&committed, &applied);
+    let Some(sequence) = eligible.get(transaction_id) else {
+        return Ok(Vec::new());
+    };
+    let records: Vec<AuditMutationLogRecord> = read_json_lines(
+        &audit_mutation_log_path(root),
+        "read_atomic_persistent_audit_events",
+    )?;
+    Ok(records
+        .into_iter()
+        .filter(|record| {
+            &record.transaction_id == transaction_id && &record.mutation_sequence_number == sequence
+        })
+        .map(|record| record.message)
+        .collect())
 }
 
 /// Compact obsolete transaction and index segments using the latest safe checkpoint.
@@ -648,13 +696,12 @@ fn next_transaction_sequences(
 fn append_wal_entries(root: &StorageRoot, entries: &[DurableWalEntry]) -> GraphStorageResult<()> {
     for entry in entries {
         validate_durable_wal_entry(entry).map_err(wal_contract_error)?;
-        append_json_line_sync(
-            &transaction_wal_path(root),
-            entry,
-            "apply_atomic_persistent_mutation_batch",
-        )?;
     }
-    Ok(())
+    append_json_lines_sync(
+        &transaction_wal_path(root),
+        entries,
+        "apply_atomic_persistent_mutation_batch",
+    )
 }
 
 fn persist_node_mutations(
@@ -664,9 +711,14 @@ fn persist_node_mutations(
     mutation_sequence: WalSequenceNumber,
 ) -> GraphStorageResult<()> {
     let mut log = open_append_only_node_record_log(root)?;
-    for node in &batch.node_records {
-        let storage_ref =
-            append_encoded_node_record_envelope(&mut log, &node.envelope, &node.encoded_record)?;
+    let storage_refs = append_encoded_node_record_envelopes(
+        &mut log,
+        batch
+            .node_records
+            .iter()
+            .map(|node| (&node.envelope, &node.encoded_record)),
+    )?;
+    for (node, storage_ref) in batch.node_records.iter().zip(&storage_refs) {
         index_appended_node_record(&mut state.catalog, &node.envelope, storage_ref.clone())?;
         if let (
             PersistedRecordId::Node(node_id),
@@ -686,19 +738,23 @@ fn persist_node_mutations(
                 },
             )?;
         }
-        append_json_line_sync(
-            &node_mutation_log_path(root),
-            &NodeMutationLogRecord {
+    }
+    append_json_lines_sync(
+        &node_mutation_log_path(root),
+        batch
+            .node_records
+            .iter()
+            .zip(storage_refs)
+            .map(|(node, storage_ref)| NodeMutationLogRecord {
                 transaction_id: batch.transaction_id.clone(),
                 mutation_sequence_number: mutation_sequence,
                 envelope: node.envelope.clone(),
                 storage_ref,
                 labels: node.labels.clone(),
                 read_index: node.read_index.clone(),
-            },
-            "apply_atomic_persistent_mutation_batch",
-        )?;
-    }
+            }),
+        "apply_atomic_persistent_mutation_batch",
+    )?;
     Ok(())
 }
 
@@ -709,12 +765,15 @@ fn persist_relationship_mutations(
     mutation_sequence: WalSequenceNumber,
 ) -> GraphStorageResult<()> {
     let mut log = open_append_only_relationship_record_log(root)?;
-    for relationship in &batch.relationship_records {
-        let storage_ref = append_encoded_relationship_record_envelope(
-            &mut log,
-            &relationship.envelope,
-            &relationship.encoded_record,
-        )?;
+    let storage_refs = append_encoded_relationship_record_envelopes(
+        &mut log,
+        batch
+            .relationship_records
+            .iter()
+            .map(|relationship| (&relationship.envelope, &relationship.encoded_record)),
+    )?;
+    let mut relationship_type_entries = Vec::with_capacity(batch.relationship_records.len());
+    for (relationship, storage_ref) in batch.relationship_records.iter().zip(&storage_refs) {
         index_appended_relationship_record(
             &mut state.catalog,
             &relationship.envelope,
@@ -734,31 +793,37 @@ fn persist_relationship_mutations(
                 &relationship.access,
             );
             if relationship.active {
-                index_relationship_type(
-                    &mut state.catalog,
-                    &relationship.relationship_type,
+                relationship_type_entries.push((
+                    relationship.relationship_type.clone(),
                     RelationshipTypeIndexRelationshipMetadata {
                         relationship_id: relationship_id.clone(),
                         latest_storage_ref: Some(storage_ref.clone()),
                         graph_record_version: relationship_graph_version(&relationship.envelope)?,
                     },
-                )?;
+                ));
             }
         }
-        append_json_line_sync(
-            &relationship_mutation_log_path(root),
-            &RelationshipMutationLogRecord {
-                transaction_id: batch.transaction_id.clone(),
-                mutation_sequence_number: mutation_sequence,
-                envelope: relationship.envelope.clone(),
-                storage_ref,
-                relationship_type: relationship.relationship_type.clone(),
-                active: relationship.active,
-                access: relationship.access.clone(),
-            },
-            "apply_atomic_persistent_mutation_batch",
-        )?;
     }
+    index_relationship_types_bulk(&mut state.catalog, relationship_type_entries)?;
+    append_json_lines_sync(
+        &relationship_mutation_log_path(root),
+        batch
+            .relationship_records
+            .iter()
+            .zip(storage_refs)
+            .map(
+                |(relationship, storage_ref)| RelationshipMutationLogRecord {
+                    transaction_id: batch.transaction_id.clone(),
+                    mutation_sequence_number: mutation_sequence,
+                    envelope: relationship.envelope.clone(),
+                    storage_ref,
+                    relationship_type: relationship.relationship_type.clone(),
+                    active: relationship.active,
+                    access: relationship.access.clone(),
+                },
+            ),
+        "apply_atomic_persistent_mutation_batch",
+    )?;
     Ok(())
 }
 
@@ -768,21 +833,27 @@ fn persist_adjacency_mutations(
     batch: &AtomicPersistentMutationBatch,
     mutation_sequence: WalSequenceNumber,
 ) -> GraphStorageResult<()> {
+    let mut outgoing_refs = Vec::with_capacity(batch.outgoing_adjacency.len());
     for adjacency in &batch.outgoing_adjacency {
         if adjacency.direction != AdjacencyDirection::Outgoing {
             return Err(GraphStorageError::InvalidEnvelope {
                 reason: "outgoing adjacency batch entries must use Outgoing direction".to_owned(),
             });
         }
-        let storage_ref = write_outgoing_adjacency_by_node_id(
+        outgoing_refs.push(write_outgoing_adjacency_by_node_id(
             &mut state.adjacency_storage,
             &mut state.catalog,
             &adjacency.owner_node_id,
             adjacency.entries.clone(),
-        )?;
-        append_json_line_sync(
-            &outgoing_adjacency_mutation_log_path(root),
-            &AdjacencyMutationLogRecord {
+        )?);
+    }
+    append_json_lines_sync(
+        &outgoing_adjacency_mutation_log_path(root),
+        batch
+            .outgoing_adjacency
+            .iter()
+            .zip(outgoing_refs)
+            .map(|(adjacency, storage_ref)| AdjacencyMutationLogRecord {
                 transaction_id: batch.transaction_id.clone(),
                 mutation_sequence_number: mutation_sequence,
                 record: PersistedAdjacencyRecord {
@@ -792,26 +863,31 @@ fn persist_adjacency_mutations(
                     storage_ref: Some(storage_ref.clone()),
                 },
                 storage_ref,
-            },
-            "apply_atomic_persistent_mutation_batch",
-        )?;
-    }
+            }),
+        "apply_atomic_persistent_mutation_batch",
+    )?;
 
+    let mut incoming_refs = Vec::with_capacity(batch.incoming_adjacency.len());
     for adjacency in &batch.incoming_adjacency {
         if adjacency.direction != AdjacencyDirection::Incoming {
             return Err(GraphStorageError::InvalidEnvelope {
                 reason: "incoming adjacency batch entries must use Incoming direction".to_owned(),
             });
         }
-        let storage_ref = write_incoming_adjacency_by_node_id(
+        incoming_refs.push(write_incoming_adjacency_by_node_id(
             &mut state.adjacency_storage,
             &mut state.catalog,
             &adjacency.owner_node_id,
             adjacency.entries.clone(),
-        )?;
-        append_json_line_sync(
-            &incoming_adjacency_mutation_log_path(root),
-            &AdjacencyMutationLogRecord {
+        )?);
+    }
+    append_json_lines_sync(
+        &incoming_adjacency_mutation_log_path(root),
+        batch
+            .incoming_adjacency
+            .iter()
+            .zip(incoming_refs)
+            .map(|(adjacency, storage_ref)| AdjacencyMutationLogRecord {
                 transaction_id: batch.transaction_id.clone(),
                 mutation_sequence_number: mutation_sequence,
                 record: PersistedAdjacencyRecord {
@@ -821,10 +897,9 @@ fn persist_adjacency_mutations(
                     storage_ref: Some(storage_ref.clone()),
                 },
                 storage_ref,
-            },
-            "apply_atomic_persistent_mutation_batch",
-        )?;
-    }
+            }),
+        "apply_atomic_persistent_mutation_batch",
+    )?;
     Ok(())
 }
 
@@ -833,18 +908,18 @@ fn persist_audit_events(
     batch: &AtomicPersistentMutationBatch,
     mutation_sequence: WalSequenceNumber,
 ) -> GraphStorageResult<()> {
-    for message in &batch.audit_events {
-        append_json_line_sync(
-            &audit_mutation_log_path(root),
-            &AuditMutationLogRecord {
+    append_json_lines_sync(
+        &audit_mutation_log_path(root),
+        batch
+            .audit_events
+            .iter()
+            .map(|message| AuditMutationLogRecord {
                 transaction_id: batch.transaction_id.clone(),
                 mutation_sequence_number: mutation_sequence,
                 message: message.clone(),
-            },
-            "apply_atomic_persistent_mutation_batch",
-        )?;
-    }
-    Ok(())
+            }),
+        "apply_atomic_persistent_mutation_batch",
+    )
 }
 
 fn replay_node_mutations(
@@ -1205,6 +1280,14 @@ fn append_json_line_sync<T: Serialize>(
     value: &T,
     operation: &'static str,
 ) -> GraphStorageResult<()> {
+    append_json_lines_sync(path, std::iter::once(value), operation)
+}
+
+fn append_json_lines_sync<T: Serialize>(
+    path: &Path,
+    values: impl IntoIterator<Item = T>,
+    operation: &'static str,
+) -> GraphStorageResult<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| GraphStorageError::IoOperationFailed {
             operation,
@@ -1221,24 +1304,30 @@ fn append_json_line_sync<T: Serialize>(
             path: Some(path.to_path_buf()),
             message: error.to_string(),
         })?;
-    let mut line =
-        serde_json::to_vec(value).map_err(|error| GraphStorageError::OperationFailed {
-            operation,
-            message: error.to_string(),
+    let mut writer = BufWriter::with_capacity(1024 * 1024, &mut file);
+    for value in values {
+        serde_json::to_writer(&mut writer, &value).map_err(|error| {
+            GraphStorageError::OperationFailed {
+                operation,
+                message: error.to_string(),
+            }
         })?;
-    line.push(b'\n');
-    file.write_all(&line)
+        writer
+            .write_all(b"\n")
+            .map_err(|error| GraphStorageError::IoOperationFailed {
+                operation,
+                path: Some(path.to_path_buf()),
+                message: error.to_string(),
+            })?;
+    }
+    writer
+        .flush()
         .map_err(|error| GraphStorageError::IoOperationFailed {
             operation,
             path: Some(path.to_path_buf()),
             message: error.to_string(),
         })?;
-    file.flush()
-        .map_err(|error| GraphStorageError::IoOperationFailed {
-            operation,
-            path: Some(path.to_path_buf()),
-            message: error.to_string(),
-        })?;
+    drop(writer);
     file.sync_data()
         .map_err(|error| GraphStorageError::IoOperationFailed {
             operation,

@@ -385,6 +385,33 @@ corrobore_opencti_shadow_security_blocking_total{{query_class=\"{query_class}\",
         "corrobore_opencti_routing_rollback_active {}\n",
         u8::from(rollback_reason.is_some())
     ));
+    let write_status = state
+        .opencti_write
+        .lock()
+        .map(|runtime| runtime.status())
+        .unwrap_or_default();
+    body.push_str(
+        "# HELP corrobore_opencti_write_operations_total Transactional OpenCTI mutation items by bounded outcome.\n\
+# TYPE corrobore_opencti_write_operations_total counter\n\
+# HELP corrobore_opencti_write_idempotent_replays_total Transactions served from durable WAL receipts.\n\
+# TYPE corrobore_opencti_write_idempotent_replays_total counter\n\
+# HELP corrobore_opencti_write_reconciliation_pending Partial dual writes awaiting replay or quarantine.\n\
+# TYPE corrobore_opencti_write_reconciliation_pending gauge\n\
+# HELP corrobore_opencti_write_reconciliation_quarantined Partial dual writes requiring operator action.\n\
+# TYPE corrobore_opencti_write_reconciliation_quarantined gauge\n",
+    );
+    body.push_str(&format!(
+        "corrobore_opencti_write_operations_total{{outcome=\"applied\"}} {}\n\
+corrobore_opencti_write_operations_total{{outcome=\"failed\"}} {}\n\
+corrobore_opencti_write_idempotent_replays_total {}\n\
+corrobore_opencti_write_reconciliation_pending {}\n\
+corrobore_opencti_write_reconciliation_quarantined {}\n",
+        write_status.applied_operations,
+        write_status.failed_operations,
+        write_status.idempotent_replays,
+        write_status.pending_reconciliation,
+        write_status.quarantined_reconciliation,
+    ));
 
     ([(header::CONTENT_TYPE, PROMETHEUS_CONTENT_TYPE)], body)
 }

@@ -48,17 +48,17 @@ Application errors use the JSON envelope above. Transport middleware can reject 
 | `CORROBORE_HTTP_SHUTDOWN_TIMEOUT_MS` | `5000` | Configured graceful-shutdown budget. |
 | `CORROBORE_HTTP_SESSION_IDLE_TTL_MS` | `0` | Idle auto-stop TTL; `0` disables expiration. |
 | `CORROBORE_HTTP_MAX_BODY_BYTES` | `2097152` | Standard protected-route body limit (2 MiB). |
-| `CORROBORE_HTTP_IMPORT_MAX_BODY_BYTES` | `33554432` | STIX import body limit (32 MiB). |
-| `CORROBORE_OPENCTI_SYNC_MAX_OPERATIONS` | `512` | Maximum mutations admitted in one OpenCTI synchronization batch. |
-| `CORROBORE_OPENCTI_SYNC_MAX_REPLAY_IDENTITIES` | `4096` | Bounded replay identities and dead-letter diagnostics retained in the durable checkpoint. |
+| `CORROBORE_HTTP_IMPORT_MAX_BODY_BYTES` | `33554432` | STIX import and OpenCTI transactional-write body limit (32 MiB). |
+| `CORROBORE_OPENCTI_SYNC_MAX_OPERATIONS` | `512` | Maximum mutations admitted in one OpenCTI synchronization or transactional-write batch. |
+| `CORROBORE_OPENCTI_SYNC_MAX_REPLAY_IDENTITIES` | `4096` | Bounded replay identities, dead-letter diagnostics, and write-reconciliation records retained durably. |
 | `CORROBORE_OPENCTI_SHADOW_REFERENCE_ENDPOINT` | unset | Fixed Knowledge Data Engine endpoint backed by the reference Elasticsearch/OpenSearch provider. |
 | `CORROBORE_OPENCTI_SHADOW_REFERENCE_VERSION` | `unconfigured` | Explicit provider version retained in every comparison report. |
 | `CORROBORE_OPENCTI_SHADOW_REFERENCE_AUTH_TOKEN` | unset | Optional inline reference-provider bearer token; prefer the file source. |
 | `CORROBORE_OPENCTI_SHADOW_REFERENCE_AUTH_TOKEN_FILE` | unset | Protected file containing the reference-provider bearer token. |
 | `CORROBORE_OPENCTI_SHADOW_RELEASE` | package version | Bounded Corrobore release label used by parity and latency metrics. |
 | `CORROBORE_OPENCTI_SHADOW_SAMPLE_BASIS_POINTS` | `0` | Deterministic fallback sample rate from `0` through `10000`. |
-| `CORROBORE_OPENCTI_SHADOW_MAX_CONCURRENCY` | `4` | Independent concurrency ceiling; excess shadow work is shed. |
-| `CORROBORE_OPENCTI_SHADOW_TIMEOUT_MS` | `2000` | Independent shadow deadline that never extends reference latency. |
+| `CORROBORE_OPENCTI_SHADOW_MAX_CONCURRENCY` | `4` | Independent shadow and dual-write concurrency ceiling; excess work receives explicit backpressure. |
+| `CORROBORE_OPENCTI_SHADOW_TIMEOUT_MS` | `2000` | Independent shadow and per-provider dual-write deadline. |
 | `CORROBORE_OPENCTI_SHADOW_MAX_REPORTS` | `10000` | Bounded durable privacy-safe report retention. |
 | `CORROBORE_OPENCTI_SHADOW_SAMPLING_POLICY_FILE` | unset | JSON rules selecting environment, operation, query class, entity, organization, tenant, cohort, and percentage. |
 | `CORROBORE_OPENCTI_SHADOW_BASELINE_FILE` | unset | JSON list of exact divergence fingerprints with required owner and expiry. |
@@ -352,6 +352,30 @@ Returns the restored phase, acknowledged sequence, source high-water mark, lag,
 queue depth, retry/rejection/quarantine counters, divergence status, and
 shadow-read gate. The same lag, queue, retry, rejection, checkpoint, and gate
 values are exported on `/metrics`.
+
+## `POST /v1/opencti/writes`
+
+Executes a create, update, delete, relationship/access-policy mutation, or
+ordered bulk through the versioned Knowledge Data Engine contract. During the
+migration period the configured Elasticsearch/OpenSearch endpoint remains
+authoritative: it is called first, the exact request is mirrored into
+Corrobore, and its response envelope is returned unchanged.
+
+A non-empty `context.idempotency_key` is mandatory. Persistent Corrobore
+acknowledgement occurs only after WAL intent, canonical records, adjacency,
+payload-free audit and the applied marker are durable. Replays return the
+original outcome. `expected_revision` protects updates and deletes from lost
+writes; atomic and partial bulk policies retain deterministic per-item order.
+See [OpenCTI transactional writes](../developer-guide/opencti-transactional-writes.md)
+for the request example, recovery rules and configured bounds.
+
+## `GET /v1/opencti/writes/status`
+
+Returns write counters, pending/reconciled/quarantined dual-write records and
+WAL-bound audit receipts. The response contains hashes, correlation/source
+offsets, revisions and outcomes only; it excludes record content, tokens and
+original idempotency keys. Unresolved reconciliation records are never evicted
+to admit new work.
 
 ## `POST /v1/opencti/shadow/reads`
 

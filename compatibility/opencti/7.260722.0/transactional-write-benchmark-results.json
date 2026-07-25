@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "recorded_at_unix_seconds": 1785018270,
+  "engine": "corrobore-canonical-wal-v1",
+  "environment": {
+    "architecture": "aarch64",
+    "operating_system": "macos",
+    "build_profile": "release"
+  },
+  "profile": {
+    "id": "small",
+    "target_objects": 100000,
+    "target_relationships": 500000,
+    "reference_bulk_documents": 5000,
+    "bulk_objects": 1000,
+    "bulk_relationships": 4000,
+    "atomic_transactions": 1,
+    "concurrency": 1
+  },
+  "planning": {
+    "elapsed_seconds": 0.010425834,
+    "throughput_records_per_second": 479577.94071917894
+  },
+  "durable_commit": {
+    "elapsed_seconds": 0.0807755,
+    "throughput_records_per_second": 61899.95728902947,
+    "wal_fsync_required": true,
+    "disk_bytes": 11868850
+  },
+  "end_to_end": {
+    "elapsed_seconds": 0.091201334,
+    "throughput_records_per_second": 54823.75948579875,
+    "resident_memory_bytes": 63897600
+  },
+  "parity_gate": {
+    "reference_engine": "opensearch-3.7.0",
+    "reference_profile": "small",
+    "reference_throughput_records_per_second": 42048.865,
+    "maximum_regression_percent": 20.0,
+    "minimum_throughput_records_per_second": 33639.092,
+    "passed": true
+  },
+  "reproduction": {
+    "command": "cargo run --release -p corrobore-http-server --example small_profile_transactional_write_benchmark --locked"
+  }
+}

@@ -8,6 +8,7 @@
 mod mapping;
 mod projection;
 mod synchronization;
+mod transactional_write;
 
 pub use mapping::{
     AccessMetadata, Identifier, IdentifierKind, MappedObject, MappedRecord, MappedRelationship,
@@ -22,4 +23,9 @@ pub use synchronization::{
     BulkLimits, DeadLetterRecord, DivergenceStatus, GraphDigest, MutationClass, OpenCtiMutation,
     OpenCtiSyncBatch, OpenCtiSynchronizer, OperationResult, OperationStatus, SyncBatchResult,
     SyncCheckpoint, SyncError, SyncPhase, SyncValidationReport,
+};
+pub use transactional_write::{
+    OpenCtiWriteBatch, OpenCtiWriteBatchOutcome, OpenCtiWriteExecutor, OpenCtiWriteOperation,
+    OpenCtiWriteOperationKind, WriteError, WriteLimits, WriteOperationOutcome,
+    WriteOperationStatus,
 };

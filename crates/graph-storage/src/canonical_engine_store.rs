@@ -574,6 +574,26 @@ impl CanonicalEngineStore {
         transaction_id: DurableTransactionId,
         crash_stage: Option<MutationCrashStage>,
     ) -> GraphStorageResult<AtomicPersistentMutationOutcome> {
+        self.commit_transition_with_audit(
+            previous,
+            current,
+            transaction_id,
+            vec!["canonical engine graph transition committed".to_owned()],
+            crash_stage,
+        )
+    }
+
+    /// Persist a graph transition and caller-supplied payload-free receipts in
+    /// one WAL transaction. Receipt replay visibility will match the canonical
+    /// and projection visibility selected by recovery.
+    pub fn commit_transition_with_audit(
+        &mut self,
+        previous: &Graph,
+        current: &Graph,
+        transaction_id: DurableTransactionId,
+        audit_events: Vec<String>,
+        crash_stage: Option<MutationCrashStage>,
+    ) -> GraphStorageResult<AtomicPersistentMutationOutcome> {
         let batch = self.build_mutation_batch(previous, current, transaction_id)?;
         if batch.node_records.is_empty()
             && batch.relationship_records.is_empty()
@@ -587,6 +607,8 @@ impl CanonicalEngineStore {
         }
         let full_text_index = self.full_text_index()?;
         full_text_index.invalidate().map_err(full_text_error)?;
+        let mut batch = batch;
+        batch.audit_events = audit_events;
         let outcome = apply_atomic_persistent_mutation_batch(
             &self.root,
             &mut self.state,
@@ -602,11 +624,9 @@ impl CanonicalEngineStore {
         self.stats.resident_hot_relationships = 0;
         self.stats.resident_warm_adjacency_entries = 0;
         self.refresh_index_stats();
-        if let Err(error) = self.rebuild_full_text_index() {
-            self.startup_report.warnings.push(format!(
-                "full-text index rebuild deferred after canonical commit: {error}"
-            ));
-        }
+        // Full-text search is a rebuildable projection. The durable invalidation
+        // marker above prevents stale reads; `search_full_text` rebuilds the
+        // complete canonical generation before serving the next query.
         Ok(outcome)
     }
 
@@ -1392,10 +1412,26 @@ impl CanonicalEngineStore {
         // Adjacency changes only when a relationship changes. Including every
         // changed node here would replace canonical adjacency with the partial
         // request projection during a node-only update.
+        let changed_ids: HashSet<RelationshipId> = changed_relationships
+            .iter()
+            .map(|relationship| relationship.id().clone())
+            .collect();
         let mut affected_nodes: HashSet<NodeId> = HashSet::new();
+        let mut outgoing_by_owner: HashMap<NodeId, Vec<PersistedAdjacencyEntry>> = HashMap::new();
+        let mut incoming_by_owner: HashMap<NodeId, Vec<PersistedAdjacencyEntry>> = HashMap::new();
         for relationship in &changed_relationships {
             affected_nodes.insert(relationship.source().clone());
             affected_nodes.insert(relationship.target().clone());
+            if relationship.status() != RecordStatus::Tombstoned {
+                outgoing_by_owner
+                    .entry(relationship.source().clone())
+                    .or_default()
+                    .push(adjacency_entry(relationship, AdjacencyDirection::Outgoing));
+                incoming_by_owner
+                    .entry(relationship.target().clone())
+                    .or_default()
+                    .push(adjacency_entry(relationship, AdjacencyDirection::Incoming));
+            }
         }
         let mut sorted_affected: Vec<NodeId> = affected_nodes.into_iter().collect();
         sorted_affected.sort_by(|left, right| left.as_str().cmp(right.as_str()));
@@ -1403,13 +1439,29 @@ impl CanonicalEngineStore {
         let outgoing_adjacency = sorted_affected
             .iter()
             .map(|owner| {
-                self.adjacency_update(owner, AdjacencyDirection::Outgoing, &changed_relationships)
+                self.adjacency_update(
+                    owner,
+                    AdjacencyDirection::Outgoing,
+                    &changed_ids,
+                    outgoing_by_owner
+                        .get(owner)
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[]),
+                )
             })
             .collect::<GraphStorageResult<Vec<_>>>()?;
         let incoming_adjacency = sorted_affected
             .iter()
             .map(|owner| {
-                self.adjacency_update(owner, AdjacencyDirection::Incoming, &changed_relationships)
+                self.adjacency_update(
+                    owner,
+                    AdjacencyDirection::Incoming,
+                    &changed_ids,
+                    incoming_by_owner
+                        .get(owner)
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[]),
+                )
             })
             .collect::<GraphStorageResult<Vec<_>>>()?;
 
@@ -1427,7 +1479,8 @@ impl CanonicalEngineStore {
         &self,
         owner: &NodeId,
         direction: AdjacencyDirection,
-        changed_relationships: &[Relationship],
+        changed_ids: &HashSet<RelationshipId>,
+        replacement_entries: &[PersistedAdjacencyEntry],
     ) -> GraphStorageResult<AtomicPersistentMutationAdjacencyRecord> {
         let mut entries = if self.state.catalog.latest_node_records.contains_key(owner) {
             match direction {
@@ -1448,23 +1501,8 @@ impl CanonicalEngineStore {
         } else {
             Vec::new()
         };
-        let changed_ids: HashSet<RelationshipId> = changed_relationships
-            .iter()
-            .map(|relationship| relationship.id().clone())
-            .collect();
         entries.retain(|entry| !changed_ids.contains(&entry.relationship_id));
-        entries.extend(
-            changed_relationships
-                .iter()
-                .filter(|relationship| {
-                    relationship.status() != RecordStatus::Tombstoned
-                        && match direction {
-                            AdjacencyDirection::Outgoing => relationship.source() == owner,
-                            AdjacencyDirection::Incoming => relationship.target() == owner,
-                        }
-                })
-                .map(|relationship| adjacency_entry(relationship, direction)),
-        );
+        entries.extend(replacement_entries.iter().cloned());
         entries.sort_by(|left, right| {
             left.relationship_id
                 .as_str()
