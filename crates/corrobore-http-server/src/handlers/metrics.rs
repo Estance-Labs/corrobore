@@ -31,7 +31,7 @@
 //! client dependency) to keep the dependency/audit surface minimal. Each metric
 //! carries the mandatory `# HELP` / `# TYPE` header lines and a single sample.
 
-use std::{path::Path, time::SystemTime};
+use std::{collections::BTreeMap, path::Path, time::SystemTime};
 
 use axum::{extract::State, http::header, response::IntoResponse};
 use corrobore_engine::{CoreReadQueryClass, SHADOW_LATENCY_BUCKETS_MS};
@@ -355,6 +355,36 @@ corrobore_opencti_shadow_security_blocking_total{{query_class=\"{query_class}\",
             }
         }
     }
+    let (routing_audits, rollback_reason) = state
+        .opencti_routing
+        .lock()
+        .map(|runtime| (runtime.audits(10_000), runtime.rollback_reason()))
+        .unwrap_or_default();
+    let mut routing_counts = BTreeMap::<(String, String), u64>::new();
+    for event in routing_audits {
+        let provider = match event.primary {
+            corrobore_engine::ProviderTarget::Reference => "reference",
+            corrobore_engine::ProviderTarget::Corrobore => "corrobore",
+        };
+        *routing_counts
+            .entry((event.query_class.as_str().to_owned(), provider.to_owned()))
+            .or_default() += 1;
+    }
+    body.push_str(
+        "# HELP corrobore_opencti_routing_decisions_total Durable visible-provider decisions by bounded query class and provider.\n\
+# TYPE corrobore_opencti_routing_decisions_total counter\n\
+# HELP corrobore_opencti_routing_rollback_active Whether the automatic or operator circuit breaker is open.\n\
+# TYPE corrobore_opencti_routing_rollback_active gauge\n",
+    );
+    for ((query_class, provider), count) in routing_counts {
+        body.push_str(&format!(
+            "corrobore_opencti_routing_decisions_total{{query_class=\"{query_class}\",provider=\"{provider}\"}} {count}\n"
+        ));
+    }
+    body.push_str(&format!(
+        "corrobore_opencti_routing_rollback_active {}\n",
+        u8::from(rollback_reason.is_some())
+    ));
 
     ([(header::CONTENT_TYPE, PROMETHEUS_CONTENT_TYPE)], body)
 }

@@ -120,6 +120,8 @@ rejected.
 | — | `CORROBORE_OPENCTI_SHADOW_MAX_REPORTS` | — | `10000` |
 | — | `CORROBORE_OPENCTI_SHADOW_SAMPLING_POLICY_FILE` | — | unset |
 | — | `CORROBORE_OPENCTI_SHADOW_BASELINE_FILE` | — | unset |
+| — | `CORROBORE_OPENCTI_READ_ROUTING_POLICY_FILE` | — | unset; safe default is reference-only |
+| — | `CORROBORE_OPENCTI_READ_ROUTING_MAX_AUDITS` | — | `10000` |
 | `limits.rate_limit_per_second` | `CORROBORE_HTTP_RATE_LIMIT_PER_SECOND` | `--rate-limit-per-second` | `50` |
 | `limits.rate_limit_burst` | `CORROBORE_HTTP_RATE_LIMIT_BURST` | `--rate-limit-burst` | `200` |
 | `interfaces.enabled` | `CORROBORE_SERVER_INTERFACES` | `--interfaces` | `["http"]` |

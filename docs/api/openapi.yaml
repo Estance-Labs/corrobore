@@ -890,6 +890,71 @@ paths:
                     items: {type: object}
         '401': {$ref: '#/components/responses/Unauthorized'}
 
+  /v1/opencti/reads:
+    post:
+      operationId: executeOpenCtiRoutedRead
+      summary: Execute one read through progressive provider routing
+      tags: [Import]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [request, metadata]
+              properties:
+                request: {type: object}
+                metadata:
+                  type: object
+                  required: [environment]
+                  properties:
+                    environment: {type: string}
+                    entity_type: {type: [string, 'null']}
+                    user_cohort: {type: [string, 'null']}
+                    feature_flags: {type: array, items: {type: string}}
+                    session_id: {type: [string, 'null']}
+                    index_generation: {type: [string, 'null']}
+      responses:
+        '200':
+          description: Response from exactly the policy-selected primary provider
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '503':
+          description: Routing gate blocked or the selected provider failed
+
+  /v1/opencti/routing/decisions:
+    get:
+      operationId: listOpenCtiRoutingDecisions
+      summary: Explain privacy-safe provider decisions and rollback state
+      tags: [Import]
+      parameters:
+        - {name: correlation_id, in: query, required: false, schema: {type: string}}
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 0, maximum: 500}}
+      responses:
+        '200':
+          description: Newest-first bounded provider-decision evidence
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/opencti/routing/rollback:
+    post:
+      operationId: rollbackOpenCtiReadRouting
+      summary: Open the durable provider-routing circuit breaker
+      tags: [Import]
+      responses:
+        '200':
+          description: Rollback persisted and active
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500':
+          description: Durable rollback state could not be persisted
+
   /v1/stix/validate:
     post:
       operationId: validateStix
