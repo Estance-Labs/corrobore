@@ -24,6 +24,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
 use graph_core::{AdjacencyDirection, RelationshipType};
+use opencti_access::AccessMetadata;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -37,9 +38,9 @@ use crate::{
     index_appended_relationship_record, index_relationship_type, open_append_only_node_record_log,
     open_append_only_relationship_record_log, persist_graph_catalog_metadata,
     read_persisted_graph_catalog_metadata, replace_node_read_indexes,
-    restore_persisted_adjacency_records, snapshot_persisted_adjacency_records,
-    validate_durable_wal_entry, write_incoming_adjacency_by_node_id,
-    write_outgoing_adjacency_by_node_id,
+    replace_relationship_access_index, restore_persisted_adjacency_records,
+    snapshot_persisted_adjacency_records, validate_durable_wal_entry,
+    write_incoming_adjacency_by_node_id, write_outgoing_adjacency_by_node_id,
 };
 
 // A checkpoint is intentionally periodic rather than mutation-scoped. The WAL
@@ -79,6 +80,10 @@ pub struct AtomicPersistentMutationRelationshipRecord {
     pub encoded_record: EncodedRecord,
     /// Relationship type used to update the type index projection.
     pub relationship_type: RelationshipType,
+    /// Whether this current relationship is visible rather than tombstoned.
+    pub active: bool,
+    /// Payload-free OpenCTI access document.
+    pub access: AccessMetadata,
 }
 
 /// One adjacency mutation payload.
@@ -207,6 +212,14 @@ struct RelationshipMutationLogRecord {
     envelope: PersistedRecordEnvelope,
     storage_ref: crate::StorageRef,
     relationship_type: RelationshipType,
+    #[serde(default = "default_true")]
+    active: bool,
+    #[serde(default)]
+    access: AccessMetadata,
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -712,17 +725,25 @@ fn persist_relationship_mutations(
             Some(GraphRecordVersion::Relationship { current: true, .. }),
         ) = (
             &relationship.envelope.record_id,
-            relationship.envelope.graph_record_version.clone(),
+            relationship.envelope.graph_record_version.as_ref(),
         ) {
-            index_relationship_type(
+            replace_relationship_access_index(
                 &mut state.catalog,
-                &relationship.relationship_type,
-                RelationshipTypeIndexRelationshipMetadata {
-                    relationship_id: relationship_id.clone(),
-                    latest_storage_ref: Some(storage_ref.clone()),
-                    graph_record_version: relationship_graph_version(&relationship.envelope)?,
-                },
-            )?;
+                relationship_id,
+                relationship.active,
+                &relationship.access,
+            );
+            if relationship.active {
+                index_relationship_type(
+                    &mut state.catalog,
+                    &relationship.relationship_type,
+                    RelationshipTypeIndexRelationshipMetadata {
+                        relationship_id: relationship_id.clone(),
+                        latest_storage_ref: Some(storage_ref.clone()),
+                        graph_record_version: relationship_graph_version(&relationship.envelope)?,
+                    },
+                )?;
+            }
         }
         append_json_line_sync(
             &relationship_mutation_log_path(root),
@@ -732,6 +753,8 @@ fn persist_relationship_mutations(
                 envelope: relationship.envelope.clone(),
                 storage_ref,
                 relationship_type: relationship.relationship_type.clone(),
+                active: relationship.active,
+                access: relationship.access.clone(),
             },
             "apply_atomic_persistent_mutation_batch",
         )?;
@@ -889,17 +912,25 @@ fn replay_relationship_mutations(
             Some(GraphRecordVersion::Relationship { current: true, .. }),
         ) = (
             &record.envelope.record_id,
-            record.envelope.graph_record_version.clone(),
+            record.envelope.graph_record_version.as_ref(),
         ) {
-            index_relationship_type(
+            replace_relationship_access_index(
                 &mut state.catalog,
-                &record.relationship_type,
-                RelationshipTypeIndexRelationshipMetadata {
-                    relationship_id: relationship_id.clone(),
-                    latest_storage_ref: Some(record.storage_ref.clone()),
-                    graph_record_version: relationship_graph_version(&record.envelope)?,
-                },
-            )?;
+                relationship_id,
+                record.active,
+                &record.access,
+            );
+            if record.active {
+                index_relationship_type(
+                    &mut state.catalog,
+                    &record.relationship_type,
+                    RelationshipTypeIndexRelationshipMetadata {
+                        relationship_id: relationship_id.clone(),
+                        latest_storage_ref: Some(record.storage_ref.clone()),
+                        graph_record_version: relationship_graph_version(&record.envelope)?,
+                    },
+                )?;
+            }
         }
     }
     Ok(())

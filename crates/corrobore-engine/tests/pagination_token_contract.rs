@@ -16,6 +16,8 @@ fn claims() -> PaginationTokenClaims {
         cursor: "node--000042".to_owned(),
         snapshot_fingerprint: "snapshot--fixture".to_owned(),
         returned: 10,
+        policy_version: String::new(),
+        access_fingerprint: String::new(),
     }
 }
 

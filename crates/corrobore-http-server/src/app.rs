@@ -264,8 +264,11 @@ impl EnginePersistence for PersistentEnginePersistence {
     fn prepare_knowledge_data_operation(
         &mut self,
         operation: &KnowledgeDataOperation,
+        access: &corrobore_engine::AccessContext,
     ) -> Result<Option<PreparedKnowledgeDataProjection>, String> {
-        let Some(request) = canonical_projection_for_knowledge_data(operation) else {
+        let Some(request) = canonical_projection_for_knowledge_data(operation)
+            .map(|request| request.with_access_context(access.clone()))
+        else {
             return Ok(None);
         };
         let mut store = self
@@ -280,6 +283,7 @@ impl EnginePersistence for PersistentEnginePersistence {
             graph,
             page_ins: stats.page_ins,
             cache_hits: stats.cache_hits,
+            authorization_denials: stats.authorization_denials,
         }))
     }
 

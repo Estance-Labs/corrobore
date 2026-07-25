@@ -468,6 +468,7 @@ dependencies = [
  "export-stix",
  "graph-core",
  "hmac",
+ "opencti-access",
  "opencti-adapter",
  "serde",
  "serde_json",
@@ -1059,6 +1060,7 @@ version = "0.2.2"
 dependencies = [
  "criterion",
  "graph-core",
+ "opencti-access",
  "proptest",
  "serde",
  "serde_json",
@@ -1689,11 +1691,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
+name = "opencti-access"
+version = "0.2.2"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "opencti-adapter"
 version = "0.2.2"
 dependencies = [
  "chrono",
  "graph-core",
+ "opencti-access",
  "serde",
  "serde_json",
  "sha2",

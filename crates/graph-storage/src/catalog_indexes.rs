@@ -21,6 +21,7 @@
 use std::collections::HashMap;
 
 use graph_core::{LabelSet, NodeId, RelationshipId, RelationshipType};
+use opencti_access::AccessMetadata;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -83,6 +84,14 @@ pub struct GraphCatalogIndexes {
     /// Canonically encoded temporal values mapped to current nodes.
     #[serde(default)]
     pub temporal: HashMap<String, HashMap<String, Vec<LabelIndexNodeMetadata>>>,
+
+    /// Payload-free OpenCTI access documents keyed by current node ID.
+    #[serde(default)]
+    pub node_access: HashMap<NodeId, AccessMetadata>,
+
+    /// Payload-free OpenCTI access documents keyed by current relationship ID.
+    #[serde(default)]
+    pub relationship_access: HashMap<RelationshipId, AccessMetadata>,
 }
 
 /// Compact, payload-free index document persisted with one node mutation.
@@ -94,6 +103,9 @@ pub struct NodeReadIndexDocument {
     pub identifiers: Vec<String>,
     /// Scalar values addressable by simple read filters.
     pub values: Vec<NodeReadIndexValue>,
+    /// Compact access document evaluated before payload page-in.
+    #[serde(default)]
+    pub access: AccessMetadata,
 }
 
 /// One canonical scalar value in a compact node read-index document.
@@ -126,12 +138,17 @@ pub fn replace_node_read_indexes(
     remove_node_from_read_map(&mut catalog.metadata_indexes.identifiers, node_id);
     remove_node_from_nested_read_map(&mut catalog.metadata_indexes.properties, node_id);
     remove_node_from_nested_read_map(&mut catalog.metadata_indexes.temporal, node_id);
+    catalog.metadata_indexes.node_access.remove(node_id);
 
     if !document.active {
         return Ok(());
     }
 
     index_node_labels(catalog, labels, metadata.clone())?;
+    catalog
+        .metadata_indexes
+        .node_access
+        .insert(node_id.clone(), document.access.clone());
     for identifier in &document.identifiers {
         if identifier.trim().is_empty() {
             continue;
@@ -161,6 +178,25 @@ pub fn replace_node_read_indexes(
         );
     }
     Ok(())
+}
+
+/// Replace the payload-free access document for one relationship mutation.
+pub fn replace_relationship_access_index(
+    catalog: &mut GraphCatalog,
+    relationship_id: &RelationshipId,
+    active: bool,
+    access: &AccessMetadata,
+) {
+    catalog
+        .metadata_indexes
+        .relationship_access
+        .remove(relationship_id);
+    if active {
+        catalog
+            .metadata_indexes
+            .relationship_access
+            .insert(relationship_id.clone(), access.clone());
+    }
 }
 
 /// Resolve current node metadata for any indexed identifier.

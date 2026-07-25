@@ -43,6 +43,12 @@ represented by stable truncated SHA-256 handles and property evidence contains
 paths only. Any record visible only in Corrobore or any authorization-outcome
 mismatch is classified as blocking and cannot be baselined.
 
+When the request carries an OpenCTI policy version, any functional difference
+in results, counts, ordering, cursor presence, relationships, paths or errors is
+also promoted to `authorization_result_mismatch`. The HTTP execution trace
+records only correlation ID, operation, policy version, allow/deny outcome and
+decision reason; it never records inaccessible content or identifiers.
+
 Reports are stored under the persistent runtime root in
 `runtime/opencti-shadow-reports.json`. Writes use an fsynced temporary file,
 atomic rename, and parent-directory fsync. Retention is bounded.

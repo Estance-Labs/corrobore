@@ -38,12 +38,16 @@ The remaining gap to OpenCTI parity is now concentrated outside core reads:
 - the persistent standalone server resolves OpenCTI identifiers, types, scalar
   and temporal predicates, and bounded graph adjacency without scanning all
   hydrated records;
-- mapped OpenCTI access metadata is enforced on the supported read surface;
+- mapped OpenCTI access metadata is enforced during candidate selection on the
+  supported read surface, including complete relationship paths and
+  policy-bound cursors and caches;
 - full-text search, nested boolean planning, aggregation, file extraction,
   write parity, and production routing remain later delivery work.
 
 See [OpenCTI core reads](opencti-core-reads.md) for the delivered semantics and
-explicit limits.
+explicit limits, and
+[OpenCTI query authorization](opencti-query-authorization.md) for the policy,
+non-inference and invalidation contract.
 
 ## Machine-readable bundle
 

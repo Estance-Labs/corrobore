@@ -248,9 +248,24 @@ async fn execute_corrobore_shadow(
         let mut engine = engine
             .lock()
             .map_err(|_| "Corrobore shadow engine lock poisoned".to_owned())?;
+        let audit_events_before = engine.security_audit_events().len();
         let mut provider = CorroboreKnowledgeDataProvider::new(&mut engine, SHADOW_PAGINATION_KEY)
             .map_err(|_| "failed to initialize Corrobore shadow provider".to_owned())?;
-        Ok::<_, String>(provider.execute(request))
+        let envelope = provider.execute(request);
+        drop(provider);
+        if let Some(event) = engine.security_audit_events().get(audit_events_before) {
+            tracing::info!(
+                event = "opencti_authorization_decision",
+                correlation_id = %event.correlation_id,
+                operation = %event.operation,
+                policy_version = %event.policy_version,
+                allowed = event.allowed,
+                authorization_denials = event.authorization_denials,
+                decision_reason = ?event.reason,
+                "OpenCTI authorization decision"
+            );
+        }
+        Ok::<_, String>(envelope)
     })
     .await
     .map_err(|_| "Corrobore shadow execution task failed".to_owned())??;

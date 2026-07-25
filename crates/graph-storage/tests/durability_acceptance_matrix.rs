@@ -166,6 +166,8 @@ fn mutation_batch(
                 .encode_envelope(&relationship_envelope)
                 .unwrap(),
             relationship_type: RelationshipType::new("PROMOTES").unwrap(),
+            active: true,
+            access: Default::default(),
         }],
         outgoing_adjacency: vec![AtomicPersistentMutationAdjacencyRecord {
             owner_node_id: source.clone(),

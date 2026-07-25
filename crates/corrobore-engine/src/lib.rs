@@ -193,6 +193,8 @@ pub struct PreparedKnowledgeDataProjection {
     pub page_ins: u64,
     /// Payloads reused from the immediately preceding projection.
     pub cache_hits: u64,
+    /// Candidates rejected from payload-free authorization metadata.
+    pub authorization_denials: u64,
 }
 
 /// Optional durable graph adapter used by standalone hosts.
@@ -223,6 +225,7 @@ pub trait EnginePersistence: std::fmt::Debug + Send {
     fn prepare_knowledge_data_operation(
         &mut self,
         operation: &KnowledgeDataOperation,
+        _access: &AccessContext,
     ) -> Result<Option<PreparedKnowledgeDataProjection>, String> {
         let query = match operation {
             KnowledgeDataOperation::Health(request) if request.verbose => {
@@ -247,6 +250,7 @@ pub trait EnginePersistence: std::fmt::Debug + Send {
                         graph,
                         page_ins: 0,
                         cache_hits: 0,
+                        authorization_denials: 0,
                     })
             })
     }
@@ -411,6 +415,7 @@ impl CorroboreEngineBuilder {
             budget_ref,
             persistence,
             core_read_metrics: CoreReadMetrics::default(),
+            security_audit_events: Vec::new(),
         })
     }
 }
@@ -424,6 +429,7 @@ pub struct CorroboreEngine {
     budget_ref: CypherBudgetRef,
     persistence: Option<Box<dyn EnginePersistence>>,
     core_read_metrics: CoreReadMetrics,
+    security_audit_events: Vec<SecurityAuditEvent>,
 }
 
 impl CorroboreEngine {
@@ -442,6 +448,19 @@ impl CorroboreEngine {
     /// Return cumulative low-cardinality metrics for fundamental read classes.
     pub fn core_read_metrics(&self) -> &CoreReadMetrics {
         &self.core_read_metrics
+    }
+
+    /// Return payload-free OpenCTI authorization audit summaries.
+    pub fn security_audit_events(&self) -> &[SecurityAuditEvent] {
+        &self.security_audit_events
+    }
+
+    fn record_security_audit_event(&mut self, event: SecurityAuditEvent) {
+        const MAX_EVENTS: usize = 1_024;
+        if self.security_audit_events.len() == MAX_EVENTS {
+            self.security_audit_events.remove(0);
+        }
+        self.security_audit_events.push(event);
     }
 
     /// Executes one contextual request through the public engine boundary.
@@ -532,13 +551,18 @@ impl CorroboreEngine {
     fn prepare_knowledge_data_operation(
         &mut self,
         operation: &KnowledgeDataOperation,
-    ) -> Result<Option<(u64, u64)>, EngineError> {
+        access: &AccessContext,
+    ) -> Result<Option<(u64, u64, u64)>, EngineError> {
         if let Some(adapter) = self.persistence.as_mut()
             && let Some(projection) = adapter
-                .prepare_knowledge_data_operation(operation)
+                .prepare_knowledge_data_operation(operation, access)
                 .map_err(EngineError::Persistence)?
         {
-            let stats = (projection.page_ins, projection.cache_hits);
+            let stats = (
+                projection.page_ins,
+                projection.cache_hits,
+                projection.authorization_denials,
+            );
             self.gateway.replace_graph(projection.graph);
             return Ok(Some(stats));
         }

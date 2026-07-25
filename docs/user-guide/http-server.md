@@ -176,7 +176,9 @@ to `/health/ready`.
 Returns Prometheus text exposition (`0.0.4`) for build, uptime, sessions,
 storage, providers, lifecycle, readiness, active requests, shutdown counters,
 and OpenCTI core-read request, P50/P95/P99 latency, page-in, and cache-hit
-metrics grouped only by bounded query class.
+metrics grouped only by bounded query class. Storage index counts include the
+payload-free `node_access` and `relationship_access` projections used to
+authorize candidates before page-in.
 
 ## Bounded CLI status probe
 
