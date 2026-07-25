@@ -1,6 +1,10 @@
 # TAXII Ingestion
 
-`corrobore-ingest` polls one TAXII 2.1 collection, follows envelope pagination, imports fetched STIX objects through `POST /v1/import/stix`, and persists the collection cursor. This keeps connector logic outside the graph core and preserves the same validation and audit path as other HTTP imports.
+`corrobore-ingest` polls one TAXII 2.1 collection, follows envelope pagination,
+and persists the collection cursor. The simple TAXII path remains available
+through `POST /v1/import/stix`. Consistent OpenCTI snapshots and ordered
+catch-up streams use `POST /v1/opencti/sync/batches`, which commits a bounded
+batch as one WAL transaction and acknowledges its source checkpoint afterward.
 
 This guide targets the current `0.1.x` runtime baseline.
 
@@ -89,6 +93,13 @@ The connector sends `added_after` from the persisted cursor, follows `more`/`nex
 - The cursor is isolated per collection id.
 - Transient cycle failures are logged and retried on the next interval in loop mode.
 - The Corrobore HTTP service and its auth token must be reachable from the connector process.
+- Capture the OpenCTI high-water mark before exporting a consistent snapshot,
+  then replay source mutations after that boundary in monotonic sequence order.
+- Persist the response checkpoint before fetching the next batch. A lost
+  response can be replayed safely; the server reports acknowledged records as
+  `duplicate`.
+- Do not enable shadow reads until the server status reports zero divergence and
+  `shadow_reads_enabled: true`.
 
 ## Failure behavior summary
 

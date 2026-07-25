@@ -45,6 +45,8 @@ Application errors use the JSON envelope above. Transport middleware can reject 
 | `CORROBORE_HTTP_SESSION_IDLE_TTL_MS` | `0` | Idle auto-stop TTL; `0` disables expiration. |
 | `CORROBORE_HTTP_MAX_BODY_BYTES` | `2097152` | Standard protected-route body limit (2 MiB). |
 | `CORROBORE_HTTP_IMPORT_MAX_BODY_BYTES` | `33554432` | STIX import body limit (32 MiB). |
+| `CORROBORE_OPENCTI_SYNC_MAX_OPERATIONS` | `512` | Maximum mutations admitted in one OpenCTI synchronization batch. |
+| `CORROBORE_OPENCTI_SYNC_MAX_REPLAY_IDENTITIES` | `4096` | Bounded replay identities and dead-letter diagnostics retained in the durable checkpoint. |
 | `CORROBORE_HTTP_RATE_LIMIT_PER_SECOND` | `50` | Sustained global protected-route rate. |
 | `CORROBORE_HTTP_RATE_LIMIT_BURST` | `200` | Global burst allowance. |
 | `CORROBORE_HTTP_WEB_DIR` | unset | Optional directory containing the production explorer build. Unset keeps API-only mode. |
@@ -307,6 +309,29 @@ curl -X POST http://127.0.0.1:8080/v1/import/stix/file \
   -F 'file=@bundle.stix;type=application/json' \
   -F 'workspace_id=workspace--demo'
 ```
+
+## `POST /v1/opencti/sync/batches`
+
+Accepts one ordered, bounded OpenCTI snapshot, catch-up, or steady-state batch.
+Persistent WAL storage is required. The server maps the lossless records,
+applies the contiguous non-retryable prefix in one canonical graph transaction,
+and only then fsyncs the source checkpoint. Replaying a batch after a crash is
+idempotent.
+
+Each operation reports `applied`, `duplicate`, `retryable`,
+`permanently_rejected`, or `quarantined`. A retryable sequence stops checkpoint
+progress and applies backpressure to later operations. Permanent rejections and
+conflicting replay identities are retained as bounded dead-letter diagnostics
+in the durable checkpoint. When an expected digest is supplied, record,
+property, identifier, relationship, access-policy, and projection checks must
+all match before `shadow_reads_enabled` becomes true.
+
+## `GET /v1/opencti/sync/status`
+
+Returns the restored phase, acknowledged sequence, source high-water mark, lag,
+queue depth, retry/rejection/quarantine counters, divergence status, and
+shadow-read gate. The same lag, queue, retry, rejection, checkpoint, and gate
+values are exported on `/metrics`.
 
 ## `POST /v1/stix/validate`
 

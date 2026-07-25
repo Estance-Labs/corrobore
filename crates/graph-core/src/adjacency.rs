@@ -73,6 +73,36 @@ impl AdjacencyIndexes {
         Ok(())
     }
 
+    /// Moves an existing relationship between adjacency buckets when a new
+    /// canonical version changes one or both endpoints.
+    pub(crate) fn record_replaced_relationship(
+        &mut self,
+        relationship_id: &RelationshipId,
+        previous_source: &NodeId,
+        previous_target: &NodeId,
+        source: &NodeId,
+        target: &NodeId,
+    ) -> Result<(), GraphError> {
+        if previous_source == source && previous_target == target {
+            return Ok(());
+        }
+        if let Some(outgoing) = self.outgoing_by_source.get_mut(previous_source) {
+            outgoing.retain(|candidate| candidate != relationship_id);
+        }
+        if let Some(incoming) = self.incoming_by_target.get_mut(previous_target) {
+            incoming.retain(|candidate| candidate != relationship_id);
+        }
+        self.outgoing_by_source
+            .entry(source.clone())
+            .or_default()
+            .push(relationship_id.clone());
+        self.incoming_by_target
+            .entry(target.clone())
+            .or_default()
+            .push(relationship_id.clone());
+        Ok(())
+    }
+
     /// Returns relationship IDs that leave `node_id` (outgoing edges).
     ///
     /// IDs are returned in deterministic creation order. An unknown or

@@ -199,6 +199,8 @@ fn start_help_covers_the_operational_configuration_surface() {
         "--query-timeout-ms",
         "--shutdown-timeout-ms",
         "--max-body-bytes",
+        "--opencti-sync-max-operations",
+        "--opencti-sync-max-replay-identities",
         "--interfaces",
         "--web-dir",
         "--maintenance-enabled",
@@ -516,6 +518,8 @@ format = "json"
 request_timeout_ms = 45000
 max_body_bytes = 4096
 import_max_body_bytes = 8192
+opencti_sync_max_operations = 64
+opencti_sync_max_replay_identities = 128
 rate_limit_per_second = 25
 rate_limit_burst = 75
 
@@ -554,6 +558,8 @@ enabled = false
         "45000",
         "4096",
         "8192",
+        "64",
+        "128",
         "25",
         "75",
         "60000",

@@ -18,6 +18,9 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
+use opencti_adapter::{
+    GraphDigest, OpenCtiSyncBatch, SyncBatchResult, SyncCheckpoint, SyncValidationReport,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -39,6 +42,22 @@ pub struct ImportSummary {
 #[derive(Debug, Deserialize)]
 struct ImportResponse {
     result: ImportSummary,
+}
+
+/// Durable response returned by the OpenCTI synchronization endpoint.
+#[derive(Clone, Debug, Deserialize)]
+pub struct OpenCtiSyncSummary {
+    /// Per-operation results for the submitted batch.
+    pub batch: SyncBatchResult,
+    /// Acknowledged durable source checkpoint.
+    pub checkpoint: SyncCheckpoint,
+    /// Optional divergence report used to gate shadow reads.
+    pub validation: Option<SyncValidationReport>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenCtiSyncResponse {
+    result: OpenCtiSyncSummary,
 }
 /// Client for the Corrobore STIX import endpoint.
 #[derive(Debug)]
@@ -100,5 +119,39 @@ impl CorroboreImportClient {
             .map_err(|error| IngestError::Transport(error.to_string()))?;
 
         Ok(parsed.result)
+    }
+
+    /// Submit one bounded snapshot/catch-up batch to the canonical WAL-backed
+    /// synchronization endpoint.
+    pub async fn synchronize_opencti(
+        &self,
+        batch: OpenCtiSyncBatch,
+        expected: Option<GraphDigest>,
+    ) -> Result<OpenCtiSyncSummary, IngestError> {
+        let url = format!(
+            "{}/v1/opencti/sync/batches",
+            self.base_url.trim_end_matches('/')
+        );
+        let response = self
+            .http
+            .post(&url)
+            .bearer_auth(&self.auth_token)
+            .json(&json!({"batch": batch, "expected": expected}))
+            .send()
+            .await
+            .map_err(|error| IngestError::Transport(error.to_string()))?;
+        let status = response.status();
+        if !status.is_success() {
+            let message = response.text().await.unwrap_or_default();
+            return Err(IngestError::CorroboreImport {
+                status: status.as_u16(),
+                message,
+            });
+        }
+        response
+            .json::<OpenCtiSyncResponse>()
+            .await
+            .map(|response| response.result)
+            .map_err(|error| IngestError::Transport(error.to_string()))
     }
 }

@@ -44,7 +44,7 @@ mod state;
 mod taxii;
 
 pub use config::{IngestConfig, IngestConfigError, TaxiiAuth};
-pub use corrobore_client::{CorroboreImportClient, ImportSummary};
+pub use corrobore_client::{CorroboreImportClient, ImportSummary, OpenCtiSyncSummary};
 pub use runner::{PollOutcome, run_poll_cycle};
 pub use state::CursorStore;
 pub use taxii::{TaxiiClient, TaxiiFetch};

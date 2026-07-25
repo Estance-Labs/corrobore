@@ -60,6 +60,8 @@ format = "json"
 request_timeout_ms = 30000
 max_body_bytes = 2097152
 import_max_body_bytes = 33554432
+opencti_sync_max_operations = 512
+opencti_sync_max_replay_identities = 4096
 rate_limit_per_second = 50
 rate_limit_burst = 200
 
