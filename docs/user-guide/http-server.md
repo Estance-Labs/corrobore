@@ -62,6 +62,8 @@ Application errors use the JSON envelope above. Transport middleware can reject 
 | `CORROBORE_OPENCTI_SHADOW_MAX_REPORTS` | `10000` | Bounded durable privacy-safe report retention. |
 | `CORROBORE_OPENCTI_SHADOW_SAMPLING_POLICY_FILE` | unset | JSON rules selecting environment, operation, query class, entity, organization, tenant, cohort, and percentage. |
 | `CORROBORE_OPENCTI_SHADOW_BASELINE_FILE` | unset | JSON list of exact divergence fingerprints with required owner and expiry. |
+| `CORROBORE_OPENCTI_READ_ROUTING_POLICY_FILE` | unset | Validated progressive routing policy; unset defaults to reference-only. |
+| `CORROBORE_OPENCTI_READ_ROUTING_MAX_AUDITS` | `10000` | Bounded durable provider-decision audit retention. |
 | `CORROBORE_HTTP_RATE_LIMIT_PER_SECOND` | `50` | Sustained global protected-route rate. |
 | `CORROBORE_HTTP_RATE_LIMIT_BURST` | `200` | Global burst allowance. |
 | `CORROBORE_HTTP_WEB_DIR` | unset | Optional directory containing the production explorer build. Unset keeps API-only mode. |
@@ -376,6 +378,37 @@ error messages are never persisted.
 `/metrics` exports comparison and equivalent totals, blocking security
 divergences, and cumulative latency histograms using only `query_class`,
 `release`, and the bounded `provider` dimension.
+
+## `POST /v1/opencti/reads`
+
+Executes one supported Knowledge Data Engine read through the progressive
+routing policy. Modes are `reference_only`, `shadow`, `canary`, `graph_reads`,
+and `primary_reads`. Canary rules use first-match semantics and can select the
+environment, operation, query class, entity type, organization, tenant, cohort,
+feature flag, and a deterministic percentage. Exactly one provider owns the
+visible response; independently bounded shadow work can only create parity
+evidence.
+
+Session IDs bind pagination to one provider and index generation. A provider or
+generation change fails explicitly. Synchronization, reference freshness,
+availability, corruption, parity, security, error-rate, and P95 latency gates
+open the durable circuit breaker and restore subsequent traffic to the
+reference provider. If the reference is not fresh, routing fails closed.
+
+## `GET /v1/opencti/routing/decisions`
+
+Returns newest-first provider decisions or the decision for an exact
+`correlation_id`. Evidence includes only query class, provider, policy version,
+decision reason, timestamp, and correlation ID; access context and request
+payload are never retained. `/metrics` exports provider decisions by bounded
+query class and provider plus the circuit-breaker state.
+
+## `POST /v1/opencti/routing/rollback`
+
+Opens the durable operator circuit breaker in one authenticated call. New
+eligible reads route to the validated reference provider without configuration
+rewrites. Existing incompatible pagination sessions fail explicitly rather
+than crossing provider or index generations.
 
 ## `POST /v1/stix/validate`
 

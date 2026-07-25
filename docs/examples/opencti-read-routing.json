@@ -1,0 +1,23 @@
+{
+  "policy_version": "production-canary-v1",
+  "mode": "canary",
+  "default_percentage_basis_points": 0,
+  "rules": [
+    {
+      "environment": "production",
+      "operation": "get_by_id",
+      "query_class": "point_read",
+      "entity_type": "indicator",
+      "organization_id": null,
+      "tenant_id": null,
+      "user_cohort": "analyst-canary",
+      "required_feature_flag": "corrobore-reads",
+      "percentage_basis_points": 500
+    }
+  ],
+  "thresholds": {
+    "max_error_rate_basis_points": 100,
+    "max_latency_p95_ms": 120,
+    "minimum_soak_requests": 10000
+  }
+}

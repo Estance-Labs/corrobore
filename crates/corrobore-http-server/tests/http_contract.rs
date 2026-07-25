@@ -778,6 +778,23 @@ async fn opencti_shadow_read_returns_reference_and_persists_correlated_parity_re
     });
 
     let storage_root = unique_store_dir("opencti-shadow-http-root");
+    let routing_policy_file = unique_store_dir("opencti-routing-policy").with_extension("json");
+    fs::write(
+        &routing_policy_file,
+        serde_json::to_vec_pretty(&json!({
+            "policy_version": "issue-49-http",
+            "mode": "primary_reads",
+            "default_percentage_basis_points": 0,
+            "rules": [],
+            "thresholds": {
+                "max_error_rate_basis_points": 100,
+                "max_latency_p95_ms": 2000,
+                "minimum_soak_requests": 1
+            }
+        }))
+        .expect("routing policy should serialize"),
+    )
+    .expect("routing policy should be written");
     let app = test_app_with_store_dir_and_extra_env(
         unique_store_dir("opencti-shadow-http-sessions"),
         HashMap::from([
@@ -801,6 +818,10 @@ async fn opencti_shadow_read_returns_reference_and_persists_correlated_parity_re
             (
                 "CORROBORE_OPENCTI_SHADOW_SAMPLE_BASIS_POINTS".to_owned(),
                 "10000".to_owned(),
+            ),
+            (
+                "CORROBORE_OPENCTI_READ_ROUTING_POLICY_FILE".to_owned(),
+                routing_policy_file.display().to_string(),
             ),
         ]),
     );
@@ -938,6 +959,71 @@ async fn opencti_shadow_read_returns_reference_and_persists_correlated_parity_re
     assert_eq!(payload["result"][0]["equivalent"], true);
     assert_eq!(payload["result"][0]["gate"], "pass");
 
+    let routed_request = json!({
+        "request": shadow_request["request"].clone(),
+        "metadata": {
+            "environment": "test",
+            "entity_type": "indicator",
+            "user_cohort": "contract",
+            "feature_flags": [],
+            "session_id": "session--issue-49-primary",
+            "index_generation": "generation--issue-49"
+        }
+    });
+    let routed = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/opencti/reads")
+                .header(header::AUTHORIZATION, "Bearer token-123")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(routed_request.to_string()))
+                .expect("routed read should build"),
+        )
+        .await
+        .expect("routed read should respond");
+    assert_eq!(routed.status(), StatusCode::OK);
+
+    let decisions = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/opencti/routing/decisions?correlation_id=correlation--shadow-http")
+                .header(header::AUTHORIZATION, "Bearer token-123")
+                .body(Body::empty())
+                .expect("decision request should build"),
+        )
+        .await
+        .expect("decision request should respond");
+    assert_eq!(decisions.status(), StatusCode::OK);
+    let body = to_bytes(decisions.into_body(), usize::MAX)
+        .await
+        .expect("decision response body");
+    let decision: Value = serde_json::from_slice(&body).expect("decision response JSON");
+    assert_eq!(decision["result"][0]["primary"], "corrobore");
+    assert_eq!(decision["result"][0]["reason"], "primary_read_mode");
+
+    let rollback = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/opencti/routing/rollback")
+                .header(header::AUTHORIZATION, "Bearer token-123")
+                .body(Body::empty())
+                .expect("rollback request should build"),
+        )
+        .await
+        .expect("rollback request should respond");
+    assert_eq!(rollback.status(), StatusCode::OK);
+    let body = to_bytes(rollback.into_body(), usize::MAX)
+        .await
+        .expect("rollback response body");
+    let rollback: Value = serde_json::from_slice(&body).expect("rollback response JSON");
+    assert_eq!(rollback["rollback_reason"], "operator_requested");
+
     let metrics = app
         .oneshot(
             Request::builder()
@@ -958,9 +1044,14 @@ async fn opencti_shadow_read_returns_reference_and_persists_correlated_parity_re
     assert!(metrics.contains(
         "corrobore_opencti_shadow_latency_ms_bucket{query_class=\"point_read\",release=\"issue-43-http\",provider=\"reference\",le=\"+Inf\"} 1"
     ));
+    assert!(metrics.contains(
+        "corrobore_opencti_routing_decisions_total{query_class=\"point_read\",provider=\"corrobore\"} 1"
+    ));
+    assert!(metrics.contains("corrobore_opencti_routing_rollback_active 1"));
 
     reference_server.abort();
     let _ = fs::remove_dir_all(storage_root);
+    let _ = fs::remove_file(routing_policy_file);
 }
 
 #[tokio::test]

@@ -37,7 +37,8 @@ use axum::{
 };
 use corrobore_engine::{
     CorroboreEngine, EnginePersistence, GraphDirection, KnowledgeDataOperation,
-    PreparedKnowledgeDataProjection, ReadFilter, ReadFilterOperator, ReadPredicate,
+    OpenCtiReadRoutingRuntime, PreparedKnowledgeDataProjection, ReadFilter, ReadFilterOperator,
+    ReadPredicate, ReadRoutingMode, ReadRoutingPolicy, ReadRoutingThresholds,
     file_content_query_from_search_request, full_text_query_from_search_request,
 };
 use corrobore_engine::{DivergenceBaseline, ShadowSamplingPolicy};
@@ -77,6 +78,9 @@ use crate::{
         import::{import_stix_bundle, import_stix_bundle_file},
         license::{admin_license_status, license_status},
         metrics::metrics,
+        opencti_routing::{
+            execute_opencti_routed_read, opencti_routing_decisions, opencti_routing_rollback,
+        },
         opencti_shadow::{execute_opencti_shadow_read, opencti_shadow_reports},
         opencti_sync::{apply_opencti_sync_batch, opencti_sync_status},
         operational::{liveness, readiness, version},
@@ -128,6 +132,8 @@ pub enum AppStateInitError {
     OpenCtiSyncStateFailed { reason: String },
     #[error("failed to restore OpenCTI shadow-read state: {reason}")]
     OpenCtiShadowStateFailed { reason: String },
+    #[error("failed to restore OpenCTI read-routing state: {reason}")]
+    OpenCtiRoutingStateFailed { reason: String },
 }
 
 #[derive(Clone)]
@@ -141,6 +147,7 @@ pub struct AppState {
     pub lifecycle: Arc<ServerLifecycle>,
     pub opencti_sync: Arc<Mutex<OpenCtiSyncRuntime>>,
     pub opencti_shadow: Arc<Mutex<OpenCtiShadowRuntime>>,
+    pub opencti_routing: Arc<Mutex<OpenCtiReadRoutingRuntime>>,
     pub(crate) domain_providers: Option<Arc<crate::enterprise::registry::DomainProviderRegistry>>,
     pub started_at: Instant,
 }
@@ -203,6 +210,29 @@ impl AppState {
             config.opencti_shadow.max_reports,
         )
         .map_err(|reason| AppStateInitError::OpenCtiShadowStateFailed { reason })?;
+        let routing_state_path = match &runtime_store {
+            RuntimeStoreProvider::Persistent(runtime) => Some(
+                runtime
+                    .root_path
+                    .join("runtime")
+                    .join("opencti-read-routing.json"),
+            ),
+            RuntimeStoreProvider::Ephemeral => None,
+        };
+        let routing_policy = config
+            .opencti_shadow
+            .routing_policy_file
+            .as_deref()
+            .map(read_shadow_json::<ReadRoutingPolicy>)
+            .transpose()
+            .map_err(|reason| AppStateInitError::OpenCtiRoutingStateFailed { reason })?
+            .unwrap_or_else(default_read_routing_policy);
+        let opencti_routing = OpenCtiReadRoutingRuntime::open(
+            routing_state_path,
+            routing_policy,
+            config.opencti_shadow.routing_max_audits,
+        )
+        .map_err(|reason| AppStateInitError::OpenCtiRoutingStateFailed { reason })?;
         let domain_providers = initialize_domain_providers(&config)?;
         let timeline = ExplorerTimelineStore::new(&config.session_store_dir);
         let lifecycle = Arc::new(ServerLifecycle::initializing());
@@ -218,11 +248,26 @@ impl AppState {
             lifecycle: Arc::clone(&lifecycle),
             opencti_sync: Arc::new(Mutex::new(opencti_sync)),
             opencti_shadow: Arc::new(Mutex::new(opencti_shadow)),
+            opencti_routing: Arc::new(Mutex::new(opencti_routing)),
             domain_providers,
             started_at: Instant::now(),
         };
         lifecycle.mark_ready();
         Ok(state)
+    }
+}
+
+fn default_read_routing_policy() -> ReadRoutingPolicy {
+    ReadRoutingPolicy {
+        policy_version: "reference-only-v1".to_owned(),
+        mode: ReadRoutingMode::ReferenceOnly,
+        default_percentage_basis_points: 0,
+        rules: Vec::new(),
+        thresholds: ReadRoutingThresholds {
+            max_error_rate_basis_points: 100,
+            max_latency_p95_ms: 2_000,
+            minimum_soak_requests: 10_000,
+        },
     }
 }
 
@@ -799,6 +844,15 @@ pub fn build_router(state: AppState) -> Router {
             post(execute_opencti_shadow_read),
         )
         .route("/v1/opencti/shadow/reports", get(opencti_shadow_reports))
+        .route("/v1/opencti/reads", post(execute_opencti_routed_read))
+        .route(
+            "/v1/opencti/routing/decisions",
+            get(opencti_routing_decisions),
+        )
+        .route(
+            "/v1/opencti/routing/rollback",
+            post(opencti_routing_rollback),
+        )
         .layer(DefaultBodyLimit::max(state.config.import_max_body_bytes));
 
     // 2.3: a global token-bucket rate limiter guards all protected routes.

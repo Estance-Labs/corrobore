@@ -202,6 +202,10 @@ pub struct OpenCtiShadowConfig {
     pub sampling_policy_file: Option<String>,
     /// Optional JSON baseline file.
     pub baseline_file: Option<String>,
+    /// Optional JSON progressive read-routing policy file.
+    pub routing_policy_file: Option<String>,
+    /// Maximum durable provider-decision audit events retained.
+    pub routing_max_audits: usize,
 }
 
 impl fmt::Debug for OpenCtiShadowConfig {
@@ -225,6 +229,8 @@ impl fmt::Debug for OpenCtiShadowConfig {
             .field("max_reports", &self.max_reports)
             .field("sampling_policy_file", &self.sampling_policy_file)
             .field("baseline_file", &self.baseline_file)
+            .field("routing_policy_file", &self.routing_policy_file)
+            .field("routing_max_audits", &self.routing_max_audits)
             .finish()
     }
 }
@@ -243,6 +249,8 @@ impl Default for OpenCtiShadowConfig {
             max_reports: 10_000,
             sampling_policy_file: None,
             baseline_file: None,
+            routing_policy_file: None,
+            routing_max_audits: 10_000,
         }
     }
 }
@@ -525,6 +533,16 @@ impl ServerConfig {
             .get("CORROBORE_OPENCTI_SHADOW_BASELINE_FILE")
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty());
+        let routing_policy_file = vars
+            .get("CORROBORE_OPENCTI_READ_ROUTING_POLICY_FILE")
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        let routing_max_audits = parse_positive_usize(
+            "CORROBORE_OPENCTI_READ_ROUTING_MAX_AUDITS",
+            vars.get("CORROBORE_OPENCTI_READ_ROUTING_MAX_AUDITS")
+                .map(String::as_str)
+                .unwrap_or("10000"),
+        )?;
         let opencti_shadow = OpenCtiShadowConfig {
             reference_endpoint,
             reference_auth_token,
@@ -537,6 +555,8 @@ impl ServerConfig {
             max_reports,
             sampling_policy_file,
             baseline_file,
+            routing_policy_file,
+            routing_max_audits,
         };
 
         let rate_limit_per_second = parse_u64(
@@ -1114,6 +1134,8 @@ mod tests {
         assert_eq!(config.opencti_shadow.max_concurrency, 4);
         assert_eq!(config.opencti_shadow.timeout_ms, 2_000);
         assert_eq!(config.opencti_shadow.max_reports, 10_000);
+        assert_eq!(config.opencti_shadow.routing_policy_file, None);
+        assert_eq!(config.opencti_shadow.routing_max_audits, 10_000);
 
         // 2.3: rate-limiting defaults are permissive but present.
         assert_eq!(config.rate_limit_per_second, 50);
@@ -1172,6 +1194,14 @@ mod tests {
                 "CORROBORE_OPENCTI_SHADOW_MAX_REPORTS".to_owned(),
                 "99".to_owned(),
             ),
+            (
+                "CORROBORE_OPENCTI_READ_ROUTING_POLICY_FILE".to_owned(),
+                "/etc/corrobore/opencti-read-routing.json".to_owned(),
+            ),
+            (
+                "CORROBORE_OPENCTI_READ_ROUTING_MAX_AUDITS".to_owned(),
+                "123".to_owned(),
+            ),
         ]);
 
         let config = ServerConfig::from_map(&vars).expect("shadow configuration should parse");
@@ -1189,6 +1219,11 @@ mod tests {
         assert_eq!(config.opencti_shadow.max_concurrency, 7);
         assert_eq!(config.opencti_shadow.timeout_ms, 750);
         assert_eq!(config.opencti_shadow.max_reports, 99);
+        assert_eq!(
+            config.opencti_shadow.routing_policy_file.as_deref(),
+            Some("/etc/corrobore/opencti-read-routing.json")
+        );
+        assert_eq!(config.opencti_shadow.routing_max_audits, 123);
         assert!(!format!("{config:?}").contains("reference-secret"));
     }
 

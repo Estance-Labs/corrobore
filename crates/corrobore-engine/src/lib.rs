@@ -61,6 +61,7 @@
 //! ```
 
 mod knowledge_data;
+mod opencti_routing;
 mod opencti_shadow;
 
 use std::collections::{BTreeMap, HashMap};
@@ -86,6 +87,7 @@ pub use shared_runtime::{
 use thiserror::Error;
 
 pub use knowledge_data::*;
+pub use opencti_routing::*;
 pub use opencti_shadow::*;
 
 const DEFAULT_WORKSPACE_ID: &str = "workspace--embedded-default";

@@ -202,7 +202,7 @@ pub async fn opencti_shadow_reports(
     Ok(Json(OpenCtiShadowReportsResponse { ok: true, result }))
 }
 
-async fn execute_reference(
+pub(crate) async fn execute_reference(
     endpoint: String,
     token: Option<String>,
     provider: ProviderDescriptor,
@@ -235,11 +235,28 @@ async fn execute_reference(
     })
 }
 
-async fn execute_corrobore_shadow(
+pub(crate) async fn execute_corrobore_shadow(
+    engine: Arc<std::sync::Mutex<corrobore_engine::CorroboreEngine>>,
+    provider: ProviderDescriptor,
+    request: KnowledgeDataRequest,
+    permit: OwnedSemaphorePermit,
+) -> Result<ProviderExecution, String> {
+    execute_corrobore(engine, provider, request, Some(permit)).await
+}
+
+pub(crate) async fn execute_corrobore_primary(
+    engine: Arc<std::sync::Mutex<corrobore_engine::CorroboreEngine>>,
+    provider: ProviderDescriptor,
+    request: KnowledgeDataRequest,
+) -> Result<ProviderExecution, String> {
+    execute_corrobore(engine, provider, request, None).await
+}
+
+async fn execute_corrobore(
     engine: Arc<std::sync::Mutex<corrobore_engine::CorroboreEngine>>,
     provider: ProviderDescriptor,
     mut request: KnowledgeDataRequest,
-    permit: OwnedSemaphorePermit,
+    permit: Option<OwnedSemaphorePermit>,
 ) -> Result<ProviderExecution, String> {
     let started = Instant::now();
     request.context.deadline_unix_ms = None;
