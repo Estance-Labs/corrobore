@@ -195,6 +195,17 @@ pub struct PreparedKnowledgeDataProjection {
     pub cache_hits: u64,
     /// Candidates rejected from payload-free authorization metadata.
     pub authorization_denials: u64,
+    /// Pre-ranked durable full-text page, when the storage adapter executed
+    /// access-aware search before hydrating any graph payload.
+    pub full_text_page: Option<FullTextSearchPage>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct PreparedKnowledgeDataExecution {
+    page_ins: u64,
+    cache_hits: u64,
+    authorization_denials: u64,
+    full_text_page: Option<FullTextSearchPage>,
 }
 
 /// Optional durable graph adapter used by standalone hosts.
@@ -251,6 +262,7 @@ pub trait EnginePersistence: std::fmt::Debug + Send {
                         page_ins: 0,
                         cache_hits: 0,
                         authorization_denials: 0,
+                        full_text_page: None,
                     })
             })
     }
@@ -552,17 +564,18 @@ impl CorroboreEngine {
         &mut self,
         operation: &KnowledgeDataOperation,
         access: &AccessContext,
-    ) -> Result<Option<(u64, u64, u64)>, EngineError> {
+    ) -> Result<Option<PreparedKnowledgeDataExecution>, EngineError> {
         if let Some(adapter) = self.persistence.as_mut()
             && let Some(projection) = adapter
                 .prepare_knowledge_data_operation(operation, access)
                 .map_err(EngineError::Persistence)?
         {
-            let stats = (
-                projection.page_ins,
-                projection.cache_hits,
-                projection.authorization_denials,
-            );
+            let stats = PreparedKnowledgeDataExecution {
+                page_ins: projection.page_ins,
+                cache_hits: projection.cache_hits,
+                authorization_denials: projection.authorization_denials,
+                full_text_page: projection.full_text_page,
+            };
             self.gateway.replace_graph(projection.graph);
             return Ok(Some(stats));
         }

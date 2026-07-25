@@ -440,6 +440,8 @@ export function validateBundle(bundleRoot) {
     "benchmark-results.json",
     "catalogue.json",
     "decisions.json",
+    "full-text-benchmark-results.json",
+    "full-text-relevance.json",
     "operations.json",
     "parity-corpus.json",
     "reference-results.json",
@@ -459,6 +461,12 @@ export function validateBundle(bundleRoot) {
   const catalogue = readJson(path.join(bundleRoot, "catalogue.json"));
   const corpus = readJson(path.join(bundleRoot, "parity-corpus.json"));
   const captures = readJson(path.join(bundleRoot, "reference-results.json"));
+  const fullTextBenchmark = readJson(
+    path.join(bundleRoot, "full-text-benchmark-results.json"),
+  );
+  const fullTextRelevance = readJson(
+    path.join(bundleRoot, "full-text-relevance.json"),
+  );
   const operationIds = new Set(operations.map(({ id }) => id));
   const callsiteKeys = catalogue.callsites.map(catalogueSortKey);
 
@@ -486,6 +494,8 @@ export function validateBundle(bundleRoot) {
   errors.push(
     ...validateNoSensitiveData(corpus),
     ...validateNoSensitiveData(captures),
+    ...validateNoSensitiveData(fullTextBenchmark),
+    ...validateNoSensitiveData(fullTextRelevance),
   );
 
   return [...new Set(errors)].sort();

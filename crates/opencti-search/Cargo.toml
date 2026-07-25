@@ -1,5 +1,5 @@
 [package]
-name = "graph-storage"
+name = "opencti-search"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,26 +9,19 @@ homepage.workspace = true
 documentation.workspace = true
 
 [lib]
-name = "graph_storage"
+name = "opencti_search"
 path = "src/lib.rs"
 
 [dependencies]
-getrandom = { workspace = true }
+base64 = "0.22"
 graph-core = { path = "../graph-core" }
+hmac = { workspace = true }
 opencti-access = { path = "../opencti-access" }
-opencti-search = { path = "../opencti-search" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
+tantivy = { workspace = true }
 thiserror = { workspace = true }
-tracing = { workspace = true }
-
-[dev-dependencies]
-criterion = { workspace = true }
-proptest = { workspace = true }
-
-[[bench]]
-name = "page_in"
-harness = false
 
 [lints]
 workspace = true

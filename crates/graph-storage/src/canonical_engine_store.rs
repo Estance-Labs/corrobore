@@ -21,6 +21,10 @@ use graph_core::{
 };
 use opencti_access::AccessContext;
 use opencti_access::{AccessMetadata, OpenCtiAccessPolicy};
+use opencti_search::{
+    FullTextDocument, FullTextIndex, FullTextIndexSettings, FullTextQuery, FullTextRebuildOutcome,
+    FullTextSearchPage, FullTextSearchReadiness, document_from_node, document_from_relationship,
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
@@ -46,6 +50,10 @@ const LEGACY_SNAPSHOT: &str = "engine-graph.json";
 const LEGACY_ROLLBACK_SNAPSHOT: &str = "engine-graph.rollback.json";
 const MIGRATION_RECORD: &str = "engine-graph-migration.json";
 const MIGRATION_RECORD_TEMP: &str = "engine-graph-migration.next.json";
+const FULL_TEXT_SCHEMA_VERSION: &str = "opencti-full-text-v1";
+const FULL_TEXT_CURSOR_KEY: &str = "cursor.key";
+const FULL_TEXT_WRITER_MEMORY_BYTES: usize = 50_000_000;
+const FULL_TEXT_MAX_CANDIDATES: usize = 100_000;
 
 /// Bounded resident-record budgets for the standalone canonical store.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -561,6 +569,8 @@ impl CanonicalEngineStore {
                 mutation_sequence_number: None,
             });
         }
+        let full_text_index = self.full_text_index()?;
+        full_text_index.invalidate().map_err(full_text_error)?;
         let outcome = apply_atomic_persistent_mutation_batch(
             &self.root,
             &mut self.state,
@@ -576,7 +586,125 @@ impl CanonicalEngineStore {
         self.stats.resident_hot_relationships = 0;
         self.stats.resident_warm_adjacency_entries = 0;
         self.refresh_index_stats();
+        if let Err(error) = self.rebuild_full_text_index() {
+            self.startup_report.warnings.push(format!(
+                "full-text index rebuild deferred after canonical commit: {error}"
+            ));
+        }
         Ok(outcome)
+    }
+
+    /// Search the complete canonical graph through the durable access-aware
+    /// inverted index, rebuilding a missing or corrupt generation on demand.
+    pub fn search_full_text(
+        &mut self,
+        query: &FullTextQuery,
+        access: &AccessContext,
+    ) -> GraphStorageResult<FullTextSearchPage> {
+        let index = self.full_text_index()?;
+        if index.inspect().readiness != FullTextSearchReadiness::Ready {
+            self.rebuild_full_text_index()?;
+        }
+        index.search(query, access).map_err(full_text_error)
+    }
+
+    /// Reconstruct and atomically publish the full-text index entirely from
+    /// canonical current node and relationship versions.
+    pub fn rebuild_full_text_index(&self) -> GraphStorageResult<FullTextRebuildOutcome> {
+        let documents = self.canonical_full_text_documents()?;
+        self.full_text_index()?
+            .rebuild_with_checkpoint(&documents, 5_000, None)
+            .map_err(full_text_error)
+    }
+
+    fn full_text_index(&self) -> GraphStorageResult<FullTextIndex> {
+        let search_root = self.root.path().join("search").join("full-text-v1");
+        FullTextIndex::open(
+            search_root,
+            FullTextIndexSettings {
+                schema_version: FULL_TEXT_SCHEMA_VERSION.to_owned(),
+                cursor_key: self.full_text_cursor_key()?,
+                writer_memory_bytes: FULL_TEXT_WRITER_MEMORY_BYTES,
+                max_candidates: FULL_TEXT_MAX_CANDIDATES,
+            },
+        )
+        .map_err(full_text_error)
+    }
+
+    fn full_text_cursor_key(&self) -> GraphStorageResult<Vec<u8>> {
+        let search_root = self.root.path().join("search").join("full-text-v1");
+        fs::create_dir_all(&search_root)
+            .map_err(|error| io_error("create_full_text_index_root", &search_root, error))?;
+        let key_path = search_root.join(FULL_TEXT_CURSOR_KEY);
+        match fs::read(&key_path) {
+            Ok(key) if key.len() >= 32 => return Ok(key),
+            Ok(_) => {
+                return Err(GraphStorageError::OperationFailed {
+                    operation: "read_full_text_cursor_key",
+                    message: "persistent full-text cursor key is shorter than 32 bytes".to_owned(),
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(io_error("read_full_text_cursor_key", &key_path, error));
+            }
+        }
+
+        let mut key = vec![0_u8; 32];
+        getrandom::fill(&mut key).map_err(|error| GraphStorageError::OperationFailed {
+            operation: "generate_full_text_cursor_key",
+            message: error.to_string(),
+        })?;
+        let temporary = search_root.join(format!("{FULL_TEXT_CURSOR_KEY}.next"));
+        fs::write(&temporary, &key)
+            .map_err(|error| io_error("write_full_text_cursor_key", &temporary, error))?;
+        set_private_file_permissions(&temporary)?;
+        fs::rename(&temporary, &key_path)
+            .map_err(|error| io_error("publish_full_text_cursor_key", &key_path, error))?;
+        Ok(key)
+    }
+
+    fn canonical_full_text_documents(&self) -> GraphStorageResult<Vec<FullTextDocument>> {
+        let pager = self.pager()?;
+        let mut documents = Vec::with_capacity(
+            self.state
+                .catalog
+                .latest_node_records
+                .len()
+                .saturating_add(self.state.catalog.latest_relationship_records.len()),
+        );
+        let mut node_ids = self
+            .state
+            .catalog
+            .latest_node_records
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        node_ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        for node_id in node_ids {
+            let node = pager.load_node_payload(&node_id).map_err(pager_error)?.node;
+            if node.status() != RecordStatus::Tombstoned {
+                documents.push(document_from_node(&node).map_err(full_text_error)?);
+            }
+        }
+        let mut relationship_ids = self
+            .state
+            .catalog
+            .latest_relationship_records
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        relationship_ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        for relationship_id in relationship_ids {
+            let relationship = pager
+                .load_relationship_payload(&relationship_id)
+                .map_err(pager_error)?
+                .relationship;
+            if relationship.status() != RecordStatus::Tombstoned {
+                documents.push(document_from_relationship(&relationship).map_err(full_text_error)?);
+            }
+        }
+        Ok(documents)
     }
 
     fn select_indexed_node_ids(
@@ -1804,11 +1932,31 @@ fn graph_error(error: impl std::fmt::Display) -> GraphStorageError {
     }
 }
 
+fn full_text_error(error: opencti_search::FullTextSearchError) -> GraphStorageError {
+    GraphStorageError::OperationFailed {
+        operation: "canonical_full_text_index",
+        message: error.to_string(),
+    }
+}
+
 fn pager_error(error: impl std::fmt::Display) -> GraphStorageError {
     GraphStorageError::OperationFailed {
         operation: "page_canonical_graph_record",
         message: error.to_string(),
     }
+}
+
+#[cfg(unix)]
+fn set_private_file_permissions(path: &Path) -> GraphStorageResult<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        .map_err(|error| io_error("secure_full_text_cursor_key", path, error))
+}
+
+#[cfg(not(unix))]
+fn set_private_file_permissions(_path: &Path) -> GraphStorageResult<()> {
+    Ok(())
 }
 
 fn io_error(operation: &'static str, path: &Path, error: std::io::Error) -> GraphStorageError {

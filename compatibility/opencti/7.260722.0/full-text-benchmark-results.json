@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-07-25T13:44:57Z",
+  "engine": "corrobore-tantivy-0.26.1",
+  "environment": {
+    "architecture": "arm64",
+    "operating_system": "macOS 26.5.2",
+    "build_profile": "release"
+  },
+  "profile": {
+    "id": "small",
+    "objects": 100000,
+    "relationships": 500000,
+    "documents": 600000,
+    "matching_documents": 147,
+    "generator": "opencti-search small_profile_benchmark",
+    "workload": "phrase-full-text",
+    "warmup_iterations": 20,
+    "measurement_iterations": 60,
+    "concurrency": 1
+  },
+  "ingestion": {
+    "elapsed_seconds": 3.83332875,
+    "throughput_docs_per_second": 156521.926
+  },
+  "metrics": {
+    "latency_p50_ms": 1.587,
+    "latency_p95_ms": 1.729,
+    "latency_p99_ms": 1.844,
+    "throughput_ops_per_second": 625.021,
+    "resident_memory_bytes": 1813954560,
+    "maximum_resident_set_bytes": 2019147776,
+    "writer_memory_bytes": 50000000,
+    "disk_bytes": 21154143,
+    "max_candidates": 100000
+  },
+  "parity_gate": {
+    "reference_engine": "opensearch-3.7.0",
+    "reference_full_text_p95_ms": 5.134,
+    "maximum_regression_percent": 20,
+    "maximum_p95_ms": 6.1608,
+    "passed": true
+  },
+  "reproduction": {
+    "command": "cargo run --release -p opencti-search --example small_profile_benchmark --locked",
+    "temporary_index_cleanup": "automatic"
+  }
+}

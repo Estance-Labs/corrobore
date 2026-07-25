@@ -64,6 +64,8 @@ The bundle under `compatibility/opencti/7.260722.0/` contains:
 | `decisions.json` | Accepted Phase 0 architecture decisions |
 | `benchmark-profiles.json` | Dataset, hardware, warmup and measurement protocol |
 | `benchmark-results.json` | Elasticsearch/OpenSearch small and medium reference measurements |
+| `full-text-relevance.json` | Annotated synthetic queries and the MRR@10 acceptance threshold |
+| `full-text-benchmark-results.json` | Corrobore/Tantivy small-profile latency, memory and disk measurements |
 
 Test and fixture directories are excluded from callsite discovery. The scanner
 includes:
