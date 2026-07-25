@@ -71,6 +71,45 @@ services:
     command: ["cargo", "run", "-p", "corrobore-ingest", "--release"]
     restart: unless-stopped
 
+  # Optional isolated OpenCTI file extraction worker.
+  # Enable with: docker compose --profile file-search up --build --wait
+  corrobore-file-worker:
+    image: corrobore-http-server:latest
+    depends_on:
+      corrobore-http-server:
+        condition: service_healthy
+    profiles: ["file-search"]
+    entrypoint: ["/usr/local/bin/corrobore-file-worker"]
+    environment:
+      CORROBORE_FILE_METADATA_DIR: /graph-data/file-content/metadata
+      CORROBORE_FILE_BLOB_ROOT: /opencti-files
+      CORROBORE_FILE_MAX_ATTEMPTS: ${CORROBORE_FILE_MAX_ATTEMPTS:-3}
+      CORROBORE_FILE_LEASE_MS: ${CORROBORE_FILE_LEASE_MS:-60000}
+      CORROBORE_FILE_MAX_RUNTIME_MS: ${CORROBORE_FILE_MAX_RUNTIME_MS:-30000}
+      CORROBORE_FILE_POLL_INTERVAL_MS: ${CORROBORE_FILE_POLL_INTERVAL_MS:-1000}
+      CORROBORE_FILE_MAX_INPUT_BYTES: ${CORROBORE_FILE_MAX_INPUT_BYTES:-52428800}
+      CORROBORE_FILE_MAX_EXTRACTED_BYTES: ${CORROBORE_FILE_MAX_EXTRACTED_BYTES:-10485760}
+      CORROBORE_FILE_MAX_PAGES: ${CORROBORE_FILE_MAX_PAGES:-1000}
+      CORROBORE_FILE_MAX_SHEETS: ${CORROBORE_FILE_MAX_SHEETS:-100}
+      CORROBORE_FILE_MAX_ROWS_PER_SHEET: ${CORROBORE_FILE_MAX_ROWS_PER_SHEET:-100000}
+      CORROBORE_FILE_MAX_CELLS: ${CORROBORE_FILE_MAX_CELLS:-1000000}
+      CORROBORE_FILE_MAX_CHUNKS: ${CORROBORE_FILE_MAX_CHUNKS:-10000}
+      CORROBORE_FILE_MAX_CHUNK_CHARS: ${CORROBORE_FILE_MAX_CHUNK_CHARS:-4096}
+    volumes:
+      - corrobore-graph-data:/graph-data
+      - ${CORROBORE_FILE_BLOB_SOURCE:-.corrobore-files}:/opencti-files:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev
+    network_mode: none
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: ${CORROBORE_FILE_MEMORY_LIMIT:-512m}
+    cpus: ${CORROBORE_FILE_CPU_LIMIT:-1.0}
+    restart: unless-stopped
+
 volumes:
   corrobore-data:
   corrobore-graph-data:

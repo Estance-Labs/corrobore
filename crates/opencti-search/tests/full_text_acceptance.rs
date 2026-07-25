@@ -229,6 +229,39 @@ fn structured_filters_are_conjunctive_with_full_text_matching() {
 }
 
 #[test]
+fn repeated_filter_values_and_kinds_are_disjunctive_within_each_dimension() {
+    let index = ready_index("structured-filter-any-of");
+    let page = index
+        .search(
+            &FullTextQuery {
+                kinds: vec!["report".to_owned(), "indicator".to_owned()],
+                filters: vec![
+                    FullTextFieldFilter {
+                        field: "pattern".to_owned(),
+                        value: "domain-name value malware.example.org".to_owned(),
+                    },
+                    FullTextFieldFilter {
+                        field: "pattern".to_owned(),
+                        value: "ipv4-addr value 192.0.2.12".to_owned(),
+                    },
+                ],
+                ..query("documentation", FullTextMatchMode::Term)
+            },
+            &system_access("policy--v1"),
+        )
+        .unwrap();
+
+    assert_eq!(page.total, 2);
+    assert_eq!(
+        page.hits
+            .iter()
+            .map(|hit| hit.id.as_str())
+            .collect::<Vec<_>>(),
+        ["indicator--domain", "indicator--ipv4"]
+    );
+}
+
+#[test]
 fn access_filtering_applies_to_hits_counts_and_ranking_before_payload_reads() {
     let index = ready_index("authorization");
     let page = index

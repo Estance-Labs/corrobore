@@ -31,8 +31,11 @@
 //! client dependency) to keep the dependency/audit surface minimal. Each metric
 //! carries the mandatory `# HELP` / `# TYPE` header lines and a single sample.
 
+use std::{path::Path, time::SystemTime};
+
 use axum::{extract::State, http::header, response::IntoResponse};
 use corrobore_engine::{CoreReadQueryClass, SHADOW_LATENCY_BUCKETS_MS};
+use opencti_file_search::{FileJobMetrics, FileJobStore};
 
 use crate::app::AppState;
 use crate::durability::collect_durability_snapshot;
@@ -235,6 +238,39 @@ pub async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
         checkpoint = sync.last_acknowledged_sequence,
         shadow_reads = u8::from(sync.shadow_reads_enabled),
     ));
+    let file_metrics = file_job_metrics(&state);
+    body.push_str(&format!(
+        concat!(
+            "# HELP corrobore_opencti_file_queue_depth File extraction jobs pending execution.\n",
+            "# TYPE corrobore_opencti_file_queue_depth gauge\n",
+            "corrobore_opencti_file_queue_depth {queue_depth}\n",
+            "# HELP corrobore_opencti_file_failures_total Safe file extraction failures.\n",
+            "# TYPE corrobore_opencti_file_failures_total counter\n",
+            "corrobore_opencti_file_failures_total {failures}\n",
+            "# HELP corrobore_opencti_file_retries_total File extraction retries scheduled.\n",
+            "# TYPE corrobore_opencti_file_retries_total counter\n",
+            "corrobore_opencti_file_retries_total {retries}\n",
+            "# HELP corrobore_opencti_file_quarantines_total File extraction jobs quarantined.\n",
+            "# TYPE corrobore_opencti_file_quarantines_total counter\n",
+            "corrobore_opencti_file_quarantines_total {quarantines}\n",
+            "# HELP corrobore_opencti_file_extracted_bytes_total Searchable file bytes extracted.\n",
+            "# TYPE corrobore_opencti_file_extracted_bytes_total counter\n",
+            "corrobore_opencti_file_extracted_bytes_total {extracted_bytes}\n",
+            "# HELP corrobore_opencti_file_processing_latency_ms Latest file extraction latency.\n",
+            "# TYPE corrobore_opencti_file_processing_latency_ms gauge\n",
+            "corrobore_opencti_file_processing_latency_ms {processing_latency_ms}\n",
+            "# HELP corrobore_opencti_file_index_lag_ms Age of the oldest pending file extraction.\n",
+            "# TYPE corrobore_opencti_file_index_lag_ms gauge\n",
+            "corrobore_opencti_file_index_lag_ms {index_lag_ms}\n",
+        ),
+        queue_depth = file_metrics.queue_depth,
+        failures = file_metrics.failures,
+        retries = file_metrics.retries,
+        quarantines = file_metrics.quarantines,
+        extracted_bytes = file_metrics.extracted_bytes,
+        processing_latency_ms = file_metrics.last_processing_latency_ms,
+        index_lag_ms = file_metrics.index_lag_ms,
+    ));
     let shadow_series = state
         .opencti_shadow
         .lock()
@@ -321,6 +357,24 @@ corrobore_opencti_shadow_security_blocking_total{{query_class=\"{query_class}\",
     }
 
     ([(header::CONTENT_TYPE, PROMETHEUS_CONTENT_TYPE)], body)
+}
+
+fn file_job_metrics(state: &AppState) -> FileJobMetrics {
+    let Some(storage_dir) = state.config.storage_dir.as_deref() else {
+        return FileJobMetrics::default();
+    };
+    let metadata_dir = Path::new(storage_dir).join("file-content").join("metadata");
+    if !metadata_dir.join("file-jobs.json").is_file() {
+        return FileJobMetrics::default();
+    }
+    let now_ms = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+        .unwrap_or(0);
+    FileJobStore::open(metadata_dir, 3, 60_000)
+        .map(|store| store.metrics(now_ms))
+        .unwrap_or_default()
 }
 
 fn prometheus_label(value: &str) -> String {

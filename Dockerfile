@@ -17,12 +17,16 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \
     CORROBORE_BUILD_REVISION="${CORROBORE_BUILD_REVISION}" \
-    cargo build --release --locked -p corrobore-http-server --bin corrobore && \
-    cp target/release/corrobore /build/corrobore-dist
+    cargo build --release --locked \
+      -p corrobore-http-server --bin corrobore \
+      -p opencti-file-search --bin corrobore-file-worker && \
+    cp target/release/corrobore /build/corrobore-dist && \
+    cp target/release/corrobore-file-worker /build/corrobore-file-worker-dist
 
 # Prepare a writable runtime data directory owned by the distroless nonroot
 # user (uid 65532); distroless has no shell to `mkdir` at runtime.
-RUN mkdir -p /data /etc/corrobore && chown -R 65532:65532 /data /etc/corrobore
+RUN mkdir -p /data /graph-data /etc/corrobore && \
+    chown -R 65532:65532 /data /graph-data /etc/corrobore
 
 # ---- Runtime stage ---------------------------------------------------------
 # distroless/cc provides glibc + libgcc for the dynamically linked binary.
@@ -40,12 +44,14 @@ LABEL org.opencontainers.image.title="corrobore" \
 WORKDIR /app
 
 COPY --from=builder /build/corrobore-dist /usr/local/bin/corrobore
+COPY --from=builder /build/corrobore-file-worker-dist /usr/local/bin/corrobore-file-worker
 COPY --from=builder --chown=65532:65532 /data /data
+COPY --from=builder --chown=65532:65532 /graph-data /graph-data
 COPY --chown=65532:65532 packaging/corrobore.production.toml /etc/corrobore/corrobore.toml
 
 USER 65532:65532
 EXPOSE 8080
-VOLUME ["/data"]
+VOLUME ["/data", "/graph-data"]
 STOPSIGNAL SIGTERM
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=5 \

@@ -25,6 +25,7 @@ pub use opencti_access::{
     AccessContext, AccessDecision, AccessDecisionReason, AccessMetadata, AccessPolicyError,
     OpenCtiAccessPolicy,
 };
+pub use opencti_file_search::{FileContentError, FileContentQuery};
 pub use opencti_search::{
     FullTextFieldFilter, FullTextMatchMode, FullTextQuery, FullTextRecordClass, FullTextSearchHit,
     FullTextSearchPage,
@@ -1580,6 +1581,13 @@ impl KnowledgeDataEngine for CorroboreKnowledgeDataProvider<'_> {
             .map_or(projection_stats.authorization_denials, |page| {
                 page.authorization_denials
             });
+        let mut response_full_text_page = prepared_full_text_page;
+        if let Some(page) = &mut response_full_text_page {
+            // Candidate denials remain available to bounded audit telemetry but
+            // are not part of the user-visible response, where they would leak
+            // the existence or count of inaccessible records.
+            page.authorization_denials = 0;
+        }
         let result = match operation {
             KnowledgeDataOperation::Initialize(request) => self.initialize(request),
             KnowledgeDataOperation::Health(request) => self.health(request),
@@ -1589,7 +1597,7 @@ impl KnowledgeDataEngine for CorroboreKnowledgeDataProvider<'_> {
             KnowledgeDataOperation::List(request) => self.list(request, &access_policy),
             KnowledgeDataOperation::Paginate(request) => self.paginate(request, &access_policy),
             KnowledgeDataOperation::Search(request) => {
-                self.search(request, &context.access, prepared_full_text_page)
+                self.search(request, &context.access, response_full_text_page)
             }
             KnowledgeDataOperation::Count(request) => self.count(request, &access_policy),
             KnowledgeDataOperation::Aggregate(request) => self.aggregate(request, &access_policy),
@@ -1666,7 +1674,11 @@ fn validate_operation_before_projection(
             Ok(())
         }
         KnowledgeDataOperation::Search(request) => {
-            full_text_query_from_search_request(request).map(|_| ())
+            if file_content_query_from_search_request(request)?.is_some() {
+                Ok(())
+            } else {
+                full_text_query_from_search_request(request).map(|_| ())
+            }
         }
         KnowledgeDataOperation::Aggregate(request) => validate_aggregation_plan(&request.plan),
         KnowledgeDataOperation::Neighbors(request) => {
@@ -1708,6 +1720,8 @@ fn core_read_query_class(operation: &KnowledgeDataOperation) -> Option<CoreReadQ
 #[serde(deny_unknown_fields)]
 struct FullTextExpression {
     text: String,
+    #[serde(default)]
+    content: bool,
     mode: Option<String>,
     fuzziness: Option<u8>,
     #[serde(default)]
@@ -1720,7 +1734,55 @@ struct FullTextExpression {
     types: Vec<String>,
     #[serde(default)]
     filters: Vec<FullTextFieldFilter>,
+    #[serde(default)]
+    mime_types: Vec<String>,
+    #[serde(default)]
+    owner_ids: Vec<String>,
+    #[serde(default)]
+    source_object_ids: Vec<String>,
     cursor: Option<String>,
+}
+
+/// Normalize issue #48 file-content search from the generic search envelope.
+///
+/// `Ok(None)` means the request belongs to the canonical graph full-text
+/// index. A `content: true` request is kept backend-neutral and carries only
+/// the file filters catalogued for the pinned OpenCTI release.
+pub fn file_content_query_from_search_request(
+    request: &SearchRequest,
+) -> Result<Option<FileContentQuery>, KnowledgeDataError> {
+    if request.limit == 0 || request.limit > 1_000 {
+        return Err(KnowledgeDataError::new(
+            KnowledgeDataErrorCode::InvalidRequest,
+            "file-content limit must be between 1 and 1000",
+            false,
+        ));
+    }
+    let expression = parse_full_text_expression(request)?;
+    if !expression.content {
+        return Ok(None);
+    }
+    if !expression.fields.is_empty()
+        || !expression.kinds.is_empty()
+        || !expression.types.is_empty()
+        || !expression.filters.is_empty()
+    {
+        return Err(KnowledgeDataError::new(
+            KnowledgeDataErrorCode::InvalidRequest,
+            "file-content search accepts mime_types, owner_ids and source_object_ids filters",
+            false,
+        ));
+    }
+    let mode = full_text_match_mode(&expression)?;
+    Ok(Some(FileContentQuery {
+        text: expression.text,
+        mode,
+        mime_types: expression.mime_types,
+        owner_ids: expression.owner_ids,
+        source_object_ids: expression.source_object_ids,
+        limit: request.limit,
+        cursor: expression.cursor,
+    }))
 }
 
 /// Normalize the issue #46 full-text subset from the generic search envelope.
@@ -1737,23 +1799,59 @@ pub fn full_text_query_from_search_request(
             false,
         ));
     }
-    let mut expression = if let Some(text) = request.expression.as_str() {
-        FullTextExpression {
+    let mut expression = parse_full_text_expression(request)?;
+    if expression.content {
+        return Err(KnowledgeDataError::new(
+            KnowledgeDataErrorCode::InvalidRequest,
+            "file-content search must be routed to its dedicated index",
+            false,
+        ));
+    }
+    if !expression.mime_types.is_empty()
+        || !expression.owner_ids.is_empty()
+        || !expression.source_object_ids.is_empty()
+    {
+        return Err(KnowledgeDataError::new(
+            KnowledgeDataErrorCode::InvalidRequest,
+            "file filters require content: true",
+            false,
+        ));
+    }
+    let mode = full_text_match_mode(&expression)?;
+    expression.kinds.extend(expression.types);
+    Ok(FullTextQuery {
+        text: expression.text,
+        mode,
+        fields: expression.fields,
+        kinds: expression.kinds,
+        filters: expression.filters,
+        limit: request.limit,
+        cursor: expression.cursor,
+    })
+}
+
+fn parse_full_text_expression(
+    request: &SearchRequest,
+) -> Result<FullTextExpression, KnowledgeDataError> {
+    if let Some(text) = request.expression.as_str() {
+        Ok(FullTextExpression {
             text: text.to_owned(),
             ..FullTextExpression::default()
-        }
+        })
     } else {
-        serde_json::from_value::<FullTextExpression>(request.expression.clone()).map_err(
-            |error| {
-                KnowledgeDataError::new(
-                    KnowledgeDataErrorCode::InvalidRequest,
-                    format!("invalid full-text expression: {error}"),
-                    false,
-                )
-            },
-        )?
-    };
-    expression.kinds.extend(expression.types);
+        serde_json::from_value::<FullTextExpression>(request.expression.clone()).map_err(|error| {
+            KnowledgeDataError::new(
+                KnowledgeDataErrorCode::InvalidRequest,
+                format!("invalid full-text expression: {error}"),
+                false,
+            )
+        })
+    }
+}
+
+fn full_text_match_mode(
+    expression: &FullTextExpression,
+) -> Result<FullTextMatchMode, KnowledgeDataError> {
     let mode = match expression.mode.as_deref() {
         None if expression.fuzziness.is_some() => FullTextMatchMode::Fuzzy {
             distance: expression.fuzziness.unwrap_or(1),
@@ -1775,15 +1873,7 @@ pub fn full_text_query_from_search_request(
             ));
         }
     };
-    Ok(FullTextQuery {
-        text: expression.text,
-        mode,
-        fields: expression.fields,
-        kinds: expression.kinds,
-        filters: expression.filters,
-        limit: request.limit,
-        cursor: expression.cursor,
-    })
+    Ok(mode)
 }
 
 fn map_full_text_error(error: FullTextSearchError) -> KnowledgeDataError {
@@ -2175,6 +2265,15 @@ impl CorroboreKnowledgeDataProvider<'_> {
         access: &AccessContext,
         prepared: Option<FullTextSearchPage>,
     ) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
+        if file_content_query_from_search_request(&request)?.is_some() {
+            return prepared.map(KnowledgeDataResponse::Search).ok_or_else(|| {
+                KnowledgeDataError::new(
+                    KnowledgeDataErrorCode::BackendUnavailable,
+                    "file-content search requires the dedicated durable worker index",
+                    true,
+                )
+            });
+        }
         let query = full_text_query_from_search_request(&request)?;
         if let Some(page) = prepared {
             return Ok(KnowledgeDataResponse::Search(page));
