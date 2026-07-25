@@ -164,14 +164,36 @@ pub fn append_encoded_node_record_envelope(
     envelope: &PersistedRecordEnvelope,
     encoded_record: &EncodedRecord,
 ) -> GraphStorageResult<StorageRef> {
-    append_encoded_record_envelope(
+    append_encoded_record_envelopes(
         log,
-        envelope,
-        encoded_record,
+        std::iter::once((envelope, encoded_record)),
         AppendOnlyRecordLogSegment::NodeRecords,
         PersistedRecordKind::Node,
         StorageSegment::NodeRecords,
         "append_encoded_node_record_envelope",
+    )
+    .and_then(|mut references| {
+        references
+            .pop()
+            .ok_or_else(|| GraphStorageError::OperationFailed {
+                operation: "append_encoded_node_record_envelope",
+                message: "single-record append returned no storage reference".to_owned(),
+            })
+    })
+}
+
+/// Append a node-record bulk and fsync it once as one durable payload boundary.
+pub fn append_encoded_node_record_envelopes<'a>(
+    log: &mut AppendOnlyRecordLog,
+    records: impl IntoIterator<Item = (&'a PersistedRecordEnvelope, &'a EncodedRecord)>,
+) -> GraphStorageResult<Vec<StorageRef>> {
+    append_encoded_record_envelopes(
+        log,
+        records,
+        AppendOnlyRecordLogSegment::NodeRecords,
+        PersistedRecordKind::Node,
+        StorageSegment::NodeRecords,
+        "append_encoded_node_record_envelopes",
     )
 }
 
@@ -201,14 +223,36 @@ pub fn append_encoded_relationship_record_envelope(
     envelope: &PersistedRecordEnvelope,
     encoded_record: &EncodedRecord,
 ) -> GraphStorageResult<StorageRef> {
-    append_encoded_record_envelope(
+    append_encoded_record_envelopes(
         log,
-        envelope,
-        encoded_record,
+        std::iter::once((envelope, encoded_record)),
         AppendOnlyRecordLogSegment::RelationshipRecords,
         PersistedRecordKind::Relationship,
         StorageSegment::RelationshipRecords,
         "append_encoded_relationship_record_envelope",
+    )
+    .and_then(|mut references| {
+        references
+            .pop()
+            .ok_or_else(|| GraphStorageError::OperationFailed {
+                operation: "append_encoded_relationship_record_envelope",
+                message: "single-record append returned no storage reference".to_owned(),
+            })
+    })
+}
+
+/// Append a relationship-record bulk and fsync it once as one durable payload boundary.
+pub fn append_encoded_relationship_record_envelopes<'a>(
+    log: &mut AppendOnlyRecordLog,
+    records: impl IntoIterator<Item = (&'a PersistedRecordEnvelope, &'a EncodedRecord)>,
+) -> GraphStorageResult<Vec<StorageRef>> {
+    append_encoded_record_envelopes(
+        log,
+        records,
+        AppendOnlyRecordLogSegment::RelationshipRecords,
+        PersistedRecordKind::Relationship,
+        StorageSegment::RelationshipRecords,
+        "append_encoded_relationship_record_envelopes",
     )
 }
 
@@ -303,70 +347,69 @@ fn open_append_only_record_log(
 /// Segment mismatches, unexpected record kinds, envelope/encoded metadata
 /// mismatches, empty encoded bytes, offset overflow, write failures, and flush
 /// failures are explicit storage errors.
-fn append_encoded_record_envelope(
+fn append_encoded_record_envelopes<'a>(
     log: &mut AppendOnlyRecordLog,
-    envelope: &PersistedRecordEnvelope,
-    encoded_record: &EncodedRecord,
+    records: impl IntoIterator<Item = (&'a PersistedRecordEnvelope, &'a EncodedRecord)>,
     expected_log_segment: AppendOnlyRecordLogSegment,
     expected_record_kind: PersistedRecordKind,
     storage_segment: StorageSegment,
     operation: &'static str,
-) -> GraphStorageResult<StorageRef> {
-    debug!(
-        operation,
-        expected_log_segment = ?expected_log_segment,
-        expected_record_kind = ?expected_record_kind,
-        encoded_length = encoded_record.bytes.len(),
-        "appending encoded record envelope"
-    );
+) -> GraphStorageResult<Vec<StorageRef>> {
     validate_log_segment(log, expected_log_segment, operation)?;
-    validate_record_kind(envelope.kind, expected_record_kind)?;
-    validate_record_kind(encoded_record.kind, expected_record_kind)?;
-    validate_persisted_record_envelope(envelope)?;
-    validate_encoded_record_matches_envelope(envelope, encoded_record)?;
-
-    let length = encoded_record.bytes.len() as u64;
-    if length == 0 {
-        return Err(GraphStorageError::InvalidEnvelope {
-            reason: "encoded record bytes must not be empty".to_owned(),
-        });
-    }
-
     ensure_parent_dir(&log.path, operation)?;
-    let offset = current_file_len(&log.path, operation)?;
-    validate_append_offset_range(
-        offset,
-        length,
-        storage_segment.clone(),
-        Some(encoded_record.checksum.clone()),
-    )?;
-
+    let mut offset = current_file_len(&log.path, operation)?;
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
         .open(&log.path)
         .map_err(|error| io_error(operation, Some(&log.path), error))?;
-
-    file.write_all(&encoded_record.bytes)
-        .map_err(|error| io_error(operation, Some(&log.path), error))?;
+    let mut references = Vec::new();
+    for (envelope, encoded_record) in records {
+        debug!(
+            operation,
+            expected_log_segment = ?expected_log_segment,
+            expected_record_kind = ?expected_record_kind,
+            encoded_length = encoded_record.bytes.len(),
+            "appending encoded record envelope"
+        );
+        validate_record_kind(envelope.kind, expected_record_kind)?;
+        validate_record_kind(encoded_record.kind, expected_record_kind)?;
+        validate_persisted_record_envelope(envelope)?;
+        validate_encoded_record_matches_envelope(envelope, encoded_record)?;
+        let length = encoded_record.bytes.len() as u64;
+        if length == 0 {
+            return Err(GraphStorageError::InvalidEnvelope {
+                reason: "encoded record bytes must not be empty".to_owned(),
+            });
+        }
+        validate_append_offset_range(
+            offset,
+            length,
+            storage_segment.clone(),
+            Some(encoded_record.checksum.clone()),
+        )?;
+        file.write_all(&encoded_record.bytes)
+            .map_err(|error| io_error(operation, Some(&log.path), error))?;
+        let storage_ref = StorageRef {
+            segment: storage_segment.clone(),
+            offset,
+            length,
+            checksum: Some(encoded_record.checksum.clone()),
+        };
+        validate_storage_ref(&storage_ref)?;
+        offset = offset
+            .checked_add(length)
+            .ok_or_else(|| GraphStorageError::OperationFailed {
+                operation,
+                message: "append-only record offset overflow".to_owned(),
+            })?;
+        references.push(storage_ref);
+    }
     file.flush()
         .map_err(|error| io_error(operation, Some(&log.path), error))?;
-
-    let storage_ref = StorageRef {
-        segment: storage_segment,
-        offset,
-        length,
-        checksum: Some(encoded_record.checksum.clone()),
-    };
-    validate_storage_ref(&storage_ref)?;
-    debug!(
-        operation,
-        segment = ?storage_ref.segment,
-        offset = storage_ref.offset,
-        length = storage_ref.length,
-        "encoded record envelope appended"
-    );
-    Ok(storage_ref)
+    file.sync_data()
+        .map_err(|error| io_error(operation, Some(&log.path), error))?;
+    Ok(references)
 }
 
 /// Resolve the concrete file path for one append-only record log segment.

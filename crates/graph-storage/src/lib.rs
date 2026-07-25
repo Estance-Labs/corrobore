@@ -88,8 +88,8 @@ pub use atomic_mutation::{
     AtomicPersistentMutationOutcome, AtomicPersistentMutationRelationshipRecord,
     AtomicPersistentRecoveryOutcome, AtomicPersistentRecoveryPath, AtomicPersistentRecoveryReport,
     AtomicPersistentRuntimeState, MutationCrashStage, apply_atomic_persistent_mutation_batch,
-    compact_atomic_persistent_segments, recover_atomic_persistent_runtime_state,
-    recover_atomic_persistent_runtime_state_with_report,
+    compact_atomic_persistent_segments, read_atomic_persistent_audit_events,
+    recover_atomic_persistent_runtime_state, recover_atomic_persistent_runtime_state_with_report,
 };
 pub use backup_restore::{
     AtomicPersistentBackupOutcome, AtomicPersistentBackupValidationReport,
@@ -111,10 +111,10 @@ pub use catalog_indexes::{
     CatalogIndexLookupMode, GraphCatalogIndexes, LabelIndexCatalogEntry, LabelIndexNodeMetadata,
     NodeLabel, NodeReadIndexDocument, NodeReadIndexValue, RelationshipTypeIndexCatalogEntry,
     RelationshipTypeIndexRelationshipMetadata, index_node_labels, index_relationship_type,
-    replace_node_read_indexes, replace_relationship_access_index, resolve_identifier_index_entries,
-    resolve_label_index_entries, resolve_node_ids_by_label, resolve_property_index_entries,
-    resolve_property_presence_entries, resolve_relationship_ids_by_type,
-    resolve_relationship_type_index_entries,
+    index_relationship_types_bulk, replace_node_read_indexes, replace_relationship_access_index,
+    resolve_identifier_index_entries, resolve_label_index_entries, resolve_node_ids_by_label,
+    resolve_property_index_entries, resolve_property_presence_entries,
+    resolve_relationship_ids_by_type, resolve_relationship_type_index_entries,
 };
 pub use catalog_metadata::{persist_graph_catalog_metadata, read_persisted_graph_catalog_metadata};
 pub use catalog_rebuild::{
@@ -144,7 +144,8 @@ pub use graph_pager::{
 };
 pub use log::{
     AppendOnlyRecordLog, AppendOnlyRecordLogSegment, append_encoded_node_record_envelope,
-    append_encoded_relationship_record_envelope, flush_append_only_record_log,
+    append_encoded_node_record_envelopes, append_encoded_relationship_record_envelope,
+    append_encoded_relationship_record_envelopes, flush_append_only_record_log,
     open_append_only_node_record_log, open_append_only_relationship_record_log,
 };
 pub use manifest::{GraphId, RecordFormat, StorageManifest, StorageTimestamp, StorageVersion};

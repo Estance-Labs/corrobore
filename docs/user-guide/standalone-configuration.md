@@ -106,17 +106,17 @@ rejected.
 | `logging.format` | `CORROBORE_LOG_FORMAT` | `--log-format` | `json` |
 | `limits.request_timeout_ms` | `CORROBORE_HTTP_REQUEST_TIMEOUT_MS` | `--query-timeout-ms` | `30000` |
 | `limits.max_body_bytes` | `CORROBORE_HTTP_MAX_BODY_BYTES` | `--max-body-bytes` | `2097152` |
-| `limits.import_max_body_bytes` | `CORROBORE_HTTP_IMPORT_MAX_BODY_BYTES` | `--import-max-body-bytes` | `33554432` |
-| `limits.opencti_sync_max_operations` | `CORROBORE_OPENCTI_SYNC_MAX_OPERATIONS` | `--opencti-sync-max-operations` | `512` |
-| `limits.opencti_sync_max_replay_identities` | `CORROBORE_OPENCTI_SYNC_MAX_REPLAY_IDENTITIES` | `--opencti-sync-max-replay-identities` | `4096` |
+| `limits.import_max_body_bytes` | `CORROBORE_HTTP_IMPORT_MAX_BODY_BYTES` | `--import-max-body-bytes` | `33554432`; also bounds transactional writes |
+| `limits.opencti_sync_max_operations` | `CORROBORE_OPENCTI_SYNC_MAX_OPERATIONS` | `--opencti-sync-max-operations` | `512`; also bounds transactional bulk writes |
+| `limits.opencti_sync_max_replay_identities` | `CORROBORE_OPENCTI_SYNC_MAX_REPLAY_IDENTITIES` | `--opencti-sync-max-replay-identities` | `4096`; also bounds reconciliation state |
 | — | `CORROBORE_OPENCTI_SHADOW_REFERENCE_ENDPOINT` | — | unset |
 | — | `CORROBORE_OPENCTI_SHADOW_REFERENCE_VERSION` | — | `unconfigured` |
 | — | `CORROBORE_OPENCTI_SHADOW_REFERENCE_AUTH_TOKEN` | — | unset; prefer file source |
 | — | `CORROBORE_OPENCTI_SHADOW_REFERENCE_AUTH_TOKEN_FILE` | — | unset |
 | — | `CORROBORE_OPENCTI_SHADOW_RELEASE` | — | package version |
 | — | `CORROBORE_OPENCTI_SHADOW_SAMPLE_BASIS_POINTS` | — | `0` |
-| — | `CORROBORE_OPENCTI_SHADOW_MAX_CONCURRENCY` | — | `4` |
-| — | `CORROBORE_OPENCTI_SHADOW_TIMEOUT_MS` | — | `2000` |
+| — | `CORROBORE_OPENCTI_SHADOW_MAX_CONCURRENCY` | — | `4`; also bounds reference-authoritative dual writes |
+| — | `CORROBORE_OPENCTI_SHADOW_TIMEOUT_MS` | — | `2000`; also applies per dual-write provider |
 | — | `CORROBORE_OPENCTI_SHADOW_MAX_REPORTS` | — | `10000` |
 | — | `CORROBORE_OPENCTI_SHADOW_SAMPLING_POLICY_FILE` | — | unset |
 | — | `CORROBORE_OPENCTI_SHADOW_BASELINE_FILE` | — | unset |

@@ -251,6 +251,106 @@ components:
           type: array
           items: {type: string}
         shadow_reads_enabled: {type: boolean}
+    OpenCtiWriteContext:
+      type: object
+      required: [request_id, correlation_id, idempotency_key, access, consistency]
+      properties:
+        request_id: {type: string, minLength: 1}
+        correlation_id: {type: string, minLength: 1}
+        idempotency_key:
+          type: string
+          minLength: 1
+          description: Replay-safe caller key; only its SHA-256 digest is retained in audit state.
+        deadline_unix_ms: {type: [integer, 'null'], minimum: 0}
+        cancellation_id: {type: [string, 'null']}
+        access:
+          type: object
+          required: [subject_id]
+          properties:
+            subject_id: {type: string, minLength: 1}
+            organization_ids: {type: array, items: {type: string}}
+            marking_ids: {type: array, items: {type: string}}
+            tenant_id: {type: [string, 'null']}
+            roles: {type: array, items: {type: string}}
+            attributes:
+              type: object
+              additionalProperties: {type: string}
+        consistency: {type: string, enum: [eventual, read_your_writes, snapshot]}
+    OpenCtiWriteOperation:
+      oneOf:
+        - type: object
+          required: [operation, request]
+          properties:
+            operation: {type: string, const: create}
+            request:
+              type: object
+              required: [record]
+              properties:
+                record: {type: object, additionalProperties: true}
+        - type: object
+          required: [operation, request]
+          properties:
+            operation: {type: string, const: update}
+            request:
+              type: object
+              required: [id, patch]
+              properties:
+                id: {type: string, minLength: 1}
+                expected_revision: {type: [integer, 'null'], minimum: 1}
+                patch: {type: object, additionalProperties: true}
+        - type: object
+          required: [operation, request]
+          properties:
+            operation: {type: string, const: delete}
+            request:
+              type: object
+              required: [id]
+              properties:
+                id: {type: string, minLength: 1}
+                expected_revision: {type: [integer, 'null'], minimum: 1}
+        - type: object
+          required: [operation, request]
+          properties:
+            operation: {type: string, const: bulk}
+            request:
+              type: object
+              required: [operations, atomic]
+              properties:
+                operations:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    description: Ordered create, update, access_policy_update, or delete item.
+                atomic: {type: boolean}
+    OpenCtiWriteRequest:
+      type: object
+      required: [contract_version, context, operation]
+      properties:
+        contract_version:
+          type: object
+          required: [major, minor]
+          properties:
+            major: {type: integer, const: 1}
+            minor: {type: integer, minimum: 0}
+        context: {$ref: '#/components/schemas/OpenCtiWriteContext'}
+        operation: {$ref: '#/components/schemas/OpenCtiWriteOperation'}
+    OpenCtiWriteStatus:
+      type: object
+      required:
+        - pending_reconciliation
+        - fully_reconciled
+        - applied_operations
+        - failed_operations
+        - idempotent_replays
+        - quarantined_reconciliation
+      properties:
+        pending_reconciliation: {type: integer, minimum: 0}
+        fully_reconciled: {type: boolean}
+        applied_operations: {type: integer, minimum: 0}
+        failed_operations: {type: integer, minimum: 0}
+        idempotent_replays: {type: integer, minimum: 0}
+        quarantined_reconciliation: {type: integer, minimum: 0}
 
 paths:
   /health:
@@ -827,6 +927,52 @@ paths:
                 properties:
                   ok: {type: boolean, const: true}
                   result: {$ref: '#/components/schemas/OpenCtiSyncStatus'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/opencti/writes:
+    post:
+      operationId: executeOpenCtiTransactionalWrite
+      summary: Apply a reference-authoritative transactional OpenCTI write and durable mirror
+      tags: [Import]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OpenCtiWriteRequest'}
+      responses:
+        '200':
+          description: Unmodified reference Knowledge Data Engine response envelope
+          content:
+            application/json:
+              schema: {type: object}
+        '400':
+          description: Invalid operation, optimistic conflict, or missing idempotency key
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '413':
+          description: Configured payload-byte limit exceeded
+        '503':
+          description: Reference unavailable, write backpressure, or durable state failure
+        '504':
+          description: Configured write deadline exceeded
+
+  /v1/opencti/writes/status:
+    get:
+      operationId: getOpenCtiTransactionalWriteStatus
+      summary: Inspect payload-free write, audit, and reconciliation state
+      tags: [Import]
+      responses:
+        '200':
+          description: Bounded counters, reconciliations, and committed WAL audit receipts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, result, reconciliations, audits]
+                properties:
+                  ok: {type: boolean, const: true}
+                  result: {$ref: '#/components/schemas/OpenCtiWriteStatus'}
+                  reconciliations: {type: array, items: {type: object}}
+                  audits: {type: array, items: {type: object}}
         '401': {$ref: '#/components/responses/Unauthorized'}
 
   /v1/opencti/shadow/reads:

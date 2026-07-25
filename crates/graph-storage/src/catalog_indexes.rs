@@ -131,14 +131,16 @@ pub fn replace_node_read_indexes(
 ) -> GraphStorageResult<()> {
     validate_label_index_metadata(&metadata)?;
     let node_id = &metadata.node_id;
-    catalog.metadata_indexes.labels.retain(|_, entry| {
-        entry.nodes.retain(|entry| &entry.node_id != node_id);
-        !entry.nodes.is_empty()
-    });
-    remove_node_from_read_map(&mut catalog.metadata_indexes.identifiers, node_id);
-    remove_node_from_nested_read_map(&mut catalog.metadata_indexes.properties, node_id);
-    remove_node_from_nested_read_map(&mut catalog.metadata_indexes.temporal, node_id);
-    catalog.metadata_indexes.node_access.remove(node_id);
+    if catalog.metadata_indexes.node_access.contains_key(node_id) {
+        catalog.metadata_indexes.labels.retain(|_, entry| {
+            entry.nodes.retain(|entry| &entry.node_id != node_id);
+            !entry.nodes.is_empty()
+        });
+        remove_node_from_read_map(&mut catalog.metadata_indexes.identifiers, node_id);
+        remove_node_from_nested_read_map(&mut catalog.metadata_indexes.properties, node_id);
+        remove_node_from_nested_read_map(&mut catalog.metadata_indexes.temporal, node_id);
+        catalog.metadata_indexes.node_access.remove(node_id);
+    }
 
     if !document.active {
         return Ok(());
@@ -436,6 +438,46 @@ pub fn index_relationship_type(
     Ok(())
 }
 
+/// Index a relationship-type bulk without repeated linear duplicate scans.
+pub fn index_relationship_types_bulk(
+    catalog: &mut GraphCatalog,
+    relationships: impl IntoIterator<
+        Item = (RelationshipType, RelationshipTypeIndexRelationshipMetadata),
+    >,
+) -> GraphStorageResult<()> {
+    let mut grouped: HashMap<RelationshipType, Vec<RelationshipTypeIndexRelationshipMetadata>> =
+        HashMap::new();
+    for (relationship_type, metadata) in relationships {
+        validate_relationship_type_index_metadata(&metadata)?;
+        grouped.entry(relationship_type).or_default().push(metadata);
+    }
+    for (relationship_type, additions) in grouped {
+        let entry = catalog
+            .metadata_indexes
+            .relationship_types
+            .entry(relationship_type.clone())
+            .or_insert_with(|| RelationshipTypeIndexCatalogEntry {
+                relationship_type,
+                relationships: Vec::new(),
+            });
+        let mut by_id = entry
+            .relationships
+            .drain(..)
+            .map(|metadata| (metadata.relationship_id.clone(), metadata))
+            .collect::<HashMap<_, _>>();
+        for metadata in additions {
+            by_id.insert(metadata.relationship_id.clone(), metadata);
+        }
+        entry.relationships = by_id.into_values().collect();
+        entry.relationships.sort_by(|left, right| {
+            left.relationship_id
+                .as_str()
+                .cmp(right.relationship_id.as_str())
+        });
+    }
+    Ok(())
+}
+
 /// Resolve stable node IDs by label.
 ///
 ///
@@ -644,13 +686,11 @@ fn upsert_label_node_metadata(
     nodes: &mut Vec<LabelIndexNodeMetadata>,
     metadata: LabelIndexNodeMetadata,
 ) {
-    if let Some(existing) = nodes
-        .iter_mut()
-        .find(|existing| existing.node_id == metadata.node_id)
+    match nodes
+        .binary_search_by(|existing| existing.node_id.as_str().cmp(metadata.node_id.as_str()))
     {
-        *existing = metadata;
-    } else {
-        nodes.push(metadata);
+        Ok(index) => nodes[index] = metadata,
+        Err(index) => nodes.insert(index, metadata),
     }
 }
 
@@ -658,13 +698,14 @@ fn upsert_relationship_type_metadata(
     relationships: &mut Vec<RelationshipTypeIndexRelationshipMetadata>,
     metadata: RelationshipTypeIndexRelationshipMetadata,
 ) {
-    if let Some(existing) = relationships
-        .iter_mut()
-        .find(|existing| existing.relationship_id == metadata.relationship_id)
-    {
-        *existing = metadata;
-    } else {
-        relationships.push(metadata);
+    match relationships.binary_search_by(|existing| {
+        existing
+            .relationship_id
+            .as_str()
+            .cmp(metadata.relationship_id.as_str())
+    }) {
+        Ok(index) => relationships[index] = metadata,
+        Err(index) => relationships.insert(index, metadata),
     }
 }
 

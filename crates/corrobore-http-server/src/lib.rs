@@ -31,6 +31,7 @@ pub mod lifecycle;
 pub mod logging;
 pub mod opencti_shadow;
 pub mod opencti_sync;
+pub mod opencti_write;
 pub mod security;
 pub mod session_runtime;
 mod storage_ownership;

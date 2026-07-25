@@ -1,0 +1,43 @@
+{
+  "contract_version": {"major": 1, "minor": 0},
+  "context": {
+    "request_id": "request--connector-42",
+    "correlation_id": "correlation--connector-42",
+    "idempotency_key": "connector-42:partition-3:offset-991",
+    "deadline_unix_ms": 4102444800000,
+    "cancellation_id": null,
+    "access": {
+      "subject_id": "identity--connector",
+      "organization_ids": [],
+      "marking_ids": [],
+      "tenant_id": null,
+      "roles": ["system"],
+      "attributes": {"source_offset": "partition-3:offset-991"}
+    },
+    "consistency": "read_your_writes"
+  },
+  "operation": {
+    "operation": "bulk",
+    "request": {
+      "atomic": false,
+      "operations": [
+        {
+          "operation": "create",
+          "operation_id": "create-indicator--42",
+          "record": {
+            "id": "indicator--00000000-0000-4000-8000-000000000042",
+            "type": "indicator",
+            "name": "Example indicator"
+          }
+        },
+        {
+          "operation": "update",
+          "operation_id": "update-indicator--7",
+          "id": "indicator--00000000-0000-4000-8000-000000000007",
+          "expected_revision": 3,
+          "patch": {"name": "Updated indicator"}
+        }
+      ]
+    }
+  }
+}

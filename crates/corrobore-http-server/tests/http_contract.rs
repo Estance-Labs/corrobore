@@ -1055,6 +1055,198 @@ async fn opencti_shadow_read_returns_reference_and_persists_correlated_parity_re
 }
 
 #[tokio::test]
+async fn opencti_transactional_writes_are_dual_written_and_partial_failures_are_durable() {
+    async fn reference_provider(
+        Json(request): Json<corrobore_engine::KnowledgeDataRequest>,
+    ) -> Json<corrobore_engine::KnowledgeDataResponseEnvelope> {
+        let result = match request.operation {
+            corrobore_engine::KnowledgeDataOperation::Create(request) => {
+                corrobore_engine::WriteResult {
+                    id: request.record["id"].as_str().unwrap_or_default().to_owned(),
+                    revision: 1,
+                }
+            }
+            corrobore_engine::KnowledgeDataOperation::Update(request) => {
+                corrobore_engine::WriteResult {
+                    id: request.id,
+                    revision: request
+                        .expected_revision
+                        .unwrap_or_default()
+                        .saturating_add(1),
+                }
+            }
+            other => panic!("unexpected reference operation: {other:?}"),
+        };
+        Json(corrobore_engine::KnowledgeDataResponseEnvelope {
+            contract_version: corrobore_engine::ContractVersion::CURRENT,
+            correlation_id: request.context.correlation_id,
+            outcome: corrobore_engine::KnowledgeDataOutcome::Success {
+                response: corrobore_engine::KnowledgeDataResponse::Write(result),
+            },
+        })
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("reference listener should bind");
+    let reference_endpoint = format!(
+        "http://{}/v1/knowledge-data",
+        listener.local_addr().expect("reference address")
+    );
+    let reference_server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().route("/v1/knowledge-data", post(reference_provider)),
+        )
+        .await
+        .expect("reference server should run");
+    });
+
+    let storage_root = unique_store_dir("opencti-write-http-root");
+    let app = test_app_with_store_dir_and_extra_env(
+        unique_store_dir("opencti-write-http-sessions"),
+        HashMap::from([
+            ("CORROBORE_STORAGE_MODE".to_owned(), "persistent".to_owned()),
+            (
+                "CORROBORE_STORAGE_DIR".to_owned(),
+                storage_root.display().to_string(),
+            ),
+            (
+                "CORROBORE_OPENCTI_SHADOW_REFERENCE_ENDPOINT".to_owned(),
+                reference_endpoint,
+            ),
+            (
+                "CORROBORE_OPENCTI_SHADOW_REFERENCE_VERSION".to_owned(),
+                "opensearch-2.19.2".to_owned(),
+            ),
+        ]),
+    );
+
+    let write = |idempotency_key: &str, correlation_id: &str, operation: serde_json::Value| {
+        json!({
+            "contract_version": {"major": 1, "minor": 0},
+            "context": {
+                "request_id": format!("request--{correlation_id}"),
+                "correlation_id": correlation_id,
+                "idempotency_key": idempotency_key,
+                "deadline_unix_ms": 4102444800000_u64,
+                "cancellation_id": null,
+                "access": {
+                    "subject_id": "identity--writer",
+                    "organization_ids": [],
+                    "marking_ids": [],
+                    "tenant_id": null,
+                    "roles": ["system"],
+                    "attributes": {"source_offset": "offset--http"}
+                },
+                "consistency": "read_your_writes"
+            },
+            "operation": operation
+        })
+    };
+    let create = write(
+        "idempotency--http-create",
+        "correlation--http-create",
+        json!({
+            "operation": "create",
+            "request": {
+                "record": {"id": "indicator--http", "type": "indicator", "name": "HTTP"}
+            }
+        }),
+    );
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/opencti/writes")
+                .header(header::AUTHORIZATION, "Bearer token-123")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(create.to_string()))
+                .expect("transactional create request should build"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("transactional create response should be readable");
+    let payload: Value =
+        serde_json::from_slice(&body).expect("transactional create response should be JSON");
+    assert_eq!(payload["outcome"]["status"], "success");
+    assert_eq!(payload["outcome"]["response"]["data"]["revision"], 1);
+
+    let partial = write(
+        "idempotency--http-partial",
+        "correlation--http-partial",
+        json!({
+            "operation": "update",
+            "request": {
+                "id": "indicator--missing",
+                "expected_revision": 1,
+                "patch": {"name": "missing"}
+            }
+        }),
+    );
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/opencti/writes")
+                .header(header::AUTHORIZATION, "Bearer token-123")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(partial.to_string()))
+                .expect("partial transactional write request should build"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let status = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/opencti/writes/status")
+                .header(header::AUTHORIZATION, "Bearer token-123")
+                .body(Body::empty())
+                .expect("transactional write status request should build"),
+        )
+        .await
+        .unwrap();
+    let body = to_bytes(status.into_body(), usize::MAX)
+        .await
+        .expect("transactional write status should be readable");
+    let payload: Value =
+        serde_json::from_slice(&body).expect("transactional write status should be JSON");
+    assert_eq!(payload["result"]["pending_reconciliation"], 1);
+    assert_eq!(payload["result"]["fully_reconciled"], false);
+    assert_eq!(payload["reconciliations"][1]["status"], "pending");
+    assert_eq!(
+        payload["audits"]
+            .as_array()
+            .expect("audit records should be an array")
+            .len(),
+        1
+    );
+    assert_eq!(
+        payload["audits"][0]["correlation_id"],
+        "correlation--http-create"
+    );
+    assert_eq!(payload["audits"][0]["source_offset"], "offset--http");
+    assert_eq!(payload["audits"][0]["after_revision"], 1);
+    assert!(
+        !payload["audits"][0]["idempotency_key_hash"]
+            .as_str()
+            .expect("idempotency hash should be a string")
+            .contains("idempotency--http-create")
+    );
+
+    reference_server.abort();
+    let _ = fs::remove_dir_all(storage_root);
+}
+
+#[tokio::test]
 async fn stix_validate_contract_rejects_missing_auth_header() {
     let app = test_app();
     let request = Request::builder()

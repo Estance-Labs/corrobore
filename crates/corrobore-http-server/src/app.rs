@@ -50,6 +50,7 @@ use graph_storage::{
     create_storage_root, open_storage_root, read_storage_manifest,
 };
 use opencti_adapter::BulkLimits;
+use opencti_adapter::WriteLimits;
 use thiserror::Error;
 use tower_governor::{
     GovernorLayer, governor::GovernorConfigBuilder, key_extractor::GlobalKeyExtractor,
@@ -83,6 +84,7 @@ use crate::{
         },
         opencti_shadow::{execute_opencti_shadow_read, opencti_shadow_reports},
         opencti_sync::{apply_opencti_sync_batch, opencti_sync_status},
+        opencti_write::{execute_opencti_write, opencti_write_status},
         operational::{liveness, readiness, version},
         seed::seed_search,
         session::{session_health, session_logs, start_session, stop_session},
@@ -90,6 +92,7 @@ use crate::{
     },
     opencti_shadow::OpenCtiShadowRuntime,
     opencti_sync::OpenCtiSyncRuntime,
+    opencti_write::OpenCtiWriteRuntime,
     security::OperationalEndpointPolicy,
     session_runtime::SessionRuntime,
     storage_ownership::{DataDirectoryOwnership, DataDirectoryOwnershipError},
@@ -134,6 +137,8 @@ pub enum AppStateInitError {
     OpenCtiShadowStateFailed { reason: String },
     #[error("failed to restore OpenCTI read-routing state: {reason}")]
     OpenCtiRoutingStateFailed { reason: String },
+    #[error("failed to restore OpenCTI transactional-write state: {reason}")]
+    OpenCtiWriteStateFailed { reason: String },
 }
 
 #[derive(Clone)]
@@ -148,6 +153,8 @@ pub struct AppState {
     pub opencti_sync: Arc<Mutex<OpenCtiSyncRuntime>>,
     pub opencti_shadow: Arc<Mutex<OpenCtiShadowRuntime>>,
     pub opencti_routing: Arc<Mutex<OpenCtiReadRoutingRuntime>>,
+    pub opencti_write: Arc<Mutex<OpenCtiWriteRuntime>>,
+    pub opencti_write_semaphore: Arc<tokio::sync::Semaphore>,
     pub(crate) domain_providers: Option<Arc<crate::enterprise::registry::DomainProviderRegistry>>,
     pub started_at: Instant,
 }
@@ -155,7 +162,31 @@ pub struct AppState {
 impl AppState {
     pub fn new(config: ServerConfig) -> Result<Self, AppStateInitError> {
         let runtime_store = initialize_runtime_store(&config)?;
-        let engine = initialize_engine(&runtime_store, config.storage_require_fsync)?;
+        let write_state_path = match &runtime_store {
+            RuntimeStoreProvider::Persistent(runtime) => Some(
+                runtime
+                    .root_path
+                    .join("runtime")
+                    .join("opencti-write-state.json"),
+            ),
+            RuntimeStoreProvider::Ephemeral => None,
+        };
+        let opencti_write = Arc::new(Mutex::new(
+            OpenCtiWriteRuntime::open(
+                write_state_path,
+                WriteLimits {
+                    max_operations: config.opencti_sync_max_operations,
+                    max_payload_bytes: config.import_max_body_bytes,
+                },
+                config.opencti_sync_max_replay_identities,
+            )
+            .map_err(|reason| AppStateInitError::OpenCtiWriteStateFailed { reason })?,
+        ));
+        let engine = initialize_engine(
+            &runtime_store,
+            config.storage_require_fsync,
+            Arc::clone(&opencti_write),
+        )?;
         let sync_state_path = match &runtime_store {
             RuntimeStoreProvider::Persistent(runtime) => Some(
                 runtime
@@ -236,6 +267,9 @@ impl AppState {
         let domain_providers = initialize_domain_providers(&config)?;
         let timeline = ExplorerTimelineStore::new(&config.session_store_dir);
         let lifecycle = Arc::new(ServerLifecycle::initializing());
+        let opencti_write_semaphore = Arc::new(tokio::sync::Semaphore::new(
+            config.opencti_shadow.max_concurrency,
+        ));
         let state = Self {
             engine: Arc::new(Mutex::new(engine)),
             runtime_store,
@@ -249,6 +283,8 @@ impl AppState {
             opencti_sync: Arc::new(Mutex::new(opencti_sync)),
             opencti_shadow: Arc::new(Mutex::new(opencti_shadow)),
             opencti_routing: Arc::new(Mutex::new(opencti_routing)),
+            opencti_write,
+            opencti_write_semaphore,
             domain_providers,
             started_at: Instant::now(),
         };
@@ -281,6 +317,7 @@ fn read_shadow_json<T: serde::de::DeserializeOwned>(path: &str) -> Result<T, Str
 #[derive(Debug)]
 struct PersistentEnginePersistence {
     store: Arc<Mutex<CanonicalEngineStore>>,
+    opencti_write: Arc<Mutex<OpenCtiWriteRuntime>>,
 }
 
 impl EnginePersistence for PersistentEnginePersistence {
@@ -375,11 +412,37 @@ impl EnginePersistence for PersistentEnginePersistence {
             .map(|_| ())
             .map_err(|error| error.to_string())
     }
+
+    fn execute_knowledge_data_mutation(
+        &mut self,
+        operation: &KnowledgeDataOperation,
+        context: &corrobore_engine::RequestContext,
+    ) -> Result<Option<corrobore_engine::KnowledgeDataResponse>, corrobore_engine::KnowledgeDataError>
+    {
+        let mut runtime =
+            self.opencti_write
+                .lock()
+                .map_err(|_| corrobore_engine::KnowledgeDataError {
+                    code: corrobore_engine::KnowledgeDataErrorCode::BackendUnavailable,
+                    message: "OpenCTI write runtime lock is poisoned".to_owned(),
+                    retryable: true,
+                })?;
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| corrobore_engine::KnowledgeDataError {
+                code: corrobore_engine::KnowledgeDataErrorCode::BackendUnavailable,
+                message: "canonical graph store lock is poisoned".to_owned(),
+                retryable: true,
+            })?;
+        runtime.apply(&mut store, operation, context).map(Some)
+    }
 }
 
 fn initialize_engine(
     runtime_store: &RuntimeStoreProvider,
     _require_fsync: bool,
+    opencti_write: Arc<Mutex<OpenCtiWriteRuntime>>,
 ) -> Result<CorroboreEngine, AppStateInitError> {
     let RuntimeStoreProvider::Persistent(runtime) = runtime_store else {
         return Ok(CorroboreEngine::strict_default());
@@ -387,6 +450,7 @@ fn initialize_engine(
     CorroboreEngine::builder()
         .persistence(Box::new(PersistentEnginePersistence {
             store: Arc::clone(&runtime.canonical_store),
+            opencti_write,
         }))
         .build()
         .map_err(|error| AppStateInitError::PersistentStorageRecoveryFailed {
@@ -845,6 +909,8 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/v1/opencti/shadow/reports", get(opencti_shadow_reports))
         .route("/v1/opencti/reads", post(execute_opencti_routed_read))
+        .route("/v1/opencti/writes", post(execute_opencti_write))
+        .route("/v1/opencti/writes/status", get(opencti_write_status))
         .route(
             "/v1/opencti/routing/decisions",
             get(opencti_routing_decisions),
