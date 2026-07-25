@@ -29,14 +29,14 @@ use serde::{Deserialize, Serialize};
 use crate::{
     DurableMutationTarget, DurableTransactionId, DurableTransactionReplayStatus, DurableWalEntry,
     DurableWalEntryKind, EncodedRecord, GraphAdjacencyStorage, GraphCatalog, GraphRecordVersion,
-    GraphStorageError, GraphStorageResult, LabelIndexNodeMetadata, PersistedAdjacencyEntry,
-    PersistedAdjacencyRecord, PersistedRecordEnvelope, PersistedRecordId,
+    GraphStorageError, GraphStorageResult, LabelIndexNodeMetadata, NodeReadIndexDocument,
+    PersistedAdjacencyEntry, PersistedAdjacencyRecord, PersistedRecordEnvelope, PersistedRecordId,
     RelationshipTypeIndexRelationshipMetadata, StorageRoot, WalSequenceNumber,
     append_encoded_node_record_envelope, append_encoded_relationship_record_envelope,
     classify_transaction_replay_status, index_appended_node_record,
-    index_appended_relationship_record, index_node_labels, index_relationship_type,
-    open_append_only_node_record_log, open_append_only_relationship_record_log,
-    persist_graph_catalog_metadata, read_persisted_graph_catalog_metadata,
+    index_appended_relationship_record, index_relationship_type, open_append_only_node_record_log,
+    open_append_only_relationship_record_log, persist_graph_catalog_metadata,
+    read_persisted_graph_catalog_metadata, replace_node_read_indexes,
     restore_persisted_adjacency_records, snapshot_persisted_adjacency_records,
     validate_durable_wal_entry, write_incoming_adjacency_by_node_id,
     write_outgoing_adjacency_by_node_id,
@@ -66,6 +66,8 @@ pub struct AtomicPersistentMutationNodeRecord {
     pub encoded_record: EncodedRecord,
     /// Labels used to update the label index projection.
     pub labels: Vec<String>,
+    /// Payload-free identifier, property and temporal index values.
+    pub read_index: NodeReadIndexDocument,
 }
 
 /// One relationship record mutation payload.
@@ -194,6 +196,8 @@ struct NodeMutationLogRecord {
     envelope: PersistedRecordEnvelope,
     storage_ref: crate::StorageRef,
     labels: Vec<String>,
+    #[serde(default)]
+    read_index: NodeReadIndexDocument,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -658,9 +662,10 @@ fn persist_node_mutations(
             &node.envelope.record_id,
             node.envelope.graph_record_version.clone(),
         ) {
-            index_node_labels(
+            replace_node_read_indexes(
                 &mut state.catalog,
                 &node.labels,
+                &node.read_index,
                 LabelIndexNodeMetadata {
                     node_id: node_id.clone(),
                     latest_storage_ref: Some(storage_ref.clone()),
@@ -676,6 +681,7 @@ fn persist_node_mutations(
                 envelope: node.envelope.clone(),
                 storage_ref,
                 labels: node.labels.clone(),
+                read_index: node.read_index.clone(),
             },
             "apply_atomic_persistent_mutation_batch",
         )?;
@@ -844,9 +850,10 @@ fn replay_node_mutations(
             &record.envelope.record_id,
             record.envelope.graph_record_version.clone(),
         ) {
-            index_node_labels(
+            replace_node_read_indexes(
                 &mut state.catalog,
                 &record.labels,
+                &record.read_index,
                 LabelIndexNodeMetadata {
                     node_id: node_id.clone(),
                     latest_storage_ref: Some(record.storage_ref.clone()),

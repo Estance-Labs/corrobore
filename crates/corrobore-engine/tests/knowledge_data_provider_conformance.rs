@@ -105,6 +105,7 @@ fn provider_routes_typed_reads_through_the_existing_embedded_engine_state() {
         KnowledgeDataOperation::List(ListRequest {
             kinds: vec!["Indicator".to_owned()],
             limit: 10,
+            ..ListRequest::default()
         }),
         "correlation--list",
     ));
@@ -180,6 +181,7 @@ fn pagination_is_stable_and_tokens_are_bound_to_the_query() {
         query: ListRequest {
             kinds: vec!["Indicator".to_owned()],
             limit: 100,
+            ..ListRequest::default()
         },
         page_size: 2,
         token: None,
@@ -220,6 +222,7 @@ fn pagination_is_stable_and_tokens_are_bound_to_the_query() {
             query: ListRequest {
                 kinds: vec!["Campaign".to_owned()],
                 limit: 100,
+                ..ListRequest::default()
             },
             page_size: 2,
             token: Some(token),
@@ -336,6 +339,7 @@ fn knowledge_data_reads_hydrate_paged_persistence_before_provider_dispatch() {
             KnowledgeDataOperation::List(ListRequest {
                 kinds: vec!["Indicator".to_owned()],
                 limit: 10,
+                ..ListRequest::default()
             }),
             "correlation--paged-source",
         ))

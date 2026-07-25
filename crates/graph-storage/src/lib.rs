@@ -97,8 +97,9 @@ pub use backup_restore::{
     restore_atomic_persistent_backup, validate_atomic_persistent_backup,
 };
 pub use canonical_engine_store::{
-    CanonicalEngineStore, CanonicalProjectionRequest, CanonicalStartupReport,
-    CanonicalStoreOptions, CanonicalStoreStats,
+    CanonicalAdjacencyProjection, CanonicalEngineStore, CanonicalProjectionRequest,
+    CanonicalProjectionStats, CanonicalPropertyFilter, CanonicalPropertyOperator,
+    CanonicalStartupReport, CanonicalStoreOptions, CanonicalStoreStats,
 };
 pub use catalog::{
     GraphCatalog, HistoricalRecordCatalogEntry, LatestRecordCatalogEntry,
@@ -108,10 +109,11 @@ pub use catalog::{
 };
 pub use catalog_indexes::{
     CatalogIndexLookupMode, GraphCatalogIndexes, LabelIndexCatalogEntry, LabelIndexNodeMetadata,
-    NodeLabel, RelationshipTypeIndexCatalogEntry, RelationshipTypeIndexRelationshipMetadata,
-    index_node_labels, index_relationship_type, resolve_label_index_entries,
-    resolve_node_ids_by_label, resolve_relationship_ids_by_type,
-    resolve_relationship_type_index_entries,
+    NodeLabel, NodeReadIndexDocument, NodeReadIndexValue, RelationshipTypeIndexCatalogEntry,
+    RelationshipTypeIndexRelationshipMetadata, index_node_labels, index_relationship_type,
+    replace_node_read_indexes, resolve_identifier_index_entries, resolve_label_index_entries,
+    resolve_node_ids_by_label, resolve_property_index_entries, resolve_property_presence_entries,
+    resolve_relationship_ids_by_type, resolve_relationship_type_index_entries,
 };
 pub use catalog_metadata::{persist_graph_catalog_metadata, read_persisted_graph_catalog_metadata};
 pub use catalog_rebuild::{

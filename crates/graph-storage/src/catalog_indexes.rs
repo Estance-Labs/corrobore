@@ -71,6 +71,174 @@ pub struct GraphCatalogIndexes {
 
     /// Relationship type index keyed by graph-core relationship type value.
     pub relationship_types: HashMap<RelationshipType, RelationshipTypeIndexCatalogEntry>,
+
+    /// OpenCTI and graph identifiers mapped to their current canonical node.
+    #[serde(default)]
+    pub identifiers: HashMap<String, Vec<LabelIndexNodeMetadata>>,
+
+    /// Canonically encoded scalar property values mapped to current nodes.
+    #[serde(default)]
+    pub properties: HashMap<String, HashMap<String, Vec<LabelIndexNodeMetadata>>>,
+
+    /// Canonically encoded temporal values mapped to current nodes.
+    #[serde(default)]
+    pub temporal: HashMap<String, HashMap<String, Vec<LabelIndexNodeMetadata>>>,
+}
+
+/// Compact, payload-free index document persisted with one node mutation.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeReadIndexDocument {
+    /// Whether the node is currently readable.
+    pub active: bool,
+    /// Graph, OpenCTI, STIX, alias, deduplication and external identifiers.
+    pub identifiers: Vec<String>,
+    /// Scalar values addressable by simple read filters.
+    pub values: Vec<NodeReadIndexValue>,
+}
+
+/// One canonical scalar value in a compact node read-index document.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeReadIndexValue {
+    /// Canonical graph property key.
+    pub field: String,
+    /// Deterministically encoded JSON scalar value.
+    pub encoded_value: String,
+    /// Whether the value belongs in the temporal range index.
+    pub temporal: bool,
+}
+
+/// Replace every node-oriented metadata index entry for one stable node.
+///
+/// This makes updates and tombstones remove stale labels, identifiers and
+/// property values before the latest active version is indexed.
+pub fn replace_node_read_indexes(
+    catalog: &mut GraphCatalog,
+    labels: &LabelSet,
+    document: &NodeReadIndexDocument,
+    metadata: LabelIndexNodeMetadata,
+) -> GraphStorageResult<()> {
+    validate_label_index_metadata(&metadata)?;
+    let node_id = &metadata.node_id;
+    catalog.metadata_indexes.labels.retain(|_, entry| {
+        entry.nodes.retain(|entry| &entry.node_id != node_id);
+        !entry.nodes.is_empty()
+    });
+    remove_node_from_read_map(&mut catalog.metadata_indexes.identifiers, node_id);
+    remove_node_from_nested_read_map(&mut catalog.metadata_indexes.properties, node_id);
+    remove_node_from_nested_read_map(&mut catalog.metadata_indexes.temporal, node_id);
+
+    if !document.active {
+        return Ok(());
+    }
+
+    index_node_labels(catalog, labels, metadata.clone())?;
+    for identifier in &document.identifiers {
+        if identifier.trim().is_empty() {
+            continue;
+        }
+        upsert_label_node_metadata(
+            catalog
+                .metadata_indexes
+                .identifiers
+                .entry(identifier.clone())
+                .or_default(),
+            metadata.clone(),
+        );
+    }
+    for value in &document.values {
+        let target = if value.temporal {
+            &mut catalog.metadata_indexes.temporal
+        } else {
+            &mut catalog.metadata_indexes.properties
+        };
+        upsert_label_node_metadata(
+            target
+                .entry(value.field.clone())
+                .or_default()
+                .entry(value.encoded_value.clone())
+                .or_default(),
+            metadata.clone(),
+        );
+    }
+    Ok(())
+}
+
+/// Resolve current node metadata for any indexed identifier.
+pub fn resolve_identifier_index_entries(
+    catalog: &GraphCatalog,
+    identifier: &str,
+) -> Vec<LabelIndexNodeMetadata> {
+    catalog
+        .metadata_indexes
+        .identifiers
+        .get(identifier)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Resolve current node metadata for one exact property value.
+pub fn resolve_property_index_entries(
+    catalog: &GraphCatalog,
+    field: &str,
+    encoded_value: &str,
+    temporal: bool,
+) -> Vec<LabelIndexNodeMetadata> {
+    let index = if temporal {
+        &catalog.metadata_indexes.temporal
+    } else {
+        &catalog.metadata_indexes.properties
+    };
+    index
+        .get(field)
+        .and_then(|values| values.get(encoded_value))
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Resolve every current node carrying one indexed property.
+pub fn resolve_property_presence_entries(
+    catalog: &GraphCatalog,
+    field: &str,
+    temporal: bool,
+) -> Vec<LabelIndexNodeMetadata> {
+    let index = if temporal {
+        &catalog.metadata_indexes.temporal
+    } else {
+        &catalog.metadata_indexes.properties
+    };
+    let mut entries = index
+        .get(field)
+        .into_iter()
+        .flat_map(|values| values.values())
+        .flatten()
+        .cloned()
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| left.node_id.as_str().cmp(right.node_id.as_str()));
+    entries.dedup_by(|left, right| left.node_id == right.node_id);
+    entries
+}
+
+fn remove_node_from_read_map(
+    index: &mut HashMap<String, Vec<LabelIndexNodeMetadata>>,
+    node_id: &NodeId,
+) {
+    index.retain(|_, entries| {
+        entries.retain(|entry| &entry.node_id != node_id);
+        !entries.is_empty()
+    });
+}
+
+fn remove_node_from_nested_read_map(
+    index: &mut HashMap<String, HashMap<String, Vec<LabelIndexNodeMetadata>>>,
+    node_id: &NodeId,
+) {
+    index.retain(|_, values| {
+        values.retain(|_, entries| {
+            entries.retain(|entry| &entry.node_id != node_id);
+            !entries.is_empty()
+        });
+        !values.is_empty()
+    });
 }
 
 /// One label-index bucket in the storage catalog.

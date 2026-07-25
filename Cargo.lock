@@ -468,6 +468,7 @@ dependencies = [
  "export-stix",
  "graph-core",
  "hmac",
+ "opencti-adapter",
  "serde",
  "serde_json",
  "sha2",

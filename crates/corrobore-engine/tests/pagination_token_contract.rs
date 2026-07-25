@@ -14,6 +14,8 @@ fn claims() -> PaginationTokenClaims {
         query_fingerprint: "query-fingerprint-1".to_owned(),
         schema_version: "corrobore-graph-v1".to_owned(),
         cursor: "node--000042".to_owned(),
+        snapshot_fingerprint: "snapshot--fixture".to_owned(),
+        returned: 10,
     }
 }
 

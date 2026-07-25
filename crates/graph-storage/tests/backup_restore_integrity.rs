@@ -165,11 +165,13 @@ fn mutation_batch(
                     envelope: source_envelope,
                     encoded_record: source_encoded,
                     labels: vec!["Campaign".to_owned(), "FIMI".to_owned()],
+                    read_index: Default::default(),
                 },
                 AtomicPersistentMutationNodeRecord {
                     envelope: target_envelope,
                     encoded_record: target_encoded,
                     labels: vec!["Infrastructure".to_owned()],
+                    read_index: Default::default(),
                 },
             ],
             relationship_records: vec![AtomicPersistentMutationRelationshipRecord {

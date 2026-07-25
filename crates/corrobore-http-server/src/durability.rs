@@ -76,6 +76,9 @@ pub struct DurabilityObservabilitySnapshot {
     pub relationship_index_entries: u64,
     pub label_index_entries: u64,
     pub relationship_type_index_entries: u64,
+    pub identifier_index_entries: u64,
+    pub property_index_entries: u64,
+    pub temporal_index_entries: u64,
     pub recovery: DurabilityRecoverySnapshot,
 }
 
@@ -106,6 +109,9 @@ pub fn collect_durability_snapshot(state: &AppState) -> DurabilityObservabilityS
             relationship_index_entries: 0,
             label_index_entries: 0,
             relationship_type_index_entries: 0,
+            identifier_index_entries: 0,
+            property_index_entries: 0,
+            temporal_index_entries: 0,
             recovery: durability_recovery_snapshot(state.config.storage_mode, None),
         },
         RuntimeStoreProvider::Persistent(runtime) => {
@@ -164,6 +170,9 @@ pub fn collect_durability_snapshot(state: &AppState) -> DurabilityObservabilityS
                 relationship_index_entries: store_stats.relationship_index_entries,
                 label_index_entries: store_stats.label_index_entries,
                 relationship_type_index_entries: store_stats.relationship_type_index_entries,
+                identifier_index_entries: store_stats.identifier_index_entries,
+                property_index_entries: store_stats.property_index_entries,
+                temporal_index_entries: store_stats.temporal_index_entries,
                 recovery,
             }
         }

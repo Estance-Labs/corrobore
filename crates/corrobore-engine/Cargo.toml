@@ -25,6 +25,7 @@ subtle = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+opencti-adapter = { path = "../opencti-adapter" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

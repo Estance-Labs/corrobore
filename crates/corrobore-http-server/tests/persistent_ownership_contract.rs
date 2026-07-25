@@ -207,6 +207,7 @@ fn committed_persistent_catalog_data_survives_clean_server_restarts() {
                 .expect("node envelope should encode"),
             envelope,
             labels: vec!["Indicator".to_owned()],
+            read_index: Default::default(),
         }],
         relationship_records: Vec::new(),
         outgoing_adjacency: Vec::new(),
