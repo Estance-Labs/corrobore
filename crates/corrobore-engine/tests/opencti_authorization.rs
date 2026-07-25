@@ -56,6 +56,7 @@ impl EnginePersistence for PushdownDenyPersistence {
             page_ins: 0,
             cache_hits: 0,
             authorization_denials: 1,
+            full_text_page: None,
         }))
     }
 }

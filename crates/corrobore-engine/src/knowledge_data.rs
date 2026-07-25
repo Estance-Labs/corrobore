@@ -12,7 +12,8 @@
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, BTreeSet, HashSet},
-    fmt,
+    fmt, fs,
+    sync::atomic::{AtomicU64, Ordering as AtomicOrdering},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -23,11 +24,20 @@ pub use opencti_access::{
     AccessContext, AccessDecision, AccessDecisionReason, AccessMetadata, AccessPolicyError,
     OpenCtiAccessPolicy,
 };
+pub use opencti_search::{
+    FullTextFieldFilter, FullTextMatchMode, FullTextQuery, FullTextRecordClass, FullTextSearchHit,
+    FullTextSearchPage,
+};
+use opencti_search::{
+    FullTextIndex, FullTextIndexSettings, FullTextSearchError, documents_from_graph,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::CorroboreEngine;
+
+static EPHEMERAL_SEARCH_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 /// Current stable contract version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -362,10 +372,11 @@ impl Default for PaginateRequest {
     }
 }
 
-/// Structured search input.
+/// Full-text search input.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SearchRequest {
-    /// Search expression interpreted by a negotiated search capability.
+    /// Provider-neutral full-text expression. Issue #47 extends search with
+    /// its separately negotiated structured Query DSL.
     pub expression: Value,
     /// Maximum number of records.
     pub limit: u32,
@@ -866,6 +877,8 @@ pub enum CoreReadQueryClass {
     Pagination,
     /// Filtered count.
     Count,
+    /// Access-aware embedded full-text search.
+    FullTextSearch,
     /// One-hop neighborhood.
     Neighbors,
     /// Bounded traversal.
@@ -882,6 +895,7 @@ impl CoreReadQueryClass {
             Self::List => "list",
             Self::Pagination => "pagination",
             Self::Count => "count",
+            Self::FullTextSearch => "full_text_search",
             Self::Neighbors => "neighbors",
             Self::Traverse => "traverse",
             Self::Subgraph => "subgraph",
@@ -1021,6 +1035,8 @@ pub enum KnowledgeDataResponse {
     Record(Option<KnowledgeRecord>),
     /// Record list.
     Records(RecordPage),
+    /// Ranked access-aware full-text page.
+    Search(FullTextSearchPage),
     /// Count.
     Count(CountResult),
     /// Aggregation.
@@ -1348,6 +1364,7 @@ pub trait KnowledgeDataEngine {
 pub struct CorroboreKnowledgeDataProvider<'a> {
     engine: &'a mut CorroboreEngine,
     pagination: PaginationTokenCodec,
+    full_text_cursor_key: Vec<u8>,
     cancelled: BTreeSet<String>,
 }
 
@@ -1360,6 +1377,7 @@ impl<'a> CorroboreKnowledgeDataProvider<'a> {
         Ok(Self {
             engine,
             pagination: PaginationTokenCodec::new(pagination_key)?,
+            full_text_cursor_key: pagination_key.to_vec(),
             cancelled: BTreeSet::new(),
         })
     }
@@ -1410,7 +1428,12 @@ impl KnowledgeDataEngine for CorroboreKnowledgeDataProvider<'_> {
             .prepare_knowledge_data_operation(&operation, &context.access)
             .map_err(|error| map_projection_error(&error.to_string()))?
             .unwrap_or_default();
-        let authorization_denials = projection_stats.2;
+        let prepared_full_text_page = projection_stats.full_text_page.clone();
+        let authorization_denials = prepared_full_text_page
+            .as_ref()
+            .map_or(projection_stats.authorization_denials, |page| {
+                page.authorization_denials
+            });
         let result = match operation {
             KnowledgeDataOperation::Initialize(request) => self.initialize(request),
             KnowledgeDataOperation::Health(request) => self.health(request),
@@ -1419,6 +1442,9 @@ impl KnowledgeDataEngine for CorroboreKnowledgeDataProvider<'_> {
             }
             KnowledgeDataOperation::List(request) => self.list(request, &access_policy),
             KnowledgeDataOperation::Paginate(request) => self.paginate(request, &access_policy),
+            KnowledgeDataOperation::Search(request) => {
+                self.search(request, &context.access, prepared_full_text_page)
+            }
             KnowledgeDataOperation::Count(request) => self.count(request, &access_policy),
             KnowledgeDataOperation::Neighbors(request) => self.neighbors(request, &access_policy),
             KnowledgeDataOperation::Traverse(request) => self.traverse(request, &access_policy),
@@ -1439,8 +1465,8 @@ impl KnowledgeDataEngine for CorroboreKnowledgeDataProvider<'_> {
                 query_class,
                 u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
                 records_examined,
-                projection_stats.0,
-                projection_stats.1,
+                projection_stats.page_ins,
+                projection_stats.cache_hits,
             );
         }
         if self.engine.security_audit_events.len() == audit_events_before {
@@ -1489,6 +1515,9 @@ fn validate_operation_before_projection(
             }
             Ok(())
         }
+        KnowledgeDataOperation::Search(request) => {
+            full_text_query_from_search_request(request).map(|_| ())
+        }
         KnowledgeDataOperation::Neighbors(request) => {
             if !request.incoming && !request.outgoing {
                 return Err(KnowledgeDataError::new(
@@ -1514,11 +1543,117 @@ fn core_read_query_class(operation: &KnowledgeDataOperation) -> Option<CoreReadQ
         KnowledgeDataOperation::GetById(_) => Some(CoreReadQueryClass::PointRead),
         KnowledgeDataOperation::List(_) => Some(CoreReadQueryClass::List),
         KnowledgeDataOperation::Paginate(_) => Some(CoreReadQueryClass::Pagination),
+        KnowledgeDataOperation::Search(_) => Some(CoreReadQueryClass::FullTextSearch),
         KnowledgeDataOperation::Count(_) => Some(CoreReadQueryClass::Count),
         KnowledgeDataOperation::Neighbors(_) => Some(CoreReadQueryClass::Neighbors),
         KnowledgeDataOperation::Traverse(_) => Some(CoreReadQueryClass::Traverse),
         KnowledgeDataOperation::Subgraph(_) => Some(CoreReadQueryClass::Subgraph),
         _ => None,
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FullTextExpression {
+    text: String,
+    mode: Option<String>,
+    fuzziness: Option<u8>,
+    #[serde(default)]
+    prefix: bool,
+    #[serde(default)]
+    fields: Vec<String>,
+    #[serde(default)]
+    kinds: Vec<String>,
+    #[serde(default)]
+    types: Vec<String>,
+    #[serde(default)]
+    filters: Vec<FullTextFieldFilter>,
+    cursor: Option<String>,
+}
+
+/// Normalize the issue #46 full-text subset from the generic search envelope.
+///
+/// Query DSL clauses, aggregations and arbitrary analyzers remain rejected so
+/// issue #47 can extend the capability without leaking a backend API.
+pub fn full_text_query_from_search_request(
+    request: &SearchRequest,
+) -> Result<FullTextQuery, KnowledgeDataError> {
+    if request.limit == 0 || request.limit > 1_000 {
+        return Err(KnowledgeDataError::new(
+            KnowledgeDataErrorCode::InvalidRequest,
+            "full-text limit must be between 1 and 1000",
+            false,
+        ));
+    }
+    let mut expression = if let Some(text) = request.expression.as_str() {
+        FullTextExpression {
+            text: text.to_owned(),
+            ..FullTextExpression::default()
+        }
+    } else {
+        serde_json::from_value::<FullTextExpression>(request.expression.clone()).map_err(
+            |error| {
+                KnowledgeDataError::new(
+                    KnowledgeDataErrorCode::InvalidRequest,
+                    format!("invalid full-text expression: {error}"),
+                    false,
+                )
+            },
+        )?
+    };
+    expression.kinds.extend(expression.types);
+    let mode = match expression.mode.as_deref() {
+        None if expression.fuzziness.is_some() => FullTextMatchMode::Fuzzy {
+            distance: expression.fuzziness.unwrap_or(1),
+            prefix: expression.prefix,
+        },
+        None if expression.prefix => FullTextMatchMode::Prefix,
+        None | Some("term") => FullTextMatchMode::Term,
+        Some("phrase") => FullTextMatchMode::Phrase,
+        Some("prefix") => FullTextMatchMode::Prefix,
+        Some("fuzzy") => FullTextMatchMode::Fuzzy {
+            distance: expression.fuzziness.unwrap_or(1),
+            prefix: expression.prefix,
+        },
+        Some(mode) => {
+            return Err(KnowledgeDataError::new(
+                KnowledgeDataErrorCode::InvalidRequest,
+                format!("unsupported full-text match mode {mode}"),
+                false,
+            ));
+        }
+    };
+    Ok(FullTextQuery {
+        text: expression.text,
+        mode,
+        fields: expression.fields,
+        kinds: expression.kinds,
+        filters: expression.filters,
+        limit: request.limit,
+        cursor: expression.cursor,
+    })
+}
+
+fn map_full_text_error(error: FullTextSearchError) -> KnowledgeDataError {
+    match error {
+        FullTextSearchError::InvalidQuery(message) => {
+            KnowledgeDataError::new(KnowledgeDataErrorCode::InvalidRequest, message, false)
+        }
+        FullTextSearchError::IncompatibleCursor => KnowledgeDataError::new(
+            KnowledgeDataErrorCode::IncompatiblePaginationToken,
+            "full-text cursor belongs to another query, policy, or index generation",
+            false,
+        ),
+        FullTextSearchError::IndexNotReady => KnowledgeDataError::new(
+            KnowledgeDataErrorCode::BackendUnavailable,
+            "full-text index is rebuilding",
+            true,
+        ),
+        FullTextSearchError::Io(_) | FullTextSearchError::Backend(_) => KnowledgeDataError::new(
+            KnowledgeDataErrorCode::BackendUnavailable,
+            "full-text backend is unavailable",
+            true,
+        ),
     }
 }
 
@@ -1573,6 +1708,7 @@ fn capability_status(operation: OperationKind) -> ProviderCapabilityStatus {
         | OperationKind::GetById
         | OperationKind::List
         | OperationKind::Paginate
+        | OperationKind::Search
         | OperationKind::Count
         | OperationKind::Neighbors
         | OperationKind::Traverse
@@ -1580,9 +1716,6 @@ fn capability_status(operation: OperationKind) -> ProviderCapabilityStatus {
         OperationKind::Migrate | OperationKind::Snapshot | OperationKind::Restore => {
             unsupported_status("portable lifecycle support is delivered by issue #52")
         }
-        OperationKind::Search => unsupported_status(
-            "structured and full-text search are delivered by issues #46 and #47",
-        ),
         OperationKind::Aggregate => {
             unsupported_status("advanced read planning is delivered by issue #47")
         }
@@ -1878,6 +2011,44 @@ impl CorroboreKnowledgeDataProvider<'_> {
             records: page_records,
             next_token,
         }))
+    }
+
+    fn search(
+        &self,
+        request: SearchRequest,
+        access: &AccessContext,
+        prepared: Option<FullTextSearchPage>,
+    ) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
+        let query = full_text_query_from_search_request(&request)?;
+        if let Some(page) = prepared {
+            return Ok(KnowledgeDataResponse::Search(page));
+        }
+        let sequence = EPHEMERAL_SEARCH_SEQUENCE.fetch_add(1, AtomicOrdering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "corrobore-embedded-full-text-{}-{sequence}",
+            std::process::id()
+        ));
+        let result = (|| {
+            let index = FullTextIndex::open(
+                root.clone(),
+                FullTextIndexSettings {
+                    schema_version: "opencti-full-text-v1".to_owned(),
+                    cursor_key: self.full_text_cursor_key.clone(),
+                    writer_memory_bytes: 15_000_000,
+                    max_candidates: 100_000,
+                },
+            )
+            .map_err(map_full_text_error)?;
+            let documents =
+                documents_from_graph(self.engine.graph()).map_err(map_full_text_error)?;
+            index.rebuild(&documents).map_err(map_full_text_error)?;
+            index
+                .search(&query, access)
+                .map(KnowledgeDataResponse::Search)
+                .map_err(map_full_text_error)
+        })();
+        let _ = fs::remove_dir_all(root);
+        result
     }
 
     fn count(

@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "name": "opencti-corrobore-full-text-relevance-v1",
+  "license": "CC0-1.0",
+  "provenance": {
+    "kind": "fully-synthetic",
+    "customer_data": false,
+    "pii": false,
+    "secrets": false
+  },
+  "metric": {
+    "name": "mrr_at_10",
+    "minimum": 0.9
+  },
+  "queries": [
+    {
+      "id": "phrase-domain-indicator",
+      "text": "documentation domain indicator",
+      "mode": "phrase",
+      "relevant_id": "indicator--domain"
+    },
+    {
+      "id": "fuzzy-investigation",
+      "text": "investigaton",
+      "mode": "fuzzy",
+      "distance": 1,
+      "relevant_id": "report--investigation"
+    },
+    {
+      "id": "prefix-malware",
+      "text": "malw",
+      "mode": "prefix",
+      "relevant_id": "indicator--domain"
+    },
+    {
+      "id": "term-ipv4",
+      "text": "192.0.2.12",
+      "mode": "term",
+      "relevant_id": "indicator--ipv4"
+    },
+    {
+      "id": "term-synthetic-report",
+      "text": "synthetic investigation",
+      "mode": "term",
+      "relevant_id": "report--investigation"
+    }
+  ]
+}

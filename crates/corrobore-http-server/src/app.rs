@@ -38,6 +38,7 @@ use axum::{
 use corrobore_engine::{
     CorroboreEngine, EnginePersistence, GraphDirection, KnowledgeDataOperation,
     PreparedKnowledgeDataProjection, ReadFilter, ReadFilterOperator,
+    full_text_query_from_search_request,
 };
 use corrobore_engine::{DivergenceBaseline, ShadowSamplingPolicy};
 use graph_storage::{
@@ -266,6 +267,24 @@ impl EnginePersistence for PersistentEnginePersistence {
         operation: &KnowledgeDataOperation,
         access: &corrobore_engine::AccessContext,
     ) -> Result<Option<PreparedKnowledgeDataProjection>, String> {
+        if let KnowledgeDataOperation::Search(request) = operation {
+            let query =
+                full_text_query_from_search_request(request).map_err(|error| error.message)?;
+            let mut store = self
+                .store
+                .lock()
+                .map_err(|_| "canonical graph store lock is poisoned".to_owned())?;
+            let page = store
+                .search_full_text(&query, access)
+                .map_err(|error| error.to_string())?;
+            return Ok(Some(PreparedKnowledgeDataProjection {
+                graph: graph_core::Graph::new(),
+                page_ins: 0,
+                cache_hits: 0,
+                authorization_denials: page.authorization_denials,
+                full_text_page: Some(page),
+            }));
+        }
         let Some(request) = canonical_projection_for_knowledge_data(operation)
             .map(|request| request.with_access_context(access.clone()))
         else {
@@ -284,6 +303,7 @@ impl EnginePersistence for PersistentEnginePersistence {
             page_ins: stats.page_ins,
             cache_hits: stats.cache_hits,
             authorization_denials: stats.authorization_denials,
+            full_text_page: None,
         }))
     }
 
