@@ -32,7 +32,7 @@
 //! carries the mandatory `# HELP` / `# TYPE` header lines and a single sample.
 
 use axum::{extract::State, http::header, response::IntoResponse};
-use corrobore_engine::SHADOW_LATENCY_BUCKETS_MS;
+use corrobore_engine::{CoreReadQueryClass, SHADOW_LATENCY_BUCKETS_MS};
 
 use crate::app::AppState;
 use crate::durability::collect_durability_snapshot;
@@ -131,6 +131,9 @@ pub async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
             "corrobore_storage_index_entries{{index=\"relationship\"}} {relationship_index_entries}\n",
             "corrobore_storage_index_entries{{index=\"label\"}} {label_index_entries}\n",
             "corrobore_storage_index_entries{{index=\"relationship_type\"}} {relationship_type_index_entries}\n",
+            "corrobore_storage_index_entries{{index=\"identifier\"}} {identifier_index_entries}\n",
+            "corrobore_storage_index_entries{{index=\"property\"}} {property_index_entries}\n",
+            "corrobore_storage_index_entries{{index=\"temporal\"}} {temporal_index_entries}\n",
             "# HELP corrobore_storage_recovery_outcome Current storage recovery outcome as a labeled gauge.\n",
             "# TYPE corrobore_storage_recovery_outcome gauge\n",
             "corrobore_storage_recovery_outcome{{outcome=\"{recovery_outcome}\"}} 1\n",
@@ -182,6 +185,9 @@ pub async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
         relationship_index_entries = durability.relationship_index_entries,
         label_index_entries = durability.label_index_entries,
         relationship_type_index_entries = durability.relationship_type_index_entries,
+        identifier_index_entries = durability.identifier_index_entries,
+        property_index_entries = durability.property_index_entries,
+        temporal_index_entries = durability.temporal_index_entries,
         recovery_outcome = durability.recovery.outcome,
         replayed_transaction_count = durability.recovery.replayed_transaction_count,
         providers_configured = providers_configured,
@@ -230,6 +236,50 @@ pub async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
         .lock()
         .map(|runtime| runtime.metrics().series())
         .unwrap_or_default();
+    body.push_str(
+        "# HELP corrobore_opencti_core_reads_total Completed fundamental OpenCTI reads by bounded query class.\n\
+# TYPE corrobore_opencti_core_reads_total counter\n\
+# HELP corrobore_opencti_core_read_latency_ms Approximate fundamental-read latency percentiles in milliseconds.\n\
+# TYPE corrobore_opencti_core_read_latency_ms gauge\n\
+# HELP corrobore_opencti_core_read_records_examined_total Records evaluated by exact predicates.\n\
+# TYPE corrobore_opencti_core_read_records_examined_total counter\n\
+# HELP corrobore_opencti_core_read_page_ins_total Persistent payload page-ins by query class.\n\
+# TYPE corrobore_opencti_core_read_page_ins_total counter\n\
+# HELP corrobore_opencti_core_read_cache_hits_total Persistent payload cache hits by query class.\n\
+# TYPE corrobore_opencti_core_read_cache_hits_total counter\n",
+    );
+    if let Ok(engine) = state.engine.lock() {
+        for query_class in [
+            CoreReadQueryClass::PointRead,
+            CoreReadQueryClass::List,
+            CoreReadQueryClass::Pagination,
+            CoreReadQueryClass::Count,
+            CoreReadQueryClass::Neighbors,
+            CoreReadQueryClass::Traverse,
+            CoreReadQueryClass::Subgraph,
+        ] {
+            let Some(series) = engine.core_read_metrics().series(query_class) else {
+                continue;
+            };
+            let query_class = query_class.as_str();
+            body.push_str(&format!(
+                "corrobore_opencti_core_reads_total{{query_class=\"{query_class}\"}} {}\n\
+corrobore_opencti_core_read_latency_ms{{query_class=\"{query_class}\",quantile=\"0.50\"}} {}\n\
+corrobore_opencti_core_read_latency_ms{{query_class=\"{query_class}\",quantile=\"0.95\"}} {}\n\
+corrobore_opencti_core_read_latency_ms{{query_class=\"{query_class}\",quantile=\"0.99\"}} {}\n\
+corrobore_opencti_core_read_records_examined_total{{query_class=\"{query_class}\"}} {}\n\
+corrobore_opencti_core_read_page_ins_total{{query_class=\"{query_class}\"}} {}\n\
+corrobore_opencti_core_read_cache_hits_total{{query_class=\"{query_class}\"}} {}\n",
+                series.requests,
+                series.p50_latency_ms,
+                series.p95_latency_ms,
+                series.p99_latency_ms,
+                series.records_examined,
+                series.page_ins,
+                series.cache_hits,
+            ));
+        }
+    }
     body.push_str(
         "# HELP corrobore_opencti_shadow_comparisons_total OpenCTI shadow comparisons by bounded query class and release.\n\
 # TYPE corrobore_opencti_shadow_comparisons_total counter\n\

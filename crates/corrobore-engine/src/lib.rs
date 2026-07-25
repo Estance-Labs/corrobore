@@ -184,6 +184,17 @@ pub enum EngineError {
     Persistence(String),
 }
 
+/// One bounded Knowledge Data graph projection prepared by a durable adapter.
+#[derive(Clone, Debug)]
+pub struct PreparedKnowledgeDataProjection {
+    /// Hydrated operational graph selected through durable metadata.
+    pub graph: Graph,
+    /// Payload page-ins needed to build this projection.
+    pub page_ins: u64,
+    /// Payloads reused from the immediately preceding projection.
+    pub cache_hits: u64,
+}
+
 /// Optional durable graph adapter used by standalone hosts.
 ///
 /// The embedded engine remains persistence-agnostic unless a host explicitly
@@ -202,6 +213,42 @@ pub trait EnginePersistence: std::fmt::Debug + Send {
     /// catalog metadata, allowing startup to remain payload-cold.
     fn prepare_graph_for_request(&mut self, _query: &str) -> Result<Option<Graph>, String> {
         Ok(None)
+    }
+
+    /// Prepare an index-selected projection for one typed Knowledge Data read.
+    ///
+    /// Snapshot adapters inherit the compatibility implementation. Persistent
+    /// adapters override this boundary to map typed identifiers, filters and
+    /// graph budgets to compact storage indexes.
+    fn prepare_knowledge_data_operation(
+        &mut self,
+        operation: &KnowledgeDataOperation,
+    ) -> Result<Option<PreparedKnowledgeDataProjection>, String> {
+        let query = match operation {
+            KnowledgeDataOperation::Health(request) if request.verbose => {
+                Some("MATCH (n) RETURN n")
+            }
+            KnowledgeDataOperation::GetById(_)
+            | KnowledgeDataOperation::List(_)
+            | KnowledgeDataOperation::Paginate(_)
+            | KnowledgeDataOperation::Count(_) => Some("MATCH (n) RETURN n"),
+            KnowledgeDataOperation::Neighbors(_)
+            | KnowledgeDataOperation::Traverse(_)
+            | KnowledgeDataOperation::Subgraph(_) => Some("MATCH (n)-[r]->(m) RETURN n, r, m"),
+            _ => None,
+        };
+        query
+            .map(|query| self.prepare_graph_for_request(query))
+            .transpose()
+            .map(|projection| {
+                projection
+                    .flatten()
+                    .map(|graph| PreparedKnowledgeDataProjection {
+                        graph,
+                        page_ins: 0,
+                        cache_hits: 0,
+                    })
+            })
     }
 
     /// Commit the changed record versions between two operational projections.
@@ -363,6 +410,7 @@ impl CorroboreEngineBuilder {
             session_id,
             budget_ref,
             persistence,
+            core_read_metrics: CoreReadMetrics::default(),
         })
     }
 }
@@ -375,6 +423,7 @@ pub struct CorroboreEngine {
     session_id: SessionId,
     budget_ref: CypherBudgetRef,
     persistence: Option<Box<dyn EnginePersistence>>,
+    core_read_metrics: CoreReadMetrics,
 }
 
 impl CorroboreEngine {
@@ -388,6 +437,11 @@ impl CorroboreEngine {
     /// Returns a builder for custom engine configuration.
     pub fn builder() -> CorroboreEngineBuilder {
         CorroboreEngineBuilder::default()
+    }
+
+    /// Return cumulative low-cardinality metrics for fundamental read classes.
+    pub fn core_read_metrics(&self) -> &CoreReadMetrics {
+        &self.core_read_metrics
     }
 
     /// Executes one contextual request through the public engine boundary.
@@ -473,6 +527,22 @@ impl CorroboreEngine {
             self.gateway.replace_graph(projection);
         }
         Ok(())
+    }
+
+    fn prepare_knowledge_data_operation(
+        &mut self,
+        operation: &KnowledgeDataOperation,
+    ) -> Result<Option<(u64, u64)>, EngineError> {
+        if let Some(adapter) = self.persistence.as_mut()
+            && let Some(projection) = adapter
+                .prepare_knowledge_data_operation(operation)
+                .map_err(EngineError::Persistence)?
+        {
+            let stats = (projection.page_ins, projection.cache_hits);
+            self.gateway.replace_graph(projection.graph);
+            return Ok(Some(stats));
+        }
+        Ok(None)
     }
 
     /// Executes a query, auto-detecting read or mutation mode.

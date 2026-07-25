@@ -149,6 +149,7 @@ fn mutation_batch(
                     .encode_envelope(&source_envelope)
                     .unwrap(),
                 labels: vec!["Campaign".to_owned()],
+                read_index: Default::default(),
             },
             AtomicPersistentMutationNodeRecord {
                 envelope: target_envelope.clone(),
@@ -156,6 +157,7 @@ fn mutation_batch(
                     .encode_envelope(&target_envelope)
                     .unwrap(),
                 labels: vec!["Infrastructure".to_owned()],
+                read_index: Default::default(),
             },
         ],
         relationship_records: vec![AtomicPersistentMutationRelationshipRecord {

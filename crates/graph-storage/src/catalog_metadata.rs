@@ -38,6 +38,12 @@ struct PersistedGraphCatalogMetadata {
     historical_records: Vec<HistoricalRecordCatalogEntry>,
     label_indexes: Vec<(String, LabelIndexCatalogEntry)>,
     relationship_type_indexes: Vec<(RelationshipType, RelationshipTypeIndexCatalogEntry)>,
+    #[serde(default)]
+    identifier_indexes: Vec<(String, Vec<crate::LabelIndexNodeMetadata>)>,
+    #[serde(default)]
+    property_indexes: Vec<(String, HashMap<String, Vec<crate::LabelIndexNodeMetadata>>)>,
+    #[serde(default)]
+    temporal_indexes: Vec<(String, HashMap<String, Vec<crate::LabelIndexNodeMetadata>>)>,
 }
 
 /// Persist derived catalog metadata for fast startup.
@@ -145,6 +151,24 @@ impl PersistedGraphCatalogMetadata {
                 .iter()
                 .map(|(relationship_type, entry)| (relationship_type.clone(), entry.clone()))
                 .collect(),
+            identifier_indexes: catalog
+                .metadata_indexes
+                .identifiers
+                .iter()
+                .map(|(identifier, entries)| (identifier.clone(), entries.clone()))
+                .collect(),
+            property_indexes: catalog
+                .metadata_indexes
+                .properties
+                .iter()
+                .map(|(field, values)| (field.clone(), values.clone()))
+                .collect(),
+            temporal_indexes: catalog
+                .metadata_indexes
+                .temporal
+                .iter()
+                .map(|(field, values)| (field.clone(), values.clone()))
+                .collect(),
         }
     }
 
@@ -171,6 +195,21 @@ impl PersistedGraphCatalogMetadata {
                     self.relationship_type_indexes,
                     "read_persisted_graph_catalog_metadata",
                     "relationship type indexes",
+                )?,
+                identifiers: collect_unique_pairs(
+                    self.identifier_indexes,
+                    "read_persisted_graph_catalog_metadata",
+                    "identifier indexes",
+                )?,
+                properties: collect_unique_pairs(
+                    self.property_indexes,
+                    "read_persisted_graph_catalog_metadata",
+                    "property indexes",
+                )?,
+                temporal: collect_unique_pairs(
+                    self.temporal_indexes,
+                    "read_persisted_graph_catalog_metadata",
+                    "temporal indexes",
                 )?,
             },
         })

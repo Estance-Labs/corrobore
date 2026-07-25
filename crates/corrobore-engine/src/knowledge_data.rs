@@ -10,13 +10,14 @@
 //! reject unsupported behavior explicitly.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    cmp::Ordering,
+    collections::{BTreeMap, BTreeSet, HashSet},
     fmt,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use graph_core::{Node, NodeId};
+use graph_core::{Graph, Node, NodeId, PropertyValue, Relationship};
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -277,11 +278,67 @@ pub struct GetByIdRequest {
     pub id: String,
 }
 
+/// Supported scalar predicate operators for fundamental reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadFilterOperator {
+    /// Exact typed equality.
+    Equal,
+    /// Typed inequality.
+    NotEqual,
+    /// Property presence, independent of its value.
+    Exists,
+    /// Strict lower-bound comparison.
+    GreaterThan,
+    /// Inclusive lower-bound comparison.
+    GreaterThanOrEqual,
+    /// Strict upper-bound comparison.
+    LessThan,
+    /// Inclusive upper-bound comparison.
+    LessThanOrEqual,
+}
+
+/// One provider-neutral scalar property predicate.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadFilter {
+    /// OpenCTI field or provider-neutral record field.
+    pub field: String,
+    /// Comparison operator.
+    pub operator: ReadFilterOperator,
+    /// Comparison value. `exists` requires this to be absent.
+    pub value: Option<Value>,
+}
+
+/// Stable ordering direction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SortDirection {
+    /// Lowest value first.
+    Ascending,
+    /// Highest value first.
+    Descending,
+}
+
+/// One stable sort key. Canonical record identity is always the final tie-breaker.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadOrder {
+    /// OpenCTI field or provider-neutral record field.
+    pub field: String,
+    /// Sort direction.
+    pub direction: SortDirection,
+}
+
 /// Bounded list input.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListRequest {
     /// Record kinds to include; empty means all kinds.
     pub kinds: Vec<String>,
+    /// Conjunctive scalar predicates.
+    #[serde(default)]
+    pub filters: Vec<ReadFilter>,
+    /// Stable sort keys before the canonical-ID tie-breaker.
+    #[serde(default)]
+    pub order_by: Vec<ReadOrder>,
     /// Maximum records returned before pagination.
     pub limit: u32,
 }
@@ -290,6 +347,8 @@ impl Default for ListRequest {
     fn default() -> Self {
         Self {
             kinds: Vec::new(),
+            filters: Vec::new(),
+            order_by: Vec::new(),
             limit: 100,
         }
     }
@@ -330,6 +389,12 @@ pub struct SearchRequest {
 pub struct CountRequest {
     /// Backend-neutral filter expression.
     pub filter: Value,
+    /// Record kinds to include; empty means all kinds.
+    #[serde(default)]
+    pub kinds: Vec<String>,
+    /// Conjunctive scalar predicates.
+    #[serde(default)]
+    pub filters: Vec<ReadFilter>,
 }
 
 /// Aggregation input.
@@ -348,6 +413,52 @@ pub struct NeighborsRequest {
     pub incoming: bool,
     /// Whether outgoing relationships are included.
     pub outgoing: bool,
+    /// Bounded graph-read filters and budgets.
+    #[serde(default)]
+    pub policy: GraphReadPolicy,
+}
+
+/// Direction applied to a bounded graph expansion.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GraphDirection {
+    /// Follow relationships from source to target.
+    Outgoing,
+    /// Follow relationships from target to source.
+    Incoming,
+    /// Follow either direction.
+    #[default]
+    Both,
+}
+
+/// Filters and deterministic safety limits shared by graph reads.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphReadPolicy {
+    /// Relationship types accepted during expansion.
+    pub relationship_types: Vec<String>,
+    /// Neighbor node kinds accepted during expansion.
+    pub node_kinds: Vec<String>,
+    /// Conjunctive neighbor predicates.
+    pub filters: Vec<ReadFilter>,
+    /// Maximum returned records.
+    pub max_results: u32,
+    /// Maximum relationship expansions.
+    pub max_expansions: u32,
+    /// Degree at which an unguarded expansion is treated as a supernode.
+    pub supernode_threshold: u32,
+}
+
+impl Default for GraphReadPolicy {
+    fn default() -> Self {
+        Self {
+            relationship_types: Vec::new(),
+            node_kinds: Vec::new(),
+            filters: Vec::new(),
+            max_results: 1_000,
+            max_expansions: 10_000,
+            supernode_threshold: 10_000,
+        }
+    }
 }
 
 /// Bounded traversal input.
@@ -357,8 +468,12 @@ pub struct TraverseRequest {
     pub start_ids: Vec<String>,
     /// Maximum traversal depth.
     pub max_depth: u32,
+    /// Expansion direction.
+    pub direction: GraphDirection,
     /// Backend-neutral traversal constraints.
     pub constraints: Value,
+    /// Typed filters and deterministic budgets.
+    pub policy: GraphReadPolicy,
 }
 
 /// Subgraph input.
@@ -368,6 +483,12 @@ pub struct SubgraphRequest {
     pub ids: Vec<String>,
     /// Backend-neutral projection constraints.
     pub projection: Value,
+    /// Maximum expansion depth.
+    pub max_depth: u32,
+    /// Expansion direction.
+    pub direction: GraphDirection,
+    /// Typed filters and deterministic budgets.
+    pub policy: GraphReadPolicy,
 }
 
 /// Single-record create input.
@@ -554,6 +675,18 @@ pub enum KnowledgeDataErrorCode {
     /// Pagination token belongs to another query or schema.
     #[serde(rename = "INCOMPATIBLE_PAGINATION_TOKEN")]
     IncompatiblePaginationToken,
+    /// Pagination token belongs to an older consistent-read boundary.
+    #[serde(rename = "STALE_PAGINATION_TOKEN")]
+    StalePaginationToken,
+    /// A graph operation omitted a mandatory deterministic bound.
+    #[serde(rename = "UNBOUNDED_OPERATION")]
+    UnboundedOperation,
+    /// A bounded read exhausted its declared work or result budget.
+    #[serde(rename = "QUERY_BUDGET_EXCEEDED")]
+    QueryBudgetExceeded,
+    /// A high-degree node expansion lacked narrowing guards.
+    #[serde(rename = "SUPERNODE_EXPANSION_BLOCKED")]
+    SupernodeExpansionBlocked,
     /// Provider is unavailable.
     #[serde(rename = "BACKEND_UNAVAILABLE")]
     BackendUnavailable,
@@ -579,6 +712,10 @@ impl KnowledgeDataErrorCode {
             Self::Cancelled => "CANCELLED",
             Self::InvalidPaginationToken => "INVALID_PAGINATION_TOKEN",
             Self::IncompatiblePaginationToken => "INCOMPATIBLE_PAGINATION_TOKEN",
+            Self::StalePaginationToken => "STALE_PAGINATION_TOKEN",
+            Self::UnboundedOperation => "UNBOUNDED_OPERATION",
+            Self::QueryBudgetExceeded => "QUERY_BUDGET_EXCEEDED",
+            Self::SupernodeExpansionBlocked => "SUPERNODE_EXPANSION_BLOCKED",
             Self::BackendUnavailable => "BACKEND_UNAVAILABLE",
             Self::SchemaIncompatible => "SCHEMA_INCOMPATIBLE",
             Self::Internal => "INTERNAL",
@@ -704,6 +841,153 @@ pub struct GraphResult {
     pub records: Vec<KnowledgeRecord>,
     /// Projected relationships.
     pub relationships: Vec<Value>,
+    /// Ordered provenance for each returned traversal path.
+    pub paths: Vec<GraphPath>,
+    /// Whether a declared result bound stopped expansion.
+    pub truncated: bool,
+}
+
+/// One ordered node step in returned path provenance.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphPathStep {
+    /// Canonical node identity.
+    pub node_id: String,
+    /// Canonical node revision.
+    pub node_revision: u64,
+    /// Relationship used to enter this node, absent for the seed.
+    pub relationship_id: Option<String>,
+    /// Canonical relationship revision.
+    pub relationship_revision: Option<u64>,
+}
+
+/// Ordered canonical path from a requested seed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphPath {
+    /// Seed-first path steps.
+    pub steps: Vec<GraphPathStep>,
+}
+
+/// Bounded fundamental-read metric dimensions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoreReadQueryClass {
+    /// Identifier lookup.
+    PointRead,
+    /// Bounded record list.
+    List,
+    /// Snapshot-bound cursor page.
+    Pagination,
+    /// Filtered count.
+    Count,
+    /// One-hop neighborhood.
+    Neighbors,
+    /// Bounded traversal.
+    Traverse,
+    /// Bounded subgraph.
+    Subgraph,
+}
+
+impl CoreReadQueryClass {
+    /// Stable low-cardinality metrics label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PointRead => "point_read",
+            Self::List => "list",
+            Self::Pagination => "pagination",
+            Self::Count => "count",
+            Self::Neighbors => "neighbors",
+            Self::Traverse => "traverse",
+            Self::Subgraph => "subgraph",
+        }
+    }
+}
+
+/// Cumulative metrics for one bounded query class.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CoreReadMetricSeries {
+    /// Completed requests.
+    pub requests: u64,
+    /// Approximate median latency from fixed buckets.
+    pub p50_latency_ms: u64,
+    /// Approximate 95th-percentile latency from fixed buckets.
+    pub p95_latency_ms: u64,
+    /// Approximate 99th-percentile latency from fixed buckets.
+    pub p99_latency_ms: u64,
+    /// Records evaluated by exact provider-neutral predicates.
+    pub records_examined: u64,
+    /// Persistent payload page-ins attributed to this class.
+    pub page_ins: u64,
+    /// Persistent payload cache hits attributed to this class.
+    pub cache_hits: u64,
+    #[serde(skip)]
+    latency_buckets: [u64; 16],
+}
+
+/// Low-cardinality cumulative metrics keyed only by query class.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CoreReadMetrics {
+    series: BTreeMap<CoreReadQueryClass, CoreReadMetricSeries>,
+}
+
+impl CoreReadMetrics {
+    /// Return a cumulative series.
+    pub fn series(&self, query_class: CoreReadQueryClass) -> Option<&CoreReadMetricSeries> {
+        self.series.get(&query_class)
+    }
+
+    pub(crate) fn record(
+        &mut self,
+        query_class: CoreReadQueryClass,
+        latency_ms: u64,
+        records_examined: u64,
+        page_ins: u64,
+        cache_hits: u64,
+    ) {
+        const BOUNDS: [u64; 16] = [
+            0,
+            1,
+            2,
+            4,
+            8,
+            16,
+            32,
+            64,
+            128,
+            250,
+            500,
+            1_000,
+            2_000,
+            5_000,
+            10_000,
+            u64::MAX,
+        ];
+        let series = self.series.entry(query_class).or_default();
+        series.requests = series.requests.saturating_add(1);
+        series.records_examined = series.records_examined.saturating_add(records_examined);
+        series.page_ins = series.page_ins.saturating_add(page_ins);
+        series.cache_hits = series.cache_hits.saturating_add(cache_hits);
+        let bucket = BOUNDS
+            .iter()
+            .position(|bound| latency_ms <= *bound)
+            .unwrap_or(BOUNDS.len() - 1);
+        series.latency_buckets[bucket] = series.latency_buckets[bucket].saturating_add(1);
+        series.p50_latency_ms = histogram_percentile(&series.latency_buckets, &BOUNDS, 50);
+        series.p95_latency_ms = histogram_percentile(&series.latency_buckets, &BOUNDS, 95);
+        series.p99_latency_ms = histogram_percentile(&series.latency_buckets, &BOUNDS, 99);
+    }
+}
+
+fn histogram_percentile(counts: &[u64; 16], bounds: &[u64; 16], percentile: u64) -> u64 {
+    let total = counts.iter().sum::<u64>();
+    let target = total.saturating_mul(percentile).saturating_add(99) / 100;
+    let mut cumulative = 0_u64;
+    for (index, count) in counts.iter().enumerate() {
+        cumulative = cumulative.saturating_add(*count);
+        if cumulative >= target {
+            return bounds[index].min(10_000);
+        }
+    }
+    0
 }
 
 /// Write response.
@@ -891,6 +1175,12 @@ pub struct PaginationTokenClaims {
     pub schema_version: String,
     /// Last stable record cursor.
     pub cursor: String,
+    /// Fingerprint of the stable result snapshot at issuance.
+    #[serde(default)]
+    pub snapshot_fingerprint: String,
+    /// Number of records already returned under the original query limit.
+    #[serde(default)]
+    pub returned: u32,
 }
 
 /// Issues and verifies opaque pagination tokens.
@@ -1059,29 +1349,45 @@ impl KnowledgeDataEngine for CorroboreKnowledgeDataProvider<'_> {
         operation: KnowledgeDataOperation,
         context: &RequestContext,
     ) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
-        if let Some(query) = knowledge_data_projection_query(&operation) {
-            self.engine.prepare_graph_for_query(query).map_err(|_| {
-                KnowledgeDataError::new(
-                    KnowledgeDataErrorCode::BackendUnavailable,
-                    "failed to prepare the persistent Knowledge Data projection",
-                    true,
-                )
-            })?;
-        }
-        match operation {
+        validate_operation_before_projection(&operation)?;
+        let query_class = core_read_query_class(&operation);
+        let started = Instant::now();
+        let projection_stats = self
+            .engine
+            .prepare_knowledge_data_operation(&operation)
+            .map_err(|error| map_projection_error(&error.to_string()))?
+            .unwrap_or_default();
+        let result = match operation {
             KnowledgeDataOperation::Initialize(request) => self.initialize(request),
             KnowledgeDataOperation::Health(request) => self.health(request),
-            KnowledgeDataOperation::GetById(request) => self.get_by_id(request),
-            KnowledgeDataOperation::List(request) => self.list(request),
-            KnowledgeDataOperation::Paginate(request) => self.paginate(request),
-            KnowledgeDataOperation::Count(request) => self.count(request),
-            KnowledgeDataOperation::Neighbors(request) => self.neighbors(request),
+            KnowledgeDataOperation::GetById(request) => self.get_by_id(request, context),
+            KnowledgeDataOperation::List(request) => self.list(request, context),
+            KnowledgeDataOperation::Paginate(request) => self.paginate(request, context),
+            KnowledgeDataOperation::Count(request) => self.count(request, context),
+            KnowledgeDataOperation::Neighbors(request) => self.neighbors(request, context),
+            KnowledgeDataOperation::Traverse(request) => self.traverse(request, context),
+            KnowledgeDataOperation::Subgraph(request) => self.subgraph(request, context),
             unsupported => {
                 let operation = unsupported.kind();
                 let _ = context;
                 Err(KnowledgeDataError::unsupported(operation))
             }
+        };
+        if let Some(query_class) = query_class {
+            let records_examined = self
+                .engine
+                .graph()
+                .list_nodes()
+                .map_or(0, |records| records.len() as u64);
+            self.engine.core_read_metrics.record(
+                query_class,
+                u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                records_examined,
+                projection_stats.0,
+                projection_stats.1,
+            );
         }
+        result
     }
 
     fn is_cancelled(&self, cancellation_id: &str) -> bool {
@@ -1089,15 +1395,78 @@ impl KnowledgeDataEngine for CorroboreKnowledgeDataProvider<'_> {
     }
 }
 
-fn knowledge_data_projection_query(operation: &KnowledgeDataOperation) -> Option<&'static str> {
+fn validate_operation_before_projection(
+    operation: &KnowledgeDataOperation,
+) -> Result<(), KnowledgeDataError> {
     match operation {
-        KnowledgeDataOperation::Health(request) if request.verbose => Some("MATCH (n) RETURN n"),
-        KnowledgeDataOperation::GetById(_)
-        | KnowledgeDataOperation::List(_)
-        | KnowledgeDataOperation::Paginate(_)
-        | KnowledgeDataOperation::Count(_) => Some("MATCH (n) RETURN n"),
-        KnowledgeDataOperation::Neighbors(_) => Some("MATCH (n)-[r]->(m) RETURN n, r, m"),
+        KnowledgeDataOperation::GetById(request) if request.id.trim().is_empty() => {
+            Err(KnowledgeDataError::new(
+                KnowledgeDataErrorCode::InvalidRequest,
+                "record identifier must not be blank",
+                false,
+            ))
+        }
+        KnowledgeDataOperation::List(request) => validate_list_request(request),
+        KnowledgeDataOperation::Paginate(request) => {
+            validate_list_request(&request.query)?;
+            if request.page_size == 0 || request.page_size > 1_000 {
+                return Err(KnowledgeDataError::new(
+                    KnowledgeDataErrorCode::InvalidRequest,
+                    "page_size must be between 1 and 1000",
+                    false,
+                ));
+            }
+            Ok(())
+        }
+        KnowledgeDataOperation::Neighbors(request) => {
+            if !request.incoming && !request.outgoing {
+                return Err(KnowledgeDataError::new(
+                    KnowledgeDataErrorCode::InvalidRequest,
+                    "neighbors requires incoming, outgoing, or both",
+                    false,
+                ));
+            }
+            validate_graph_read(std::slice::from_ref(&request.id), 1, &request.policy)
+        }
+        KnowledgeDataOperation::Traverse(request) => {
+            validate_graph_read(&request.start_ids, request.max_depth, &request.policy)
+        }
+        KnowledgeDataOperation::Subgraph(request) => {
+            validate_graph_read(&request.ids, request.max_depth, &request.policy)
+        }
+        _ => Ok(()),
+    }
+}
+
+fn core_read_query_class(operation: &KnowledgeDataOperation) -> Option<CoreReadQueryClass> {
+    match operation {
+        KnowledgeDataOperation::GetById(_) => Some(CoreReadQueryClass::PointRead),
+        KnowledgeDataOperation::List(_) => Some(CoreReadQueryClass::List),
+        KnowledgeDataOperation::Paginate(_) => Some(CoreReadQueryClass::Pagination),
+        KnowledgeDataOperation::Count(_) => Some(CoreReadQueryClass::Count),
+        KnowledgeDataOperation::Neighbors(_) => Some(CoreReadQueryClass::Neighbors),
+        KnowledgeDataOperation::Traverse(_) => Some(CoreReadQueryClass::Traverse),
+        KnowledgeDataOperation::Subgraph(_) => Some(CoreReadQueryClass::Subgraph),
         _ => None,
+    }
+}
+
+fn map_projection_error(message: &str) -> KnowledgeDataError {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("supernode") {
+        KnowledgeDataError::new(
+            KnowledgeDataErrorCode::SupernodeExpansionBlocked,
+            message,
+            false,
+        )
+    } else if lower.contains("budget exceeded") || lower.contains("requires") {
+        KnowledgeDataError::new(KnowledgeDataErrorCode::QueryBudgetExceeded, message, false)
+    } else {
+        KnowledgeDataError::new(
+            KnowledgeDataErrorCode::BackendUnavailable,
+            "failed to prepare the persistent Knowledge Data projection",
+            true,
+        )
     }
 }
 
@@ -1134,14 +1503,16 @@ fn capability_status(operation: OperationKind) -> ProviderCapabilityStatus {
         | OperationKind::List
         | OperationKind::Paginate
         | OperationKind::Count
-        | OperationKind::Neighbors => ProviderCapabilityStatus::Supported,
+        | OperationKind::Neighbors
+        | OperationKind::Traverse
+        | OperationKind::Subgraph => ProviderCapabilityStatus::Supported,
         OperationKind::Migrate | OperationKind::Snapshot | OperationKind::Restore => {
             unsupported_status("portable lifecycle support is delivered by issue #52")
         }
         OperationKind::Search => unsupported_status(
             "structured and full-text search are delivered by issues #46 and #47",
         ),
-        OperationKind::Aggregate | OperationKind::Traverse | OperationKind::Subgraph => {
+        OperationKind::Aggregate => {
             unsupported_status("advanced read planning is delivered by issue #47")
         }
         OperationKind::Create
@@ -1301,21 +1672,35 @@ impl CorroboreKnowledgeDataProvider<'_> {
     fn get_by_id(
         &self,
         request: GetByIdRequest,
+        context: &RequestContext,
     ) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
-        let id = NodeId::new(request.id).map_err(graph_error)?;
-        let record = self
-            .engine
-            .graph()
-            .get_node(&id)
-            .map_err(graph_error)?
-            .map(node_to_record)
-            .transpose()?;
-        Ok(KnowledgeDataResponse::Record(record))
+        if request.id.trim().is_empty() {
+            return Err(KnowledgeDataError::new(
+                KnowledgeDataErrorCode::InvalidRequest,
+                "record identifier must not be blank",
+                false,
+            ));
+        }
+        let Some(node) = resolve_node_by_identifier(self.engine.graph(), &request.id)? else {
+            return Ok(KnowledgeDataResponse::Record(None));
+        };
+        if !node_is_accessible(&node, &context.access) {
+            return Err(KnowledgeDataError::new(
+                KnowledgeDataErrorCode::Unauthorized,
+                "record exists but is not visible to this access context",
+                false,
+            ));
+        }
+        Ok(KnowledgeDataResponse::Record(Some(node_to_record(node)?)))
     }
 
-    fn list(&self, request: ListRequest) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
+    fn list(
+        &self,
+        request: ListRequest,
+        context: &RequestContext,
+    ) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
         validate_list_request(&request)?;
-        let mut records = self.filtered_records(&request)?;
+        let mut records = self.filtered_records(&request, &context.access)?;
         records.truncate(request.limit as usize);
         Ok(KnowledgeDataResponse::Records(RecordPage {
             records,
@@ -1326,6 +1711,7 @@ impl CorroboreKnowledgeDataProvider<'_> {
     fn paginate(
         &self,
         request: PaginateRequest,
+        context: &RequestContext,
     ) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
         validate_list_request(&request.query)?;
         if request.page_size == 0 || request.page_size > 1_000 {
@@ -1336,27 +1722,57 @@ impl CorroboreKnowledgeDataProvider<'_> {
             ));
         }
         let query_fingerprint = query_fingerprint(&request.query)?;
-        let cursor = request
+        let claims = request
             .token
             .as_deref()
             .map(|token| {
                 self.pagination
                     .verify(token, &query_fingerprint, CORROBORE_SCHEMA_VERSION)
-                    .map(|claims| claims.cursor)
             })
             .transpose()?;
-        let mut records = self.filtered_records(&request.query)?;
-        if let Some(cursor) = cursor {
-            records.retain(|record| record.id > cursor);
+        let records = self.filtered_records(&request.query, &context.access)?;
+        let snapshot_fingerprint = snapshot_fingerprint(&records)?;
+        if claims
+            .as_ref()
+            .is_some_and(|claims| claims.snapshot_fingerprint != snapshot_fingerprint)
+        {
+            return Err(KnowledgeDataError::new(
+                KnowledgeDataErrorCode::StalePaginationToken,
+                "pagination token belongs to an older result snapshot",
+                false,
+            ));
         }
-        records.truncate(request.query.limit as usize);
-        let page_size = request.page_size as usize;
-        let has_more = records.len() > page_size;
-        records.truncate(page_size);
+        let start = match &claims {
+            Some(claims) => records
+                .iter()
+                .position(|record| record_cursor(record, &request.query.order_by) == claims.cursor)
+                .map(|index| index + 1)
+                .ok_or_else(|| {
+                    KnowledgeDataError::new(
+                        KnowledgeDataErrorCode::StalePaginationToken,
+                        "pagination cursor no longer exists in the declared snapshot",
+                        false,
+                    )
+                })?,
+            None => 0,
+        };
+        let returned = claims.as_ref().map_or(0, |claims| claims.returned);
+        let remaining = request.query.limit.saturating_sub(returned) as usize;
+        let take = remaining.min(request.page_size as usize);
+        let page_records = records
+            .iter()
+            .skip(start)
+            .take(take)
+            .cloned()
+            .collect::<Vec<_>>();
+        let total_returned =
+            returned.saturating_add(u32::try_from(page_records.len()).unwrap_or(u32::MAX));
+        let has_more = start.saturating_add(page_records.len()) < records.len()
+            && total_returned < request.query.limit;
         let next_token = if has_more {
-            let cursor = records
+            let cursor = page_records
                 .last()
-                .map(|record| record.id.clone())
+                .map(|record| record_cursor(record, &request.query.order_by))
                 .ok_or_else(|| {
                     KnowledgeDataError::new(
                         KnowledgeDataErrorCode::Internal,
@@ -1369,17 +1785,23 @@ impl CorroboreKnowledgeDataProvider<'_> {
                 query_fingerprint,
                 schema_version: CORROBORE_SCHEMA_VERSION.to_owned(),
                 cursor,
+                snapshot_fingerprint,
+                returned: total_returned,
             })?)
         } else {
             None
         };
         Ok(KnowledgeDataResponse::Records(RecordPage {
-            records,
+            records: page_records,
             next_token,
         }))
     }
 
-    fn count(&self, request: CountRequest) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
+    fn count(
+        &self,
+        request: CountRequest,
+        context: &RequestContext,
+    ) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
         if !request.filter.is_null()
             && request
                 .filter
@@ -1388,13 +1810,21 @@ impl CorroboreKnowledgeDataProvider<'_> {
         {
             return Err(KnowledgeDataError::unsupported(OperationKind::Count));
         }
-        let count = self.engine.graph().list_nodes().map_err(graph_error)?.len() as u64;
+        let query = ListRequest {
+            kinds: request.kinds,
+            filters: request.filters,
+            order_by: Vec::new(),
+            limit: 10_000,
+        };
+        validate_list_request(&query)?;
+        let count = self.filtered_records(&query, &context.access)?.len() as u64;
         Ok(KnowledgeDataResponse::Count(CountResult { count }))
     }
 
     fn neighbors(
         &self,
         request: NeighborsRequest,
+        context: &RequestContext,
     ) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
         if !request.incoming && !request.outgoing {
             return Err(KnowledgeDataError::new(
@@ -1403,64 +1833,248 @@ impl CorroboreKnowledgeDataProvider<'_> {
                 false,
             ));
         }
-        let id = NodeId::new(request.id).map_err(graph_error)?;
-        let mut relationships = Vec::new();
-        if request.incoming {
-            relationships.extend(self.engine.graph().incoming(&id).map_err(graph_error)?);
-        }
-        if request.outgoing {
-            relationships.extend(self.engine.graph().outgoing(&id).map_err(graph_error)?);
-        }
-        relationships.sort_by(|left, right| left.id().as_str().cmp(right.id().as_str()));
-        relationships.dedup_by(|left, right| left.id() == right.id());
+        let direction = match (request.incoming, request.outgoing) {
+            (true, true) => GraphDirection::Both,
+            (true, false) => GraphDirection::Incoming,
+            (false, true) => GraphDirection::Outgoing,
+            (false, false) => unreachable!("validated above"),
+        };
+        self.bounded_graph_read(
+            vec![request.id],
+            1,
+            direction,
+            request.policy,
+            &context.access,
+        )
+        .map(KnowledgeDataResponse::Graph)
+    }
 
-        let mut node_ids = Vec::new();
-        for relationship in &relationships {
-            node_ids.push(relationship.source().clone());
-            node_ids.push(relationship.target().clone());
+    fn traverse(
+        &self,
+        request: TraverseRequest,
+        context: &RequestContext,
+    ) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
+        if !request.constraints.is_null()
+            && request
+                .constraints
+                .as_object()
+                .is_none_or(|constraints| !constraints.is_empty())
+        {
+            return Err(KnowledgeDataError::new(
+                KnowledgeDataErrorCode::InvalidRequest,
+                "typed constraints must use graph read policy fields",
+                false,
+            ));
         }
-        node_ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
-        node_ids.dedup_by(|left, right| left == right);
-        let records = node_ids
-            .into_iter()
-            .map(|node_id| self.engine.graph().get_node(&node_id))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(graph_error)?
-            .into_iter()
-            .flatten()
-            .map(node_to_record)
-            .collect::<Result<Vec<_>, _>>()?;
-        let relationships = relationships
-            .into_iter()
-            .map(|relationship| serde_json::to_value(relationship).map_err(serialization_error))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(KnowledgeDataResponse::Graph(GraphResult {
-            records,
-            relationships,
-        }))
+        self.bounded_graph_read(
+            request.start_ids,
+            request.max_depth,
+            request.direction,
+            request.policy,
+            &context.access,
+        )
+        .map(KnowledgeDataResponse::Graph)
+    }
+
+    fn subgraph(
+        &self,
+        request: SubgraphRequest,
+        context: &RequestContext,
+    ) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
+        if !request.projection.is_null()
+            && request
+                .projection
+                .as_object()
+                .is_none_or(|projection| !projection.is_empty())
+        {
+            return Err(KnowledgeDataError::new(
+                KnowledgeDataErrorCode::InvalidRequest,
+                "typed projection constraints must use graph read policy fields",
+                false,
+            ));
+        }
+        self.bounded_graph_read(
+            request.ids,
+            request.max_depth,
+            request.direction,
+            request.policy,
+            &context.access,
+        )
+        .map(KnowledgeDataResponse::Graph)
     }
 
     fn filtered_records(
         &self,
         request: &ListRequest,
+        access: &AccessContext,
     ) -> Result<Vec<KnowledgeRecord>, KnowledgeDataError> {
-        let mut records = self
+        let mut records: Vec<KnowledgeRecord> = self
             .engine
             .graph()
             .list_nodes()
             .map_err(graph_error)?
             .into_iter()
-            .filter(|node| {
-                request.kinds.is_empty()
-                    || request
-                        .kinds
+            .filter(|node| node_is_accessible(node, access))
+            .map(node_to_record)
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|record| record_matches_request(record, request))
+            .collect();
+        records.sort_by(|left, right| compare_records(left, right, &request.order_by));
+        Ok(records)
+    }
+
+    fn bounded_graph_read(
+        &self,
+        start_ids: Vec<String>,
+        max_depth: u32,
+        direction: GraphDirection,
+        policy: GraphReadPolicy,
+        access: &AccessContext,
+    ) -> Result<GraphResult, KnowledgeDataError> {
+        validate_graph_read(&start_ids, max_depth, &policy)?;
+        let graph = self.engine.graph();
+        let mut selected_nodes = BTreeMap::<String, Node>::new();
+        let mut selected_relationships = BTreeMap::<String, Relationship>::new();
+        let mut paths = Vec::new();
+        let mut queue = Vec::new();
+        let mut visited = HashSet::new();
+
+        for identifier in start_ids {
+            let Some(node) = resolve_node_by_identifier(graph, &identifier)? else {
+                continue;
+            };
+            if !node_is_accessible(&node, access) {
+                continue;
+            }
+            let canonical_id = canonical_node_id(&node);
+            if visited.insert(node.id().clone()) {
+                let path = vec![GraphPathStep {
+                    node_id: canonical_id.clone(),
+                    node_revision: node.version(),
+                    relationship_id: None,
+                    relationship_revision: None,
+                }];
+                paths.push(GraphPath {
+                    steps: path.clone(),
+                });
+                queue.push((node.id().clone(), 0_u32, path));
+                selected_nodes.insert(canonical_id, node);
+            }
+        }
+
+        let mut expansions = 0_u32;
+        let mut truncated = false;
+        let mut cursor = 0_usize;
+        while cursor < queue.len() {
+            let (owner, depth, path) = queue[cursor].clone();
+            cursor += 1;
+            if depth >= max_depth {
+                continue;
+            }
+            let mut relationships = incident_relationships(graph, &owner, direction)?;
+            relationships.sort_by(|left, right| {
+                canonical_relationship_id(left).cmp(&canonical_relationship_id(right))
+            });
+            relationships.dedup_by(|left, right| left.id() == right.id());
+            let guarded = !policy.relationship_types.is_empty()
+                || !policy.node_kinds.is_empty()
+                || !policy.filters.is_empty();
+            if relationships.len() as u32 > policy.supernode_threshold && !guarded {
+                return Err(KnowledgeDataError::new(
+                    KnowledgeDataErrorCode::SupernodeExpansionBlocked,
+                    format!(
+                        "supernode expansion blocked at {} with degree {}",
+                        canonical_node_id(
+                            &graph
+                                .get_node(&owner)
+                                .map_err(graph_error)?
+                                .ok_or_else(|| graph_error("missing traversal owner"))?
+                        ),
+                        relationships.len()
+                    ),
+                    false,
+                ));
+            }
+
+            for relationship in relationships {
+                if !policy.relationship_types.is_empty()
+                    && !policy
+                        .relationship_types
                         .iter()
-                        .any(|kind| node.has_label(kind.as_str()))
-            })
+                        .any(|kind| kind == relationship.rel_type().as_str())
+                {
+                    continue;
+                }
+                expansions = expansions.saturating_add(1);
+                if expansions > policy.max_expansions {
+                    return Err(KnowledgeDataError::new(
+                        KnowledgeDataErrorCode::QueryBudgetExceeded,
+                        "graph read exhausted its relationship expansion budget",
+                        false,
+                    ));
+                }
+                let neighbor_id = if relationship.source() == &owner {
+                    relationship.target().clone()
+                } else {
+                    relationship.source().clone()
+                };
+                let Some(neighbor) = graph.get_node(&neighbor_id).map_err(graph_error)? else {
+                    continue;
+                };
+                if !node_is_accessible(&neighbor, access) {
+                    continue;
+                }
+                let neighbor_record = node_to_record(neighbor.clone())?;
+                if !record_matches_graph_policy(&neighbor_record, &policy) {
+                    continue;
+                }
+                if selected_nodes.len() as u32 >= policy.max_results
+                    && !selected_nodes.contains_key(&neighbor_record.id)
+                {
+                    truncated = true;
+                    break;
+                }
+                let relationship_id = canonical_relationship_id(&relationship);
+                selected_relationships
+                    .entry(relationship_id.clone())
+                    .or_insert_with(|| relationship.clone());
+                selected_nodes
+                    .entry(neighbor_record.id.clone())
+                    .or_insert_with(|| neighbor.clone());
+                if visited.insert(neighbor_id.clone()) {
+                    let mut neighbor_path = path.clone();
+                    neighbor_path.push(GraphPathStep {
+                        node_id: neighbor_record.id,
+                        node_revision: neighbor.version(),
+                        relationship_id: Some(relationship_id),
+                        relationship_revision: Some(relationship.version()),
+                    });
+                    paths.push(GraphPath {
+                        steps: neighbor_path.clone(),
+                    });
+                    queue.push((neighbor_id, depth + 1, neighbor_path));
+                }
+            }
+            if truncated {
+                break;
+            }
+        }
+
+        let records = selected_nodes
+            .into_values()
             .map(node_to_record)
             .collect::<Result<Vec<_>, _>>()?;
-        records.sort_by(|left, right| left.id.cmp(&right.id));
-        Ok(records)
+        let relationships = selected_relationships
+            .into_values()
+            .map(relationship_to_value)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(GraphResult {
+            records,
+            relationships,
+            paths,
+            truncated,
+        })
     }
 }
 
@@ -1479,7 +2093,57 @@ fn validate_list_request(request: &ListRequest) -> Result<(), KnowledgeDataError
             false,
         ));
     }
+    for filter in &request.filters {
+        if filter.field.trim().is_empty()
+            || (filter.operator == ReadFilterOperator::Exists && filter.value.is_some())
+            || (filter.operator != ReadFilterOperator::Exists && filter.value.is_none())
+        {
+            return Err(KnowledgeDataError::new(
+                KnowledgeDataErrorCode::InvalidRequest,
+                "read filters require a field and operator-compatible value",
+                false,
+            ));
+        }
+    }
+    if request
+        .order_by
+        .iter()
+        .any(|order| order.field.trim().is_empty())
+    {
+        return Err(KnowledgeDataError::new(
+            KnowledgeDataErrorCode::InvalidRequest,
+            "read order fields must not be blank",
+            false,
+        ));
+    }
     Ok(())
+}
+
+fn validate_graph_read(
+    start_ids: &[String],
+    max_depth: u32,
+    policy: &GraphReadPolicy,
+) -> Result<(), KnowledgeDataError> {
+    if start_ids.is_empty()
+        || start_ids.iter().any(|id| id.trim().is_empty())
+        || max_depth == 0
+        || max_depth > 8
+        || policy.max_results == 0
+        || policy.max_expansions == 0
+        || policy.supernode_threshold == 0
+    {
+        return Err(KnowledgeDataError::new(
+            KnowledgeDataErrorCode::UnboundedOperation,
+            "graph reads require seeds, depth 1..=8, and non-zero result, expansion and supernode bounds",
+            false,
+        ));
+    }
+    validate_list_request(&ListRequest {
+        kinds: policy.node_kinds.clone(),
+        filters: policy.filters.clone(),
+        order_by: Vec::new(),
+        limit: policy.max_results.min(10_000),
+    })
 }
 
 fn ready() -> ProviderReadiness {
@@ -1503,16 +2167,278 @@ fn query_fingerprint(request: &ListRequest) -> Result<String, KnowledgeDataError
 }
 
 fn node_to_record(node: Node) -> Result<KnowledgeRecord, KnowledgeDataError> {
-    let id = node.id().as_str().to_owned();
-    let kind = node.labels().first().cloned().unwrap_or_default();
+    let id = canonical_node_id(&node);
+    let body = match node.property("opencti.raw") {
+        Some(PropertyValue::Json(value)) => value.clone(),
+        _ => serde_json::to_value(&node).map_err(serialization_error)?,
+    };
+    let kind = body
+        .get("type")
+        .and_then(Value::as_str)
+        .or_else(|| match node.property("opencti.field.type") {
+            Some(PropertyValue::String(value)) => Some(value.as_str()),
+            _ => None,
+        })
+        .map(str::to_owned)
+        .unwrap_or_else(|| node.labels().first().cloned().unwrap_or_default());
     let revision = node.version();
-    let body = serde_json::to_value(node).map_err(serialization_error)?;
     Ok(KnowledgeRecord {
         id,
         kind,
         revision,
         body,
     })
+}
+
+fn canonical_node_id(node: &Node) -> String {
+    match node.property("opencti.canonical_id") {
+        Some(PropertyValue::String(value)) => value.clone(),
+        _ => node.id().as_str().to_owned(),
+    }
+}
+
+fn canonical_relationship_id(relationship: &Relationship) -> String {
+    match relationship.property("opencti.canonical_id") {
+        Some(PropertyValue::String(value)) => value.clone(),
+        _ => relationship.id().as_str().to_owned(),
+    }
+}
+
+fn relationship_to_value(relationship: Relationship) -> Result<Value, KnowledgeDataError> {
+    match relationship.property("opencti.raw") {
+        Some(PropertyValue::Json(value)) => Ok(value.clone()),
+        _ => serde_json::to_value(relationship).map_err(serialization_error),
+    }
+}
+
+fn resolve_node_by_identifier(
+    graph: &Graph,
+    identifier: &str,
+) -> Result<Option<Node>, KnowledgeDataError> {
+    let nodes = graph.list_nodes().map_err(graph_error)?;
+    Ok(nodes
+        .into_iter()
+        .find(|node| node_matches_identifier(node, identifier)))
+}
+
+fn node_matches_identifier(node: &Node, identifier: &str) -> bool {
+    if node.id().as_str() == identifier || canonical_node_id(node) == identifier {
+        return true;
+    }
+    match node.property("opencti.identifiers") {
+        Some(PropertyValue::Json(value)) => json_contains_identifier(value, identifier),
+        Some(PropertyValue::String(value)) => value == identifier,
+        Some(PropertyValue::StringList(values)) => values.iter().any(|value| value == identifier),
+        _ => false,
+    }
+}
+
+fn json_contains_identifier(value: &Value, identifier: &str) -> bool {
+    match value {
+        Value::String(value) => value == identifier,
+        Value::Array(values) => values
+            .iter()
+            .any(|value| json_contains_identifier(value, identifier)),
+        Value::Object(values) => ["value", "id", "external_id"]
+            .iter()
+            .filter_map(|key| values.get(*key))
+            .any(|value| json_contains_identifier(value, identifier)),
+        _ => false,
+    }
+}
+
+fn node_is_accessible(node: &Node, access: &AccessContext) -> bool {
+    if access.roles.iter().any(|role| role == "system") {
+        return true;
+    }
+    let Some(PropertyValue::Json(metadata)) = node.property("opencti.access") else {
+        return true;
+    };
+    let markings = json_string_array(metadata.get("marking_ids"));
+    if !markings
+        .iter()
+        .all(|marking| access.marking_ids.contains(marking))
+    {
+        return false;
+    }
+    let organizations = json_string_array(metadata.get("organization_ids"));
+    if !organizations.is_empty()
+        && !organizations
+            .iter()
+            .any(|organization| access.organization_ids.contains(organization))
+    {
+        return false;
+    }
+    let tenants = json_string_array(metadata.get("tenant_ids"));
+    if access
+        .tenant_id
+        .as_ref()
+        .is_some_and(|tenant| !tenants.is_empty() && !tenants.contains(tenant))
+    {
+        return false;
+    }
+    let members = metadata
+        .get("authorized_members")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    members.is_empty()
+        || members.iter().any(|member| {
+            json_contains_identifier(member, &access.subject_id)
+                || access
+                    .roles
+                    .iter()
+                    .any(|role| json_contains_identifier(member, role))
+                || access
+                    .organization_ids
+                    .iter()
+                    .any(|organization| json_contains_identifier(member, organization))
+        })
+}
+
+fn json_string_array(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect()
+}
+
+fn record_matches_request(record: &KnowledgeRecord, request: &ListRequest) -> bool {
+    (request.kinds.is_empty()
+        || request
+            .kinds
+            .iter()
+            .any(|kind| kind.eq_ignore_ascii_case(&record.kind)))
+        && request
+            .filters
+            .iter()
+            .all(|filter| record_matches_filter(record, filter))
+}
+
+fn record_matches_graph_policy(record: &KnowledgeRecord, policy: &GraphReadPolicy) -> bool {
+    (policy.node_kinds.is_empty()
+        || policy
+            .node_kinds
+            .iter()
+            .any(|kind| kind.eq_ignore_ascii_case(&record.kind)))
+        && policy
+            .filters
+            .iter()
+            .all(|filter| record_matches_filter(record, filter))
+}
+
+fn record_matches_filter(record: &KnowledgeRecord, filter: &ReadFilter) -> bool {
+    let actual = record_field(record, &filter.field);
+    match filter.operator {
+        ReadFilterOperator::Exists => actual.is_some(),
+        ReadFilterOperator::Equal => actual == filter.value.as_ref(),
+        ReadFilterOperator::NotEqual => actual.is_some() && actual != filter.value.as_ref(),
+        operator => actual
+            .zip(filter.value.as_ref())
+            .and_then(|(actual, expected)| compare_values(actual, expected))
+            .is_some_and(|ordering| match operator {
+                ReadFilterOperator::GreaterThan => ordering.is_gt(),
+                ReadFilterOperator::GreaterThanOrEqual => ordering.is_ge(),
+                ReadFilterOperator::LessThan => ordering.is_lt(),
+                ReadFilterOperator::LessThanOrEqual => ordering.is_le(),
+                ReadFilterOperator::Equal
+                | ReadFilterOperator::NotEqual
+                | ReadFilterOperator::Exists => false,
+            }),
+    }
+}
+
+fn record_field<'a>(record: &'a KnowledgeRecord, field: &str) -> Option<&'a Value> {
+    match field {
+        "id" => record.body.get("id"),
+        "type" | "kind" => record.body.get("type"),
+        _ => {
+            let mut value = &record.body;
+            for component in field.split('.') {
+                value = value.get(component)?;
+            }
+            Some(value)
+        }
+    }
+}
+
+fn compare_values(left: &Value, right: &Value) -> Option<Ordering> {
+    match (left, right) {
+        (Value::Number(left), Value::Number(right)) => left.as_f64()?.partial_cmp(&right.as_f64()?),
+        (Value::String(left), Value::String(right)) => Some(left.cmp(right)),
+        (Value::Bool(left), Value::Bool(right)) => Some(left.cmp(right)),
+        (Value::Null, Value::Null) => Some(Ordering::Equal),
+        _ => None,
+    }
+}
+
+fn compare_records(
+    left: &KnowledgeRecord,
+    right: &KnowledgeRecord,
+    ordering: &[ReadOrder],
+) -> Ordering {
+    for order in ordering {
+        let value_order = match (
+            record_field(left, &order.field),
+            record_field(right, &order.field),
+        ) {
+            (Some(left), Some(right)) => compare_values(left, right).unwrap_or(Ordering::Equal),
+            (None, Some(_)) => Ordering::Less,
+            (Some(_), None) => Ordering::Greater,
+            (None, None) => Ordering::Equal,
+        };
+        let value_order = match order.direction {
+            SortDirection::Ascending => value_order,
+            SortDirection::Descending => value_order.reverse(),
+        };
+        if !value_order.is_eq() {
+            return value_order;
+        }
+    }
+    left.id.cmp(&right.id)
+}
+
+fn record_cursor(record: &KnowledgeRecord, ordering: &[ReadOrder]) -> String {
+    let mut values = ordering
+        .iter()
+        .map(|order| {
+            record_field(record, &order.field)
+                .cloned()
+                .unwrap_or(Value::Null)
+        })
+        .collect::<Vec<_>>();
+    values.push(Value::String(record.id.clone()));
+    serde_json::to_string(&values).unwrap_or_else(|_| record.id.clone())
+}
+
+fn snapshot_fingerprint(records: &[KnowledgeRecord]) -> Result<String, KnowledgeDataError> {
+    let bytes = serde_json::to_vec(
+        &records
+            .iter()
+            .map(|record| (&record.id, record.revision))
+            .collect::<Vec<_>>(),
+    )
+    .map_err(serialization_error)?;
+    let digest = Sha256::digest(bytes);
+    Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn incident_relationships(
+    graph: &Graph,
+    node_id: &NodeId,
+    direction: GraphDirection,
+) -> Result<Vec<Relationship>, KnowledgeDataError> {
+    let mut relationships = Vec::new();
+    if matches!(direction, GraphDirection::Incoming | GraphDirection::Both) {
+        relationships.extend(graph.incoming(node_id).map_err(graph_error)?);
+    }
+    if matches!(direction, GraphDirection::Outgoing | GraphDirection::Both) {
+        relationships.extend(graph.outgoing(node_id).map_err(graph_error)?);
+    }
+    Ok(relationships)
 }
 
 fn graph_error(error: impl fmt::Display) -> KnowledgeDataError {

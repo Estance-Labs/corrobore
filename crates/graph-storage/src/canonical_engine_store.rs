@@ -17,9 +17,10 @@ use std::{
 
 use graph_core::{
     AdjacencyDirection, Graph, GraphPager, GraphPersistenceSnapshot, GraphSequenceFloor, Node,
-    NodeId, RecordStatus, Relationship, RelationshipId,
+    NodeId, PropertyValue, RecordStatus, Relationship, RelationshipId,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::Value;
 
 use crate::{
     AtomicPersistentMutationAdjacencyRecord, AtomicPersistentMutationBatch,
@@ -27,14 +28,15 @@ use crate::{
     AtomicPersistentMutationRelationshipRecord, AtomicPersistentRecoveryPath,
     AtomicPersistentRuntimeState, DurableTransactionId, EncodedRecord, FileBackedGraphPager,
     GraphCatalog, GraphStorageError, GraphStorageResult, JsonLinesRecordCodec, MutationCrashStage,
-    PersistedAdjacencyEntry, PersistedRecordEnvelope, PersistedRecordKind, RecordCodec,
-    RecordFormat, StorageRef, StorageRoot, StorageSegment, StorageVersion,
-    apply_atomic_persistent_mutation_batch, create_file_backed_graph_pager,
+    NodeReadIndexDocument, NodeReadIndexValue, PersistedAdjacencyEntry, PersistedRecordEnvelope,
+    PersistedRecordKind, RecordCodec, RecordFormat, StorageRef, StorageRoot, StorageSegment,
+    StorageVersion, apply_atomic_persistent_mutation_batch, create_file_backed_graph_pager,
     create_file_backed_graph_store, create_node_record_envelope,
     create_relationship_record_envelope, read_incoming_adjacency_by_node_id,
     read_incoming_adjacency_log_for_catalog_rebuild, read_outgoing_adjacency_by_node_id,
     read_outgoing_adjacency_log_for_catalog_rebuild,
-    recover_atomic_persistent_runtime_state_with_report, resolve_node_ids_by_label,
+    recover_atomic_persistent_runtime_state_with_report, resolve_identifier_index_entries,
+    resolve_node_ids_by_label, resolve_property_index_entries, resolve_property_presence_entries,
     resolve_relationship_ids_by_type,
 };
 
@@ -64,6 +66,53 @@ impl Default for CanonicalStoreOptions {
     }
 }
 
+/// Scalar operators supported by compact canonical property indexes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CanonicalPropertyOperator {
+    /// Exact typed equality.
+    Equal,
+    /// Typed inequality.
+    NotEqual,
+    /// Property presence.
+    Exists,
+    /// Strict lower bound.
+    GreaterThan,
+    /// Inclusive lower bound.
+    GreaterThanOrEqual,
+    /// Strict upper bound.
+    LessThan,
+    /// Inclusive upper bound.
+    LessThanOrEqual,
+}
+
+/// One storage-neutral property index predicate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CanonicalPropertyFilter {
+    /// Canonical graph property name.
+    pub field: String,
+    /// Comparison operator.
+    pub operator: CanonicalPropertyOperator,
+    /// Typed comparison value.
+    pub value: Option<Value>,
+}
+
+/// Bounded persistent adjacency projection requested by a graph read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CanonicalAdjacencyProjection {
+    /// Include incoming adjacency.
+    pub incoming: bool,
+    /// Include outgoing adjacency.
+    pub outgoing: bool,
+    /// Optional relationship-type allow-list.
+    pub relationship_types: Vec<String>,
+    /// Maximum expansion depth.
+    pub max_depth: u32,
+    /// Hard relationship expansion budget.
+    pub max_relationships: u32,
+    /// Degree threshold for explicit supernode refusal.
+    pub supernode_threshold: u32,
+}
+
 /// Catalog selection used to build a bounded operational graph projection.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CanonicalProjectionRequest {
@@ -71,10 +120,16 @@ pub struct CanonicalProjectionRequest {
     pub include_nodes: bool,
     /// Optional node-label index key.
     pub node_label: Option<String>,
+    /// Stable graph or OpenCTI identifiers resolved through compact metadata.
+    pub identifiers: Vec<String>,
+    /// Compact property and temporal index predicates.
+    pub property_filters: Vec<CanonicalPropertyFilter>,
     /// Optional relationship-type index key.
     pub relationship_type: Option<String>,
     /// Whether relationships and their endpoint nodes are required.
     pub include_relationships: bool,
+    /// Optional bounded adjacency expansion rooted at selected identifiers.
+    pub adjacency: Option<CanonicalAdjacencyProjection>,
 }
 
 impl CanonicalProjectionRequest {
@@ -83,8 +138,24 @@ impl CanonicalProjectionRequest {
         Self {
             include_nodes: true,
             node_label: Some(label.into()),
+            identifiers: Vec::new(),
+            property_filters: Vec::new(),
             relationship_type: None,
             include_relationships: false,
+            adjacency: None,
+        }
+    }
+
+    /// Select one current node through its graph or OpenCTI identifier index.
+    pub fn for_identifier(identifier: impl Into<String>) -> Self {
+        Self {
+            include_nodes: true,
+            node_label: None,
+            identifiers: vec![identifier.into()],
+            property_filters: Vec::new(),
+            relationship_type: None,
+            include_relationships: false,
+            adjacency: None,
         }
     }
 
@@ -93,8 +164,11 @@ impl CanonicalProjectionRequest {
         Self {
             include_nodes: true,
             node_label: None,
+            identifiers: Vec::new(),
+            property_filters: Vec::new(),
             relationship_type: None,
             include_relationships: false,
+            adjacency: None,
         }
     }
 
@@ -103,8 +177,11 @@ impl CanonicalProjectionRequest {
         Self {
             include_nodes: true,
             node_label: None,
+            identifiers: Vec::new(),
+            property_filters: Vec::new(),
             relationship_type: None,
             include_relationships: true,
+            adjacency: None,
         }
     }
 
@@ -112,6 +189,28 @@ impl CanonicalProjectionRequest {
     pub fn with_relationships(mut self, relationship_type: Option<String>) -> Self {
         self.include_relationships = true;
         self.relationship_type = relationship_type;
+        self
+    }
+
+    /// Add conjunctive compact property predicates.
+    pub fn with_property_filters(
+        mut self,
+        filters: impl IntoIterator<Item = CanonicalPropertyFilter>,
+    ) -> Self {
+        self.property_filters = filters.into_iter().collect();
+        self
+    }
+
+    /// Replace the identifier seed set used by point or graph reads.
+    pub fn with_identifiers(mut self, identifiers: impl IntoIterator<Item = String>) -> Self {
+        self.identifiers = identifiers.into_iter().collect();
+        self
+    }
+
+    /// Add one bounded persistent adjacency expansion.
+    pub fn with_adjacency(mut self, adjacency: CanonicalAdjacencyProjection) -> Self {
+        self.include_relationships = true;
+        self.adjacency = Some(adjacency);
         self
     }
 }
@@ -159,6 +258,23 @@ pub struct CanonicalStoreStats {
     pub label_index_entries: u64,
     /// Relationship-type-index bucket count.
     pub relationship_type_index_entries: u64,
+    /// Distinct identifier-to-node mappings.
+    pub identifier_index_entries: u64,
+    /// Scalar property index values.
+    pub property_index_entries: u64,
+    /// Temporal scalar index values.
+    pub temporal_index_entries: u64,
+}
+
+/// Diagnostics for the most recent bounded projection.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CanonicalProjectionStats {
+    /// Compact access paths used before any payload page-in.
+    pub access_paths: Vec<&'static str>,
+    /// Payload page-ins for this projection.
+    pub page_ins: u64,
+    /// Resident payload cache hits for this projection.
+    pub cache_hits: u64,
 }
 
 /// WAL-backed, append-only canonical graph store.
@@ -171,6 +287,7 @@ pub struct CanonicalEngineStore {
     stats: CanonicalStoreStats,
     resident_nodes: HashMap<NodeId, Node>,
     resident_relationships: HashMap<RelationshipId, Relationship>,
+    last_projection_stats: CanonicalProjectionStats,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -231,6 +348,7 @@ impl CanonicalEngineStore {
             stats: CanonicalStoreStats::default(),
             resident_nodes: HashMap::new(),
             resident_relationships: HashMap::new(),
+            last_projection_stats: CanonicalProjectionStats::default(),
         };
         store.migrate_legacy_snapshot_if_needed()?;
         store.refresh_index_stats();
@@ -262,6 +380,11 @@ impl CanonicalEngineStore {
         &self.stats
     }
 
+    /// Return diagnostics for the latest bounded projection.
+    pub fn last_projection_stats(&self) -> &CanonicalProjectionStats {
+        &self.last_projection_stats
+    }
+
     /// Build a lightweight file-backed handle from the currently recovered
     /// catalog and adjacency metadata without paging payloads.
     pub fn file_backed_store(&self) -> GraphStorageResult<crate::FileBackedGraphStore> {
@@ -278,12 +401,38 @@ impl CanonicalEngineStore {
         &mut self,
         request: CanonicalProjectionRequest,
     ) -> GraphStorageResult<Graph> {
+        let mut access_paths = Vec::new();
+        if !request.identifiers.is_empty() {
+            access_paths.push("identifier_index");
+        }
+        if request.node_label.is_some() {
+            access_paths.push("label_index");
+        }
+        if request
+            .property_filters
+            .iter()
+            .any(|filter| !is_temporal_field(&filter.field))
+        {
+            access_paths.push("property_index");
+        }
+        if request
+            .property_filters
+            .iter()
+            .any(|filter| is_temporal_field(&filter.field))
+        {
+            access_paths.push("temporal_index");
+        }
+        if request.adjacency.is_some() {
+            access_paths.push("persistent_adjacency");
+        }
         let mut node_ids = if request.include_nodes {
-            self.select_node_ids(request.node_label.as_deref())?
+            self.select_indexed_node_ids(&request)?
         } else {
             Vec::new()
         };
-        let relationship_ids = if request.include_relationships {
+        let relationship_ids = if let Some(adjacency) = &request.adjacency {
+            self.select_adjacency_relationship_ids(&mut node_ids, adjacency)?
+        } else if request.include_relationships {
             self.select_relationship_ids(request.relationship_type.as_deref())?
         } else {
             Vec::new()
@@ -327,6 +476,11 @@ impl CanonicalEngineStore {
         }
 
         self.record_projection_stats(&nodes, &relationships, page_ins, cache_hits);
+        self.last_projection_stats = CanonicalProjectionStats {
+            access_paths,
+            page_ins,
+            cache_hits,
+        };
         Graph::from_current_records(nodes, relationships, self.sequence_floor())
             .map_err(graph_error)
     }
@@ -368,23 +522,211 @@ impl CanonicalEngineStore {
         Ok(outcome)
     }
 
-    fn select_node_ids(&self, label: Option<&str>) -> GraphStorageResult<Vec<NodeId>> {
-        let mut ids = match label {
-            Some(label) => resolve_node_ids_by_label(
+    fn select_indexed_node_ids(
+        &self,
+        request: &CanonicalProjectionRequest,
+    ) -> GraphStorageResult<Vec<NodeId>> {
+        let mut selected: Option<HashSet<NodeId>> = (!request.identifiers.is_empty()).then(|| {
+            request
+                .identifiers
+                .iter()
+                .flat_map(|identifier| {
+                    resolve_identifier_index_entries(&self.state.catalog, identifier)
+                })
+                .map(|entry| entry.node_id)
+                .collect()
+        });
+        if let Some(label) = request.node_label.as_deref() {
+            let label_ids = resolve_node_ids_by_label(
                 &self.state.catalog,
                 label,
                 crate::CatalogIndexLookupMode::EmptyWhenUnknown,
-            )?,
-            None => self
-                .state
-                .catalog
-                .latest_node_records
-                .keys()
-                .cloned()
-                .collect(),
-        };
+            )?
+            .into_iter()
+            .collect::<HashSet<_>>();
+            intersect_selection(&mut selected, label_ids);
+        }
+        for filter in &request.property_filters {
+            let temporal = is_temporal_field(&filter.field);
+            let matches = self.property_filter_node_ids(filter, temporal)?;
+            intersect_selection(&mut selected, matches);
+        }
+        let mut ids: Vec<NodeId> = selected.map_or_else(
+            || {
+                self.state
+                    .catalog
+                    .latest_node_records
+                    .keys()
+                    .cloned()
+                    .collect()
+            },
+            |ids| ids.into_iter().collect(),
+        );
         ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
         ids.dedup();
+        Ok(ids)
+    }
+
+    fn property_filter_node_ids(
+        &self,
+        filter: &CanonicalPropertyFilter,
+        temporal: bool,
+    ) -> GraphStorageResult<HashSet<NodeId>> {
+        let present = || {
+            resolve_property_presence_entries(&self.state.catalog, &filter.field, temporal)
+                .into_iter()
+                .map(|entry| entry.node_id)
+                .collect::<HashSet<_>>()
+        };
+        match filter.operator {
+            CanonicalPropertyOperator::Exists => Ok(present()),
+            CanonicalPropertyOperator::Equal | CanonicalPropertyOperator::NotEqual => {
+                let encoded = encode_filter_value(filter)?;
+                let equal = resolve_property_index_entries(
+                    &self.state.catalog,
+                    &filter.field,
+                    &encoded,
+                    temporal,
+                )
+                .into_iter()
+                .map(|entry| entry.node_id)
+                .collect::<HashSet<_>>();
+                if filter.operator == CanonicalPropertyOperator::Equal {
+                    Ok(equal)
+                } else {
+                    Ok(present().difference(&equal).cloned().collect())
+                }
+            }
+            operator => {
+                let expected =
+                    filter
+                        .value
+                        .as_ref()
+                        .ok_or_else(|| GraphStorageError::OperationFailed {
+                            operation: "load_canonical_graph_projection",
+                            message: format!("filter {} requires a comparison value", filter.field),
+                        })?;
+                let index = if temporal {
+                    &self.state.catalog.metadata_indexes.temporal
+                } else {
+                    &self.state.catalog.metadata_indexes.properties
+                };
+                let mut matches = HashSet::new();
+                for (encoded, entries) in index.get(&filter.field).into_iter().flatten() {
+                    let actual: Value = serde_json::from_str(encoded).map_err(|error| {
+                        GraphStorageError::OperationFailed {
+                            operation: "load_canonical_graph_projection",
+                            message: format!("invalid compact index value: {error}"),
+                        }
+                    })?;
+                    if indexed_value_matches_range(&actual, expected, operator) {
+                        matches.extend(entries.iter().map(|entry| entry.node_id.clone()));
+                    }
+                }
+                Ok(matches)
+            }
+        }
+    }
+
+    fn select_adjacency_relationship_ids(
+        &self,
+        node_ids: &mut Vec<NodeId>,
+        request: &CanonicalAdjacencyProjection,
+    ) -> GraphStorageResult<Vec<RelationshipId>> {
+        if request.max_depth == 0 || request.max_relationships == 0 {
+            return Err(GraphStorageError::OperationFailed {
+                operation: "load_canonical_graph_projection",
+                message: "adjacency expansion must declare non-zero depth and relationship budget"
+                    .to_owned(),
+            });
+        }
+        let allowed_types = request
+            .relationship_types
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>();
+        let mut visited_nodes = node_ids.iter().cloned().collect::<HashSet<_>>();
+        let mut frontier = node_ids.clone();
+        let mut relationship_ids = HashSet::new();
+        for _ in 0..request.max_depth {
+            let mut next = Vec::new();
+            for owner in frontier {
+                let mut entries = Vec::new();
+                if request.outgoing {
+                    entries.extend(
+                        read_outgoing_adjacency_by_node_id(
+                            &self.state.adjacency_storage,
+                            &self.state.catalog,
+                            &owner,
+                            crate::AdjacencyStorageLookupMode::EmptyWhenKnownNodeHasNoEdges,
+                        )?
+                        .entries,
+                    );
+                }
+                if request.incoming {
+                    entries.extend(
+                        read_incoming_adjacency_by_node_id(
+                            &self.state.adjacency_storage,
+                            &self.state.catalog,
+                            &owner,
+                            crate::AdjacencyStorageLookupMode::EmptyWhenKnownNodeHasNoEdges,
+                        )?
+                        .entries,
+                    );
+                }
+                entries.sort_by(|left, right| {
+                    left.relationship_id
+                        .as_str()
+                        .cmp(right.relationship_id.as_str())
+                });
+                entries.dedup_by(|left, right| left.relationship_id == right.relationship_id);
+                if request.supernode_threshold > 0
+                    && entries.len() as u32 > request.supernode_threshold
+                    && allowed_types.is_empty()
+                {
+                    return Err(GraphStorageError::OperationFailed {
+                        operation: "load_canonical_graph_projection",
+                        message: format!(
+                            "supernode expansion blocked at {} with degree {}",
+                            owner.as_str(),
+                            entries.len()
+                        ),
+                    });
+                }
+                for entry in entries {
+                    if !allowed_types.is_empty()
+                        && !allowed_types.contains(entry.relationship_type.as_str())
+                    {
+                        continue;
+                    }
+                    relationship_ids.insert(entry.relationship_id.clone());
+                    if relationship_ids.len() as u32 > request.max_relationships {
+                        return Err(GraphStorageError::OperationFailed {
+                            operation: "load_canonical_graph_projection",
+                            message: format!(
+                                "adjacency query budget exceeded: more than {} relationships",
+                                request.max_relationships
+                            ),
+                        });
+                    }
+                    let neighbor = if entry.source_node_id == owner {
+                        entry.target_node_id
+                    } else {
+                        entry.source_node_id
+                    };
+                    if visited_nodes.insert(neighbor.clone()) {
+                        next.push(neighbor.clone());
+                        node_ids.push(neighbor);
+                    }
+                }
+            }
+            frontier = next;
+            if frontier.is_empty() {
+                break;
+            }
+        }
+        let mut ids = relationship_ids.into_iter().collect::<Vec<_>>();
+        ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
         Ok(ids)
     }
 
@@ -488,6 +830,40 @@ impl CanonicalEngineStore {
         self.stats.label_index_entries = self.state.catalog.metadata_indexes.labels.len() as u64;
         self.stats.relationship_type_index_entries =
             self.state.catalog.metadata_indexes.relationship_types.len() as u64;
+        self.stats.identifier_index_entries = self
+            .state
+            .catalog
+            .metadata_indexes
+            .identifiers
+            .values()
+            .map(|entries| entries.len() as u64)
+            .sum();
+        self.stats.property_index_entries = self
+            .state
+            .catalog
+            .metadata_indexes
+            .properties
+            .values()
+            .map(|values| {
+                values
+                    .values()
+                    .map(|entries| entries.len() as u64)
+                    .sum::<u64>()
+            })
+            .sum();
+        self.stats.temporal_index_entries = self
+            .state
+            .catalog
+            .metadata_indexes
+            .temporal
+            .values()
+            .map(|values| {
+                values
+                    .values()
+                    .map(|entries| entries.len() as u64)
+                    .sum::<u64>()
+            })
+            .sum();
         self.stats.resident_cold_nodes = self
             .stats
             .node_index_entries
@@ -1013,6 +1389,176 @@ fn encode_node_mutation(node: &Node) -> GraphStorageResult<AtomicPersistentMutat
         encoded_record: encode_payload(PersistedRecordKind::Node, node)?,
         envelope,
         labels: node.labels().to_vec(),
+        read_index: node_read_index_document(node)?,
+    })
+}
+
+fn node_read_index_document(node: &Node) -> GraphStorageResult<NodeReadIndexDocument> {
+    let active = node.status() != RecordStatus::Tombstoned;
+    let mut identifiers = vec![node.id().as_str().to_owned()];
+    for key in [
+        "opencti.canonical_id",
+        "opencti.identifiers",
+        "opencti.field.id",
+        "opencti.field.internal_id",
+        "opencti.field.standard_id",
+        "opencti.field.x_opencti_stix_ids",
+        "opencti.field.aliases",
+        "opencti.field.x_opencti_aliases",
+        "opencti.field.x_opencti_deduplication_id",
+        "opencti.field.external_references",
+    ] {
+        if let Some(value) = node.property(key) {
+            collect_identifier_values(value, &mut identifiers);
+        }
+    }
+    identifiers.sort();
+    identifiers.dedup();
+
+    let mut values = Vec::new();
+    let mut properties = node.properties().iter().collect::<Vec<_>>();
+    properties.sort_by(|left, right| left.0.cmp(right.0));
+    for (field, value) in properties {
+        if field == "opencti.raw" || field == "opencti.access" {
+            continue;
+        }
+        let temporal = is_temporal_field(field);
+        for scalar in property_scalars(value) {
+            values.push(NodeReadIndexValue {
+                field: field.clone(),
+                encoded_value: serde_json::to_string(&scalar).map_err(|error| {
+                    GraphStorageError::OperationFailed {
+                        operation: "encode_node_read_index",
+                        message: error.to_string(),
+                    }
+                })?,
+                temporal,
+            });
+        }
+    }
+    values.sort_by(|left, right| {
+        left.field
+            .cmp(&right.field)
+            .then_with(|| left.encoded_value.cmp(&right.encoded_value))
+    });
+    values.dedup();
+    Ok(NodeReadIndexDocument {
+        active,
+        identifiers,
+        values,
+    })
+}
+
+fn collect_identifier_values(value: &PropertyValue, identifiers: &mut Vec<String>) {
+    match value {
+        PropertyValue::String(value) => identifiers.push(value.clone()),
+        PropertyValue::StringList(values) => identifiers.extend(values.iter().cloned()),
+        PropertyValue::Json(value) => collect_identifier_json(value, identifiers),
+        _ => {}
+    }
+}
+
+fn collect_identifier_json(value: &Value, identifiers: &mut Vec<String>) {
+    match value {
+        Value::String(value) => identifiers.push(value.clone()),
+        Value::Array(values) => {
+            for value in values {
+                collect_identifier_json(value, identifiers);
+            }
+        }
+        Value::Object(values) => {
+            for key in ["value", "id", "external_id"] {
+                if let Some(value) = values.get(key) {
+                    collect_identifier_json(value, identifiers);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn property_scalars(value: &PropertyValue) -> Vec<Value> {
+    match value {
+        PropertyValue::Null => vec![Value::Null],
+        PropertyValue::Bool(value) => vec![Value::Bool(*value)],
+        PropertyValue::Integer(value) => vec![Value::from(*value)],
+        PropertyValue::Float(value) => vec![Value::from(*value)],
+        PropertyValue::String(value) => vec![Value::String(value.clone())],
+        PropertyValue::StringList(values) => values.iter().cloned().map(Value::String).collect(),
+        PropertyValue::IntegerList(values) => values.iter().copied().map(Value::from).collect(),
+        PropertyValue::FloatList(values) => values.iter().copied().map(Value::from).collect(),
+        PropertyValue::BoolList(values) => values.iter().copied().map(Value::Bool).collect(),
+        PropertyValue::Json(Value::Array(values)) => values
+            .iter()
+            .filter(|value| !value.is_array() && !value.is_object())
+            .cloned()
+            .collect(),
+        PropertyValue::Json(value) if !value.is_array() && !value.is_object() => {
+            vec![value.clone()]
+        }
+        PropertyValue::Json(_) => Vec::new(),
+    }
+}
+
+fn is_temporal_field(field: &str) -> bool {
+    [
+        "created",
+        "modified",
+        "created_at",
+        "updated_at",
+        "refreshed_at",
+        "valid_from",
+        "valid_until",
+        "first_seen",
+        "last_seen",
+    ]
+    .iter()
+    .any(|suffix| field == *suffix || field.ends_with(&format!(".{suffix}")))
+}
+
+fn intersect_selection(selected: &mut Option<HashSet<NodeId>>, matches: HashSet<NodeId>) {
+    match selected {
+        Some(current) => current.retain(|node_id| matches.contains(node_id)),
+        None => *selected = Some(matches),
+    }
+}
+
+fn encode_filter_value(filter: &CanonicalPropertyFilter) -> GraphStorageResult<String> {
+    let value = filter
+        .value
+        .as_ref()
+        .ok_or_else(|| GraphStorageError::OperationFailed {
+            operation: "load_canonical_graph_projection",
+            message: format!("filter {} requires a comparison value", filter.field),
+        })?;
+    serde_json::to_string(value).map_err(|error| GraphStorageError::OperationFailed {
+        operation: "load_canonical_graph_projection",
+        message: error.to_string(),
+    })
+}
+
+fn indexed_value_matches_range(
+    actual: &Value,
+    expected: &Value,
+    operator: CanonicalPropertyOperator,
+) -> bool {
+    let ordering = match (actual, expected) {
+        (Value::Number(left), Value::Number(right)) => left
+            .as_f64()
+            .zip(right.as_f64())
+            .and_then(|(left, right)| left.partial_cmp(&right)),
+        (Value::String(left), Value::String(right)) => Some(left.cmp(right)),
+        (Value::Bool(left), Value::Bool(right)) => Some(left.cmp(right)),
+        _ => None,
+    };
+    ordering.is_some_and(|ordering| match operator {
+        CanonicalPropertyOperator::GreaterThan => ordering.is_gt(),
+        CanonicalPropertyOperator::GreaterThanOrEqual => ordering.is_ge(),
+        CanonicalPropertyOperator::LessThan => ordering.is_lt(),
+        CanonicalPropertyOperator::LessThanOrEqual => ordering.is_le(),
+        CanonicalPropertyOperator::Equal => ordering.is_eq(),
+        CanonicalPropertyOperator::NotEqual => !ordering.is_eq(),
+        CanonicalPropertyOperator::Exists => true,
     })
 }
 

@@ -35,13 +35,17 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use corrobore_engine::{CorroboreEngine, EnginePersistence};
+use corrobore_engine::{
+    CorroboreEngine, EnginePersistence, GraphDirection, KnowledgeDataOperation,
+    PreparedKnowledgeDataProjection, ReadFilter, ReadFilterOperator,
+};
 use corrobore_engine::{DivergenceBaseline, ShadowSamplingPolicy};
 use graph_storage::{
-    CanonicalEngineStore, CanonicalProjectionRequest, CanonicalStoreOptions, DurableTransactionId,
-    FileBackedGraphStore, GraphId, GraphStorageError, GraphStoreRecoveryReport, RecordFormat,
-    StorageManifest, StorageTimestamp, StorageVersion, create_storage_root, open_storage_root,
-    read_storage_manifest,
+    CanonicalAdjacencyProjection, CanonicalEngineStore, CanonicalProjectionRequest,
+    CanonicalPropertyFilter, CanonicalPropertyOperator, CanonicalStoreOptions,
+    DurableTransactionId, FileBackedGraphStore, GraphId, GraphStorageError,
+    GraphStoreRecoveryReport, RecordFormat, StorageManifest, StorageTimestamp, StorageVersion,
+    create_storage_root, open_storage_root, read_storage_manifest,
 };
 use opencti_adapter::BulkLimits;
 use thiserror::Error;
@@ -257,6 +261,28 @@ impl EnginePersistence for PersistentEnginePersistence {
             .map_err(|error| error.to_string())
     }
 
+    fn prepare_knowledge_data_operation(
+        &mut self,
+        operation: &KnowledgeDataOperation,
+    ) -> Result<Option<PreparedKnowledgeDataProjection>, String> {
+        let Some(request) = canonical_projection_for_knowledge_data(operation) else {
+            return Ok(None);
+        };
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "canonical graph store lock is poisoned".to_owned())?;
+        let graph = store
+            .load_projection(request)
+            .map_err(|error| error.to_string())?;
+        let stats = store.last_projection_stats().clone();
+        Ok(Some(PreparedKnowledgeDataProjection {
+            graph,
+            page_ins: stats.page_ins,
+            cache_hits: stats.cache_hits,
+        }))
+    }
+
     fn persist_graph_transition(
         &mut self,
         previous: &graph_core::Graph,
@@ -447,6 +473,124 @@ fn canonical_projection_for_query(query: &str) -> CanonicalProjectionRequest {
             .unwrap_or_else(CanonicalProjectionRequest::all_nodes);
     }
     CanonicalProjectionRequest::default()
+}
+
+fn canonical_projection_for_knowledge_data(
+    operation: &KnowledgeDataOperation,
+) -> Option<CanonicalProjectionRequest> {
+    match operation {
+        KnowledgeDataOperation::Health(request) if request.verbose => {
+            Some(CanonicalProjectionRequest::all_nodes())
+        }
+        KnowledgeDataOperation::GetById(request) => Some(
+            CanonicalProjectionRequest::for_identifier(request.id.clone()),
+        ),
+        KnowledgeDataOperation::List(request) => Some(canonical_record_projection(
+            &request.kinds,
+            &request.filters,
+        )),
+        KnowledgeDataOperation::Paginate(request) => Some(canonical_record_projection(
+            &request.query.kinds,
+            &request.query.filters,
+        )),
+        KnowledgeDataOperation::Count(request) => Some(canonical_record_projection(
+            &request.kinds,
+            &request.filters,
+        )),
+        KnowledgeDataOperation::Neighbors(request) => Some(canonical_graph_projection(
+            std::slice::from_ref(&request.id),
+            1,
+            if request.incoming && request.outgoing {
+                GraphDirection::Both
+            } else if request.incoming {
+                GraphDirection::Incoming
+            } else {
+                GraphDirection::Outgoing
+            },
+            &request.policy,
+        )),
+        KnowledgeDataOperation::Traverse(request) => Some(canonical_graph_projection(
+            &request.start_ids,
+            request.max_depth,
+            request.direction,
+            &request.policy,
+        )),
+        KnowledgeDataOperation::Subgraph(request) => Some(canonical_graph_projection(
+            &request.ids,
+            request.max_depth,
+            request.direction,
+            &request.policy,
+        )),
+        _ => None,
+    }
+}
+
+fn canonical_record_projection(
+    kinds: &[String],
+    filters: &[ReadFilter],
+) -> CanonicalProjectionRequest {
+    let request = if kinds.len() == 1 {
+        CanonicalProjectionRequest::for_label(opencti_type_label(&kinds[0]))
+    } else {
+        CanonicalProjectionRequest::all_nodes()
+    };
+    request.with_property_filters(filters.iter().map(canonical_property_filter))
+}
+
+fn canonical_graph_projection(
+    identifiers: &[String],
+    max_depth: u32,
+    direction: GraphDirection,
+    policy: &corrobore_engine::GraphReadPolicy,
+) -> CanonicalProjectionRequest {
+    let mut request = identifiers
+        .first()
+        .map_or_else(CanonicalProjectionRequest::default, |identifier| {
+            CanonicalProjectionRequest::for_identifier(identifier.clone())
+        });
+    request = request.with_identifiers(identifiers.iter().cloned());
+    request.with_adjacency(CanonicalAdjacencyProjection {
+        incoming: matches!(direction, GraphDirection::Incoming | GraphDirection::Both),
+        outgoing: matches!(direction, GraphDirection::Outgoing | GraphDirection::Both),
+        relationship_types: policy.relationship_types.clone(),
+        max_depth,
+        max_relationships: policy.max_expansions,
+        supernode_threshold: policy.supernode_threshold,
+    })
+}
+
+fn canonical_property_filter(filter: &ReadFilter) -> CanonicalPropertyFilter {
+    CanonicalPropertyFilter {
+        field: match filter.field.as_str() {
+            "id" => "opencti.canonical_id".to_owned(),
+            field if field.starts_with("opencti.") => field.to_owned(),
+            field => format!("opencti.field.{field}"),
+        },
+        operator: match filter.operator {
+            ReadFilterOperator::Equal => CanonicalPropertyOperator::Equal,
+            ReadFilterOperator::NotEqual => CanonicalPropertyOperator::NotEqual,
+            ReadFilterOperator::Exists => CanonicalPropertyOperator::Exists,
+            ReadFilterOperator::GreaterThan => CanonicalPropertyOperator::GreaterThan,
+            ReadFilterOperator::GreaterThanOrEqual => CanonicalPropertyOperator::GreaterThanOrEqual,
+            ReadFilterOperator::LessThan => CanonicalPropertyOperator::LessThan,
+            ReadFilterOperator::LessThanOrEqual => CanonicalPropertyOperator::LessThanOrEqual,
+        },
+        value: filter.value.clone(),
+    }
+}
+
+fn opencti_type_label(kind: &str) -> String {
+    let suffix = kind
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    format!("OpenCtiType_{suffix}")
 }
 
 fn classify_storage_open_error(root_path: &Path, error: GraphStorageError) -> AppStateInitError {
@@ -667,7 +811,17 @@ async fn lifecycle_request_gate(
 mod tests {
     use std::{collections::HashMap, fs};
 
-    use super::{AppState, RuntimeStoreProvider, canonical_projection_for_query};
+    use corrobore_engine::{
+        GetByIdRequest, GraphDirection, GraphReadPolicy, KnowledgeDataOperation, ReadFilter,
+        ReadFilterOperator, TraverseRequest,
+    };
+    use graph_storage::CanonicalPropertyOperator;
+    use serde_json::{Value, json};
+
+    use super::{
+        AppState, RuntimeStoreProvider, canonical_projection_for_knowledge_data,
+        canonical_projection_for_query,
+    };
     use crate::config::{ServerConfig, StorageMode};
 
     fn base_vars() -> HashMap<String, String> {
@@ -705,6 +859,69 @@ mod tests {
         assert_eq!(traversal.node_label.as_deref(), Some("Indicator"));
         assert_eq!(traversal.relationship_type.as_deref(), Some("LINKS"));
         assert!(traversal.include_relationships);
+    }
+
+    #[test]
+    fn typed_knowledge_data_projection_selects_compact_read_indexes_and_budgets() {
+        let point = canonical_projection_for_knowledge_data(&KnowledgeDataOperation::GetById(
+            GetByIdRequest {
+                id: "indicator--indexed".to_owned(),
+            },
+        ))
+        .expect("point projection");
+        assert_eq!(point.identifiers, ["indicator--indexed"]);
+        assert!(point.property_filters.is_empty());
+
+        let traversal = canonical_projection_for_knowledge_data(&KnowledgeDataOperation::Traverse(
+            TraverseRequest {
+                start_ids: vec!["indicator--indexed".to_owned()],
+                max_depth: 2,
+                direction: GraphDirection::Outgoing,
+                constraints: Value::Null,
+                policy: GraphReadPolicy {
+                    relationship_types: vec!["indicates".to_owned()],
+                    node_kinds: vec!["malware".to_owned()],
+                    filters: vec![ReadFilter {
+                        field: "confidence".to_owned(),
+                        operator: ReadFilterOperator::GreaterThanOrEqual,
+                        value: Some(json!(70)),
+                    }],
+                    max_results: 25,
+                    max_expansions: 50,
+                    supernode_threshold: 100,
+                },
+            },
+        ))
+        .expect("traversal projection");
+        let adjacency = traversal.adjacency.expect("persistent adjacency plan");
+        assert!(!adjacency.incoming);
+        assert!(adjacency.outgoing);
+        assert_eq!(adjacency.relationship_types, ["indicates"]);
+        assert_eq!(adjacency.max_depth, 2);
+        assert_eq!(adjacency.max_relationships, 50);
+        assert_eq!(adjacency.supernode_threshold, 100);
+
+        let filtered = super::canonical_record_projection(
+            &["indicator".to_owned()],
+            &[ReadFilter {
+                field: "valid_from".to_owned(),
+                operator: ReadFilterOperator::GreaterThanOrEqual,
+                value: Some(json!("2026-01-01T00:00:00.000Z")),
+            }],
+        );
+        assert_eq!(
+            filtered.node_label.as_deref(),
+            Some("OpenCtiType_indicator")
+        );
+        assert_eq!(filtered.property_filters.len(), 1);
+        assert_eq!(
+            filtered.property_filters[0].operator,
+            CanonicalPropertyOperator::GreaterThanOrEqual
+        );
+        assert_eq!(
+            filtered.property_filters[0].field,
+            "opencti.field.valid_from"
+        );
     }
 
     #[test]

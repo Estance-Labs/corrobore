@@ -407,6 +407,8 @@ fn aggregation_relationship_and_latency_dimensions_apply_deterministic_gates() {
                     "target_ref": "malware--one",
                     "relationship_type": "indicates"
                 })],
+                paths: Vec::new(),
+                truncated: false,
             }),
         ),
         execution(
@@ -418,6 +420,8 @@ fn aggregation_relationship_and_latency_dimensions_apply_deterministic_gates() {
             KnowledgeDataResponse::Graph(GraphResult {
                 records: vec![record("indicator--one", "indicator", json!({}))],
                 relationships: vec![],
+                paths: Vec::new(),
+                truncated: false,
             }),
         ),
         &[],
@@ -481,6 +485,7 @@ fn opencti_compatibility_corpus_produces_repeatable_end_to_end_reports() {
         KnowledgeDataOperation::List(ListRequest {
             kinds: Vec::new(),
             limit: 1_000,
+            ..ListRequest::default()
         }),
         "correlation--compatibility-corpus",
     );

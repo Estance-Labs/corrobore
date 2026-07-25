@@ -168,10 +168,10 @@ and only then returns success. It does not rewrite
 
 Startup validates the manifest, restores the latest safe checkpoint, and
 replays newer committed transactions before readiness. Catalog, label,
-relationship-type and adjacency indexes are projections: deleting their
-persisted metadata triggers deterministic reconstruction from committed
-transaction records. Node and relationship payloads remain cold until a query
-selects them through the catalog.
+identifier, scalar-property, temporal, relationship-type and adjacency indexes
+are projections recovered from committed transaction records. Node and
+relationship payloads remain cold until a query selects them through these
+indexes.
 
 The request working set is bounded by:
 
@@ -185,7 +185,9 @@ of silently loading the complete graph. Monitor
 `corrobore_storage_cache_hits_total`,
 `corrobore_storage_resident_records`,
 `corrobore_storage_index_entries`, WAL lag, checkpoint age and compaction
-backlog before changing these limits.
+backlog before changing these limits. Fundamental OpenCTI reads additionally
+export per-query-class P50/P95/P99 latency, records examined, page-ins and cache
+hits under the `corrobore_opencti_core_read_*` metric family.
 
 ### One-time migration from the legacy graph snapshot
 

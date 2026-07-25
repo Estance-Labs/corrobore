@@ -31,19 +31,19 @@ The current code already provides useful foundations:
 - the HTTP server can load and persist a graph through an `EnginePersistence`
   adapter and exposes a STIX import endpoint.
 
-The gap to OpenCTI parity remains material:
+The remaining gap to OpenCTI parity is now concentrated outside core reads:
 
-- the public engine surface is Cypher-oriented and does not implement the
-  `KnowledgeDataEngine` operations from the PRD;
-- the current STIX importer maps a small property subset and maps unsupported
-  object types to `Identity`;
-- the persistent standalone server uses the WAL-backed, record-level paged
-  store; OpenCTI-specific lookup/query semantics remain separate adapter work;
-- there is no embedded full-text index, OpenCTI security policy adapter, file
-  extraction worker, aggregation planner or OpenCTI routing/shadow provider.
+- the versioned `KnowledgeDataEngine` implements fundamental point, list,
+  count, cursor, neighbor, traversal, and subgraph operations;
+- the persistent standalone server resolves OpenCTI identifiers, types, scalar
+  and temporal predicates, and bounded graph adjacency without scanning all
+  hydrated records;
+- mapped OpenCTI access metadata is enforced on the supported read surface;
+- full-text search, nested boolean planning, aggregation, file extraction,
+  write parity, and production routing remain later delivery work.
 
-These are delivery inputs for later issues. Issue #38 deliberately records the
-target surface without implementing it.
+See [OpenCTI core reads](opencti-core-reads.md) for the delivered semantics and
+explicit limits.
 
 ## Machine-readable bundle
 

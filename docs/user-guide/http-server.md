@@ -174,8 +174,9 @@ to `/health/ready`.
 ## `GET /metrics`
 
 Returns Prometheus text exposition (`0.0.4`) for build, uptime, sessions,
-storage, providers, lifecycle, readiness, active requests, and shutdown
-counters.
+storage, providers, lifecycle, readiness, active requests, shutdown counters,
+and OpenCTI core-read request, P50/P95/P99 latency, page-in, and cache-hit
+metrics grouped only by bounded query class.
 
 ## Bounded CLI status probe
 

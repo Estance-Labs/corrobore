@@ -62,25 +62,29 @@ The version 1 operation set is:
 | --- | --- | --- | --- | --- |
 | initialize, health, migrate | get-by-id, list, paginate, search, count, aggregate | neighbors, traverse, subgraph | create, update, delete, bulk, merge | snapshot, restore, rebuild-indexes |
 
-The current Corrobore provider implements initialization, health, get-by-id,
-list, pagination, unfiltered count, and direct neighbors using the existing
-`CorroboreEngine` graph state. The other typed operations are declared
-unsupported with their delivery issue:
+The current Corrobore provider implements initialization, health, fundamental
+point/list/count/cursor reads, and bounded neighbors/traversal/subgraph
+operations. Persistent hosts prepare these operations through compact
+identifier, label, property, temporal, and adjacency indexes before hydrating
+payloads. The exact semantics are documented in
+[OpenCTI core reads](opencti-core-reads.md). The other typed operations are
+declared unsupported with their delivery issue:
 
 - search and advanced reads: #46 and #47;
 - typed transactional writes: #50;
 - merge and reconciliation: #51;
 - migration, snapshot, restore, and index maintenance: #52.
 
-This is intentional. Issue #39 defines and validates the durable contract; it
-does not pre-empt the query and storage implementations owned by those issues.
+This preserves the explicit capability boundary while later issues deliver the
+remaining query and mutation surface.
 
 ## Pagination integrity
 
 Pagination tokens are opaque `kde1` envelopes. They contain a token version,
-the last stable identifier, the provider schema version, and a SHA-256
-fingerprint of the normalized list query. The payload is authenticated with
-HMAC-SHA-256 and a provider key of at least 256 bits.
+the ordered record cursor, the number already returned, the provider schema
+version, and SHA-256 fingerprints of both the normalized list query and the
+declared result snapshot. The payload is authenticated with HMAC-SHA-256 and a
+provider key of at least 256 bits.
 
 A changed byte returns `INVALID_PAGINATION_TOKEN`. Reusing a valid token with
 another query, schema, or token version returns
@@ -94,8 +98,10 @@ Embedded and serialized remote execution share the same taxonomy:
 `INVALID_REQUEST`, `INCOMPATIBLE_CONTRACT_VERSION`,
 `UNSUPPORTED_CAPABILITY`, `NOT_FOUND`, `CONFLICT`, `UNAUTHORIZED`,
 `DEADLINE_EXCEEDED`, `CANCELLED`, `INVALID_PAGINATION_TOKEN`,
-`INCOMPATIBLE_PAGINATION_TOKEN`, `BACKEND_UNAVAILABLE`,
-`SCHEMA_INCOMPATIBLE`, and `INTERNAL`.
+`INCOMPATIBLE_PAGINATION_TOKEN`, `STALE_PAGINATION_TOKEN`,
+`UNBOUNDED_OPERATION`, `QUERY_BUDGET_EXCEEDED`,
+`SUPERNODE_EXPANSION_BLOCKED`, `BACKEND_UNAVAILABLE`, `SCHEMA_INCOMPATIBLE`,
+and `INTERNAL`.
 
 Provider diagnostics must remain safe to return across a remote boundary and
 must not leak backend response bodies or transport internals.
