@@ -109,8 +109,11 @@ fn parse_query_builds_structured_match_where_and_return_ast() {
     assert!(match_clause.relationship.is_none());
 
     let where_clause = query.where_clause.expect("where clause should be parsed");
-    assert_eq!(where_clause.left.variable, "n");
-    assert_eq!(where_clause.left.property, "score");
+    let cypher_parser::WhereExpression::Comparison { left, .. } = where_clause.expression else {
+        panic!("expected scalar comparison");
+    };
+    assert_eq!(left.variable, "n");
+    assert_eq!(left.property, "score");
 
     let return_clause = query.return_clause.expect("return clause should be parsed");
     assert_eq!(return_clause.items.len(), 1);
@@ -173,10 +176,13 @@ fn parse_query_parses_not_equal_operator_in_structured_where_clause() {
 
     let query = ast.query.expect("structured query should be present");
     let where_clause = query.where_clause.expect("where clause should be present");
-    assert_eq!(
-        where_clause.operator,
-        cypher_parser::ComparisonOperator::NotEq
-    );
+    assert!(matches!(
+        where_clause.expression,
+        cypher_parser::WhereExpression::Comparison {
+            operator: cypher_parser::ComparisonOperator::NotEq,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -200,7 +206,7 @@ fn parse_query_degrades_to_unstructured_ast_for_invalid_where_literal_or_referen
         .expect("query should still return top-level ast");
     assert!(invalid_property_ref.query.is_none());
 
-    let unsupported_literal = parse_query("MATCH (n) WHERE n.score = 10.5 RETURN n")
+    let unsupported_literal = parse_query("MATCH (n) WHERE n.score = {value: 10} RETURN n")
         .expect("query should still return top-level ast");
     assert!(unsupported_literal.query.is_none());
 }

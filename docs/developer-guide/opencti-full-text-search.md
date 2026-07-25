@@ -3,7 +3,8 @@
 Issue #46 implements the `read.full-text` compatibility subset behind the
 backend-neutral Knowledge Data Engine `search` operation. It does not accept
 Elasticsearch/OpenSearch Query DSL, arbitrary analyzers, aggregations or file
-content. Those boundaries remain assigned to issues #47 and #48.
+content. Aggregations are exposed through the typed issue #47 contract; file
+content remains assigned to issue #48.
 
 ## Request contract
 

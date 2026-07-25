@@ -9,11 +9,11 @@ This guide targets the current `0.1.x` runtime baseline.
 | Clause | Parsed and executed | Notes |
 | :--- | :---: | :--- |
 | `MATCH`, `OPTIONAL MATCH` | yes | Node and relationship patterns with labels and properties. |
-| `WHERE` | yes | Comparison and filtering expressions supported by the parser. |
+| `WHERE` | yes | Nested `AND`/`OR`, comparisons, `IN`/`NOT IN`, and `IS NULL`/`IS NOT NULL`. |
 | `WITH`, `RETURN` | yes | Intermediate and final projection. |
 | `DISTINCT` | yes | Projection deduplication. |
-| `COUNT`, `SUM`, `AVG`, `MIN`, `MAX` | yes | Aggregation. |
-| `ORDER BY`, `SKIP`, `LIMIT` | yes | Deterministic result shaping and bounds. |
+| `COUNT`, `SUM`, `AVG`, `MIN`, `MAX` | yes | Aggregate-only projections; missing numeric values are ignored. |
+| `ORDER BY`, `SKIP`, `LIMIT` | yes | Multi-key deterministic result shaping and bounds. |
 | `CREATE` | yes | Create nodes and relationships. |
 | `MERGE` | yes | Match-or-create/upsert behavior. |
 | `SET`, `REMOVE` | yes | Property mutation. |
@@ -27,8 +27,26 @@ Explicitly rejected: `DETACH DELETE`, `LOAD CSV`, `UNWIND`, `FOREACH`, `CALL APO
 MATCH (c:Case {id: "case-123"})-[:MENTIONS]->(n:Narrative)
 WHERE n.confidence >= 0.7
 RETURN DISTINCT n
-ORDER BY n.confidence DESC
+ORDER BY n.confidence DESC, n.name ASC
 LIMIT 20
+```
+
+Membership accepts scalar and homogeneous list properties:
+
+```cypher
+MATCH (n:Indicator)
+WHERE (n.score >= 10 AND n.tags IN ['c2', 'malware'])
+   OR n.name = 'priority'
+RETURN n.name, n.score
+ORDER BY n.score DESC, n.name ASC
+```
+
+Aggregate and non-aggregate projections cannot be mixed without a grouping
+contract. The current bounded subset therefore expects aggregate-only returns:
+
+```cypher
+MATCH (n:Indicator)
+RETURN COUNT(n), SUM(n.score), AVG(n.score), MIN(n.score), MAX(n.score)
 ```
 
 Use `/v1/cypher/read` or `CorroboreEngine::read` when the request must not mutate the graph. The runtime rejects a mutation sent through a read-only request.

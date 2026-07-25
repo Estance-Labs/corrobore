@@ -19,6 +19,7 @@ opencti-access = { path = "../opencti-access" }
 opencti-search = { path = "../opencti-search" }
 shared-runtime = { path = "../shared-runtime" }
 base64 = "0.22"
+chrono = { workspace = true }
 hmac = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -210,12 +210,42 @@ pub struct RelationshipPattern {
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Where clause.
 pub struct WhereClause {
-    /// Left.
-    pub left: PropertyRef,
-    /// Operator.
-    pub operator: ComparisonOperator,
-    /// Right.
-    pub right: LiteralValue,
+    /// Structural boolean expression. `AND` binds more tightly than `OR`.
+    pub expression: WhereExpression,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// Structural expression accepted by the bounded Cypher subset.
+pub enum WhereExpression {
+    /// Typed scalar comparison.
+    Comparison {
+        /// Property reference.
+        left: PropertyRef,
+        /// Comparison operator.
+        operator: ComparisonOperator,
+        /// Literal value.
+        right: LiteralValue,
+    },
+    /// Inclusion or exclusion from a typed literal set.
+    In {
+        /// Property reference.
+        left: PropertyRef,
+        /// Candidate values.
+        values: Vec<LiteralValue>,
+        /// Whether membership is negated.
+        negated: bool,
+    },
+    /// Property existence predicate.
+    Exists {
+        /// Property reference.
+        left: PropertyRef,
+        /// `true` for `IS NOT NULL`, `false` for `IS NULL`.
+        exists: bool,
+    },
+    /// Every child expression must match.
+    And(Vec<WhereExpression>),
+    /// At least one child expression must match.
+    Or(Vec<WhereExpression>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -251,8 +281,12 @@ pub enum LiteralValue {
     String(String),
     /// Integer.
     Integer(i64),
+    /// Finite decimal encoded losslessly as source text.
+    Float(String),
     /// Boolean.
     Boolean(bool),
+    /// Null.
+    Null,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -263,7 +297,7 @@ pub struct ReturnClause {
     /// Items.
     pub items: Vec<ProjectionItem>,
     /// Order by.
-    pub order_by: Option<OrderBy>,
+    pub order_by: Vec<OrderBy>,
     /// Skip.
     pub skip: Option<usize>,
     /// Limit.
@@ -279,6 +313,14 @@ pub enum ProjectionItem {
     Property(PropertyRef),
     /// Count.
     Count(String),
+    /// Sum one numeric property.
+    Sum(PropertyRef),
+    /// Average one numeric property.
+    Average(PropertyRef),
+    /// Minimum numeric property value.
+    Minimum(PropertyRef),
+    /// Maximum numeric property value.
+    Maximum(PropertyRef),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1180,6 +1222,71 @@ fn parse_relationship_pattern(input: &str) -> RelationshipPattern {
 }
 
 fn parse_where_clause(input: &str) -> Result<WhereClause, ParseError> {
+    Ok(WhereClause {
+        expression: parse_where_expression(input.trim())?,
+    })
+}
+
+fn parse_where_expression(input: &str) -> Result<WhereExpression, ParseError> {
+    let input = strip_outer_parentheses(input.trim());
+    let or_parts = split_top_level_token(input, " OR ");
+    if or_parts.len() > 1 {
+        return or_parts
+            .into_iter()
+            .map(parse_where_expression)
+            .collect::<Result<Vec<_>, _>>()
+            .map(WhereExpression::Or);
+    }
+    let and_parts = split_top_level_token(input, " AND ");
+    if and_parts.len() > 1 {
+        return and_parts
+            .into_iter()
+            .map(parse_where_expression)
+            .collect::<Result<Vec<_>, _>>()
+            .map(WhereExpression::And);
+    }
+    let upper = input.to_ascii_uppercase();
+    if let Some(left) = upper.strip_suffix(" IS NOT NULL") {
+        return Ok(WhereExpression::Exists {
+            left: parse_property_ref(&input[..left.len()])?,
+            exists: true,
+        });
+    }
+    if let Some(left) = upper.strip_suffix(" IS NULL") {
+        return Ok(WhereExpression::Exists {
+            left: parse_property_ref(&input[..left.len()])?,
+            exists: false,
+        });
+    }
+    for (token, negated) in [(" NOT IN ", true), (" IN ", false)] {
+        if let Some(index) = find_top_level_token(input, token) {
+            let left = parse_property_ref(input[..index].trim())?;
+            let raw_values = input[index + token.len()..].trim();
+            if !raw_values.starts_with('[') || !raw_values.ends_with(']') {
+                return Err(ParseError {
+                    code: ParseErrorCode::InvalidSyntax,
+                    message: "IN expects a bracketed literal list".to_owned(),
+                    suggestion: None,
+                });
+            }
+            let values = split_top_level_commas(&raw_values[1..raw_values.len() - 1])
+                .into_iter()
+                .map(parse_literal_value)
+                .collect::<Result<Vec<_>, _>>()?;
+            if values.is_empty() {
+                return Err(ParseError {
+                    code: ParseErrorCode::InvalidSyntax,
+                    message: "IN expects at least one literal".to_owned(),
+                    suggestion: None,
+                });
+            }
+            return Ok(WhereExpression::In {
+                left,
+                values,
+                negated,
+            });
+        }
+    }
     let operators = [
         (">=", ComparisonOperator::Gte),
         ("<=", ComparisonOperator::Lte),
@@ -1193,7 +1300,7 @@ fn parse_where_clause(input: &str) -> Result<WhereClause, ParseError> {
         if let Some((left, right)) = split_once_operator(input, token) {
             let left = parse_property_ref(left.trim())?;
             let right = parse_literal_value(right.trim())?;
-            return Ok(WhereClause {
+            return Ok(WhereExpression::Comparison {
                 left,
                 operator,
                 right,
@@ -1206,6 +1313,99 @@ fn parse_where_clause(input: &str) -> Result<WhereClause, ParseError> {
         message: "WHERE clause must use a supported comparison operator".to_owned(),
         suggestion: None,
     })
+}
+
+fn strip_outer_parentheses(mut input: &str) -> &str {
+    loop {
+        if !input.starts_with('(') || !input.ends_with(')') {
+            return input;
+        }
+        let mut depth = 0_i32;
+        let mut quoted = false;
+        let mut encloses_all = true;
+        for (index, byte) in input.bytes().enumerate() {
+            if byte == b'\'' {
+                quoted = !quoted;
+            } else if !quoted {
+                if byte == b'(' {
+                    depth += 1;
+                } else if byte == b')' {
+                    depth -= 1;
+                    if depth == 0 && index + 1 != input.len() {
+                        encloses_all = false;
+                        break;
+                    }
+                }
+            }
+        }
+        if !encloses_all || depth != 0 {
+            return input;
+        }
+        input = input[1..input.len() - 1].trim();
+    }
+}
+
+fn split_top_level_token<'a>(input: &'a str, token: &str) -> Vec<&'a str> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    while let Some(relative) = find_top_level_token(&input[start..], token) {
+        let index = start + relative;
+        parts.push(input[start..index].trim());
+        start = index + token.len();
+    }
+    parts.push(input[start..].trim());
+    parts
+}
+
+fn find_top_level_token(input: &str, token: &str) -> Option<usize> {
+    let upper = input.to_ascii_uppercase();
+    let token = token.as_bytes();
+    let bytes = upper.as_bytes();
+    let mut depth = 0_i32;
+    let mut bracket_depth = 0_i32;
+    let mut quoted = false;
+    let mut index = 0;
+    while index + token.len() <= bytes.len() {
+        match bytes[index] {
+            b'\'' => quoted = !quoted,
+            b'(' if !quoted => depth += 1,
+            b')' if !quoted => depth -= 1,
+            b'[' if !quoted => bracket_depth += 1,
+            b']' if !quoted => bracket_depth -= 1,
+            _ => {}
+        }
+        if !quoted
+            && depth == 0
+            && bracket_depth == 0
+            && &bytes[index..index + token.len()] == token
+        {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn split_top_level_commas(input: &str) -> Vec<&str> {
+    let mut values = Vec::new();
+    let mut start = 0;
+    let mut quoted = false;
+    for (index, byte) in input.bytes().enumerate() {
+        if byte == b'\'' {
+            quoted = !quoted;
+        } else if byte == b',' && !quoted {
+            let value = input[start..index].trim();
+            if !value.is_empty() {
+                values.push(value);
+            }
+            start = index + 1;
+        }
+    }
+    let value = input[start..].trim();
+    if !value.is_empty() {
+        values.push(value);
+    }
+    values
 }
 
 fn split_once_operator<'a>(input: &'a str, operator: &str) -> Option<(&'a str, &'a str)> {
@@ -1251,9 +1451,15 @@ fn parse_literal_value(input: &str) -> Result<LiteralValue, ParseError> {
     if trimmed.eq_ignore_ascii_case("false") {
         return Ok(LiteralValue::Boolean(false));
     }
+    if trimmed.eq_ignore_ascii_case("null") {
+        return Ok(LiteralValue::Null);
+    }
 
     if let Ok(value) = trimmed.parse::<i64>() {
         return Ok(LiteralValue::Integer(value));
+    }
+    if trimmed.parse::<f64>().is_ok() {
+        return Ok(LiteralValue::Float(trimmed.to_owned()));
     }
 
     Err(ParseError {
@@ -1321,6 +1527,20 @@ fn parse_projection_item(input: &str) -> Result<ProjectionItem, ParseError> {
         let inner = trimmed["COUNT(".len()..trimmed.len() - 1].trim();
         return Ok(ProjectionItem::Count(inner.to_owned()));
     }
+    for (name, build) in [
+        (
+            "SUM(",
+            ProjectionItem::Sum as fn(PropertyRef) -> ProjectionItem,
+        ),
+        ("AVG(", ProjectionItem::Average),
+        ("MIN(", ProjectionItem::Minimum),
+        ("MAX(", ProjectionItem::Maximum),
+    ] {
+        if upper.starts_with(name) && trimmed.ends_with(')') {
+            let inner = trimmed[name.len()..trimmed.len() - 1].trim();
+            return parse_property_ref(inner).map(build);
+        }
+    }
 
     if trimmed.contains('.') {
         return Ok(ProjectionItem::Property(parse_property_ref(trimmed)?));
@@ -1337,10 +1557,10 @@ fn parse_projection_item(input: &str) -> Result<ProjectionItem, ParseError> {
     Ok(ProjectionItem::Variable(trimmed.to_owned()))
 }
 
-type ReturnTail = (Option<OrderBy>, Option<usize>, Option<usize>);
+type ReturnTail = (Vec<OrderBy>, Option<usize>, Option<usize>);
 
 fn parse_return_tail(input: &str) -> Result<ReturnTail, ParseError> {
-    let mut order_by = None;
+    let mut order_by = Vec::new();
     let mut skip = None;
     let mut limit = None;
     let mut cursor = input.trim();
@@ -1351,7 +1571,7 @@ fn parse_return_tail(input: &str) -> Result<ReturnTail, ParseError> {
         if upper.starts_with("ORDER BY ") {
             let rest = &cursor["ORDER BY".len()..].trim_start();
             let (value, tail) = split_until_next_tail(rest);
-            order_by = Some(parse_order_by(value.trim())?);
+            order_by = parse_order_by(value.trim())?;
             cursor = tail.trim_start();
             continue;
         }
@@ -1390,7 +1610,21 @@ fn parse_return_tail(input: &str) -> Result<ReturnTail, ParseError> {
     Ok((order_by, skip, limit))
 }
 
-fn parse_order_by(input: &str) -> Result<OrderBy, ParseError> {
+fn parse_order_by(input: &str) -> Result<Vec<OrderBy>, ParseError> {
+    if input.trim().is_empty() {
+        return Err(ParseError {
+            code: ParseErrorCode::InvalidSyntax,
+            message: "ORDER BY requires a field".to_owned(),
+            suggestion: None,
+        });
+    }
+    split_top_level_commas(input)
+        .into_iter()
+        .map(parse_order_key)
+        .collect()
+}
+
+fn parse_order_key(input: &str) -> Result<OrderBy, ParseError> {
     let mut parts = input.split_whitespace();
     let field = parts.next().ok_or_else(|| ParseError {
         code: ParseErrorCode::InvalidSyntax,
@@ -1510,11 +1744,11 @@ mod tests {
         assert_eq!(return_clause.skip, Some(1));
         assert_eq!(return_clause.limit, Some(3));
         assert!(matches!(
-            return_clause.order_by,
-            Some(OrderBy {
+            return_clause.order_by.as_slice(),
+            [OrderBy {
                 direction: OrderDirection::Desc,
                 ..
-            })
+            }]
         ));
     }
 
@@ -1617,7 +1851,10 @@ mod tests {
         ];
         for (input, expected) in operators {
             let clause = parse_where_clause(input).expect("supported operator should parse");
-            assert_eq!(clause.operator, expected);
+            assert!(matches!(
+                clause.expression,
+                WhereExpression::Comparison { operator, .. } if operator == expected
+            ));
         }
 
         let invalid_operator =
@@ -1649,11 +1886,11 @@ mod tests {
         assert_eq!(return_clause.skip, Some(2));
         assert_eq!(return_clause.limit, Some(5));
         assert!(matches!(
-            return_clause.order_by,
-            Some(OrderBy {
+            return_clause.order_by.as_slice(),
+            [OrderBy {
                 direction: OrderDirection::Asc,
                 ..
-            })
+            }]
         ));
 
         let empty_projection =
@@ -1676,9 +1913,10 @@ mod tests {
             ProjectionItem::Variable("n".to_owned())
         );
 
-        let literal_error =
-            parse_literal_value("3.14").expect_err("unsupported literal shape should be rejected");
-        assert_eq!(literal_error.code, ParseErrorCode::InvalidSyntax);
+        assert_eq!(
+            parse_literal_value("3.14").expect("finite decimal should parse"),
+            LiteralValue::Float("3.14".to_owned())
+        );
     }
 
     #[test]

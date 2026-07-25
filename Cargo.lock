@@ -511,6 +511,7 @@ name = "corrobore-engine"
 version = "0.2.2"
 dependencies = [
  "base64",
+ "chrono",
  "export-stix",
  "graph-core",
  "hmac",

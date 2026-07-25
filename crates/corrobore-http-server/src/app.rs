@@ -37,7 +37,7 @@ use axum::{
 };
 use corrobore_engine::{
     CorroboreEngine, EnginePersistence, GraphDirection, KnowledgeDataOperation,
-    PreparedKnowledgeDataProjection, ReadFilter, ReadFilterOperator,
+    PreparedKnowledgeDataProjection, ReadFilter, ReadFilterOperator, ReadPredicate,
     full_text_query_from_search_request,
 };
 use corrobore_engine::{DivergenceBaseline, ShadowSamplingPolicy};
@@ -512,15 +512,35 @@ fn canonical_projection_for_knowledge_data(
         KnowledgeDataOperation::List(request) => Some(canonical_record_projection(
             &request.kinds,
             &request.filters,
+            request.predicate.as_ref(),
         )),
         KnowledgeDataOperation::Paginate(request) => Some(canonical_record_projection(
             &request.query.kinds,
             &request.query.filters,
+            request.query.predicate.as_ref(),
         )),
         KnowledgeDataOperation::Count(request) => Some(canonical_record_projection(
             &request.kinds,
             &request.filters,
+            None,
         )),
+        KnowledgeDataOperation::Aggregate(request) => {
+            let mut projection = canonical_record_projection(
+                &request.plan.kinds,
+                &[],
+                request.plan.predicate.as_ref(),
+            );
+            if request.plan.kinds.is_empty()
+                || request
+                    .plan
+                    .kinds
+                    .iter()
+                    .any(|kind| kind.eq_ignore_ascii_case("relationship"))
+            {
+                projection = projection.with_relationships(None);
+            }
+            Some(projection)
+        }
         KnowledgeDataOperation::Neighbors(request) => Some(canonical_graph_projection(
             std::slice::from_ref(&request.id),
             1,
@@ -552,13 +572,40 @@ fn canonical_projection_for_knowledge_data(
 fn canonical_record_projection(
     kinds: &[String],
     filters: &[ReadFilter],
+    predicate: Option<&ReadPredicate>,
 ) -> CanonicalProjectionRequest {
     let request = if kinds.len() == 1 {
         CanonicalProjectionRequest::for_label(opencti_type_label(&kinds[0]))
     } else {
         CanonicalProjectionRequest::all_nodes()
     };
-    request.with_property_filters(filters.iter().map(canonical_property_filter))
+    let mut pushdown = filters
+        .iter()
+        .map(canonical_property_filter)
+        .collect::<Vec<_>>();
+    if let Some(predicate) = predicate {
+        collect_conjunctive_pushdown(predicate, &mut pushdown);
+    }
+    request.with_property_filters(pushdown)
+}
+
+fn collect_conjunctive_pushdown(
+    predicate: &ReadPredicate,
+    filters: &mut Vec<CanonicalPropertyFilter>,
+) {
+    match predicate {
+        ReadPredicate::Condition(filter) => filters.push(canonical_property_filter(filter)),
+        ReadPredicate::And(children) => {
+            for child in children {
+                if !matches!(child, ReadPredicate::Or(_)) {
+                    collect_conjunctive_pushdown(child, filters);
+                }
+            }
+        }
+        // An OR branch cannot be intersected with the other compact indexes
+        // without changing semantics. It remains in the bounded exact evaluator.
+        ReadPredicate::Or(_) => {}
+    }
 }
 
 fn canonical_graph_projection(
@@ -594,6 +641,8 @@ fn canonical_property_filter(filter: &ReadFilter) -> CanonicalPropertyFilter {
             ReadFilterOperator::Equal => CanonicalPropertyOperator::Equal,
             ReadFilterOperator::NotEqual => CanonicalPropertyOperator::NotEqual,
             ReadFilterOperator::Exists => CanonicalPropertyOperator::Exists,
+            ReadFilterOperator::In => CanonicalPropertyOperator::In,
+            ReadFilterOperator::NotIn => CanonicalPropertyOperator::NotIn,
             ReadFilterOperator::GreaterThan => CanonicalPropertyOperator::GreaterThan,
             ReadFilterOperator::GreaterThanOrEqual => CanonicalPropertyOperator::GreaterThanOrEqual,
             ReadFilterOperator::LessThan => CanonicalPropertyOperator::LessThan,
@@ -836,8 +885,9 @@ mod tests {
     use std::{collections::HashMap, fs};
 
     use corrobore_engine::{
-        GetByIdRequest, GraphDirection, GraphReadPolicy, KnowledgeDataOperation, ReadFilter,
-        ReadFilterOperator, TraverseRequest,
+        AggregateRequest, Aggregation, AggregationPlan, GetByIdRequest, GraphDirection,
+        GraphReadPolicy, KnowledgeDataOperation, ReadFilter, ReadFilterOperator, ReadPredicate,
+        TraverseRequest,
     };
     use graph_storage::CanonicalPropertyOperator;
     use serde_json::{Value, json};
@@ -932,6 +982,7 @@ mod tests {
                 operator: ReadFilterOperator::GreaterThanOrEqual,
                 value: Some(json!("2026-01-01T00:00:00.000Z")),
             }],
+            None,
         );
         assert_eq!(
             filtered.node_label.as_deref(),
@@ -946,6 +997,48 @@ mod tests {
             filtered.property_filters[0].field,
             "opencti.field.valid_from"
         );
+
+        let predicate = ReadPredicate::And(vec![
+            ReadPredicate::Condition(ReadFilter {
+                field: "pattern_type".to_owned(),
+                operator: ReadFilterOperator::In,
+                value: Some(json!(["stix", "sigma"])),
+            }),
+            ReadPredicate::Or(vec![
+                ReadPredicate::Condition(ReadFilter {
+                    field: "name".to_owned(),
+                    operator: ReadFilterOperator::Equal,
+                    value: Some(json!("alpha")),
+                }),
+                ReadPredicate::Condition(ReadFilter {
+                    field: "name".to_owned(),
+                    operator: ReadFilterOperator::Equal,
+                    value: Some(json!("beta")),
+                }),
+            ]),
+        ]);
+        let structural =
+            super::canonical_record_projection(&["indicator".to_owned()], &[], Some(&predicate));
+        assert_eq!(structural.property_filters.len(), 1);
+        assert_eq!(
+            structural.property_filters[0].operator,
+            CanonicalPropertyOperator::In
+        );
+
+        let aggregation = canonical_projection_for_knowledge_data(
+            &KnowledgeDataOperation::Aggregate(AggregateRequest {
+                plan: AggregationPlan {
+                    aggregation: Aggregation::Terms {
+                        field: "type".to_owned(),
+                        limit: 20,
+                    },
+                    ..AggregationPlan::default()
+                },
+            }),
+        )
+        .expect("aggregation projection");
+        assert!(aggregation.include_nodes);
+        assert!(aggregation.include_relationships);
     }
 
     #[test]

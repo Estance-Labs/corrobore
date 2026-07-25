@@ -63,14 +63,15 @@ The version 1 operation set is:
 | initialize, health, migrate | get-by-id, list, paginate, search, count, aggregate | neighbors, traverse, subgraph | create, update, delete, bulk, merge | snapshot, restore, rebuild-indexes |
 
 The current Corrobore provider implements initialization, health, fundamental
-point/list/count/cursor reads, and bounded neighbors/traversal/subgraph
-operations. Persistent hosts prepare these operations through compact
-identifier, label, property, temporal, and adjacency indexes before hydrating
-payloads. The exact semantics are documented in
-[OpenCTI core reads](opencti-core-reads.md). The other typed operations are
-declared unsupported with their delivery issue:
+point/list/count/cursor reads, full-text search, typed advanced predicates and
+aggregations, and bounded neighbors/traversal/subgraph operations. Persistent
+hosts prepare these operations through compact identifier, label, property,
+temporal, text and adjacency indexes before hydrating payloads. The exact
+semantics are documented in [OpenCTI core reads](opencti-core-reads.md),
+[OpenCTI full-text search](opencti-full-text-search.md), and
+[OpenCTI advanced queries](opencti-advanced-queries.md). The remaining typed
+operations are declared unsupported with their delivery issue:
 
-- search and advanced reads: #46 and #47;
 - typed transactional writes: #50;
 - merge and reconciliation: #51;
 - migration, snapshot, restore, and index maintenance: #52.

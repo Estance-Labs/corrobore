@@ -96,6 +96,7 @@ nav:
     - OpenCTI Core Reads: developer-guide/opencti-core-reads.md
     - OpenCTI Query Authorization: developer-guide/opencti-query-authorization.md
     - OpenCTI Full-Text Search: developer-guide/opencti-full-text-search.md
+    - OpenCTI Advanced Queries: developer-guide/opencti-advanced-queries.md
     - OpenCTI Shadow Reads: developer-guide/opencti-shadow-reads.md
     - Standalone Acceptance Matrix: acceptance/standalone-server.md
     - Release Notes Process: developer-guide/release-notes-process.md

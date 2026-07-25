@@ -465,6 +465,7 @@ fn list_count_order_and_page_boundaries_use_only_authorized_records() {
             direction: SortDirection::Ascending,
         }],
         limit: 10,
+        ..ListRequest::default()
     };
     let listed = execute(
         &mut engine,
@@ -519,6 +520,7 @@ fn list_count_order_and_page_boundaries_use_only_authorized_records() {
             KnowledgeDataResponse::Records(RecordPage {
                 records: first_records,
                 next_token: Some(token),
+                ..
             }),
     } = first.outcome
     else {
@@ -539,6 +541,7 @@ fn list_count_order_and_page_boundaries_use_only_authorized_records() {
             KnowledgeDataResponse::Records(RecordPage {
                 records: second_records,
                 next_token: None,
+                ..
             }),
     } = second.outcome
     else {
@@ -576,6 +579,7 @@ fn pagination_tokens_are_bound_to_policy_version_and_access_fingerprint() {
             direction: SortDirection::Ascending,
         }],
         limit: 10,
+        ..ListRequest::default()
     };
     let first = execute(
         &mut engine,
@@ -645,6 +649,7 @@ fn policy_scoped_shadow_divergences_block_even_with_a_matching_baseline() {
         KnowledgeDataResponse::Records(RecordPage {
             records: Vec::new(),
             next_token: None,
+            total_count: None,
         }),
     );
     let shadow = execution(
@@ -652,6 +657,7 @@ fn policy_scoped_shadow_divergences_block_even_with_a_matching_baseline() {
         KnowledgeDataResponse::Records(RecordPage {
             records: Vec::new(),
             next_token: Some("different-page-state".to_owned()),
+            total_count: None,
         }),
     );
     let initial = compare_shadow_read(&request, reference.clone(), shadow.clone(), &[], 1);
