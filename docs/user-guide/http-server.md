@@ -2,6 +2,10 @@
 
 `corrobore-http-server` is an Axum service exposing the runtime to agents and applications. It binds to `127.0.0.1:8080` by default.
 
+This page is the transport and client contract. For the supported operator entry
+point and deployment runbooks, start with
+[Deployment Modes](deployment-modes.md).
+
 ## Authentication and limits
 
 Operational endpoints are public by default on loopback and can be protected

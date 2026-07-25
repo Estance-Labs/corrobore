@@ -2,6 +2,9 @@
 
 `corrobore-engine` embeds Corrobore in a Rust process without running an HTTP service. It uses the same `shared-runtime` policy, budget, validation, and executor path as the server.
 
+See [Deployment Modes](deployment-modes.md) to compare this in-process model
+with the HTTP and standalone service layers.
+
 This guide targets the current `0.1.x` runtime baseline.
 
 ## Basic use
