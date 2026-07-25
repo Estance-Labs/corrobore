@@ -5,11 +5,16 @@ working memory for intelligence agents. It keeps entities, relationships,
 evidence, confidence, temporal context, and audit history outside model context
 while letting agents query and update only the smallest useful subgraph.
 
-## Choose an interface
+## Choose how to run Corrobore
+
+Start with [Deployment Modes](user-guide/deployment-modes.md) for the
+relationship between the embedded engine, HTTP interface, and standalone
+server.
 
 | Interface | Best for | Entry point |
 | :--- | :--- | :--- |
 | Embedded Rust | Applications that want an in-process engine | [`corrobore-engine`](user-guide/embedded-engine.md) |
+| Standalone server | Durable native or container service operation | [`corrobore server`](user-guide/standalone-server.md) |
 | HTTP API | Agent tools and services | [`corrobore-http-server`](user-guide/http-server.md) |
 | TAXII ingestion | Incremental STIX 2.1 collection polling through the public HTTP import boundary | [`corrobore-ingest`](user-guide/ingestion.md) |
 
@@ -54,6 +59,7 @@ Corrobore is not a distributed graph database and does not claim full openCypher
 ## Start here
 
 - [Getting Started](getting-started.md) — build, run, and validate locally.
+- [Deployment Modes](user-guide/deployment-modes.md) — choose between embedded and service operation, then find the right HTTP or standalone reference.
 - [HTTP Server](user-guide/http-server.md) — auth, routes, session model, and operations.
 - [Embedded Engine](user-guide/embedded-engine.md) — in-process Rust integration.
 - [TAXII Ingestion](user-guide/ingestion.md) — connector lifecycle and cursor behavior.

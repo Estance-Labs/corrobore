@@ -4,14 +4,16 @@ This guide covers running Corrobore as a container — no Rust toolchain require
 
 ## Deployment modes
 
-Corrobore supports three practical startup modes:
+This guide covers two container topologies. Both run the standalone Corrobore
+service and expose its HTTP API:
 
 1. HTTP runtime only (default Compose mode).
 2. HTTP runtime + TAXII connector (`corrobore-ingest`) through a Compose profile.
-3. Embedded engine (in-process Rust library), which is not a Docker Compose service mode.
 
-Use Docker for modes 1 and 2. Use the embedded mode from your Rust application
-as documented in [Getting Started](getting-started.md#use-corrobore-in-process).
+The embedded engine is an in-process Rust library, not a Docker Compose service
+mode. See [Deployment Modes](user-guide/deployment-modes.md) to compare the
+process models, or [Getting Started](getting-started.md#use-corrobore-in-process)
+for an embedded example.
 
 ## Prerequisites
 

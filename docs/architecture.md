@@ -98,6 +98,7 @@ Architecture Decision Records and feature artifacts live in `project-documents/`
 
 ## Canonical references
 
+- [Deployment Modes](user-guide/deployment-modes.md)
 - [HTTP Server](user-guide/http-server.md)
 - [Cypher Support](user-guide/cypher.md)
 - [Embedded Engine](user-guide/embedded-engine.md)

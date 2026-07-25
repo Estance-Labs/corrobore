@@ -10,6 +10,9 @@ corrobore server status
 corrobore server version
 ```
 
+See [Deployment Modes](deployment-modes.md) for how this deployable process
+relates to the HTTP contract and embedded engine.
+
 `start` runs in the foreground. A process supervisor should own restarts and
 daemonization.
 

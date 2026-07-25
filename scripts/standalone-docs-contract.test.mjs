@@ -160,3 +160,47 @@ test("new standalone guides are part of the published navigation", async () => {
   assert.ok(navigation.includes("user-guide/standalone-configuration.md"));
   assert.ok(navigation.includes("user-guide/standalone-operations.md"));
 });
+
+test("embedded HTTP and standalone modes share one documented navigation section", async () => {
+  const [navigation, overview] = await Promise.all([
+    read("mkdocs.yml"),
+    read("docs/user-guide/deployment-modes.md"),
+  ]);
+
+  const deploymentModesSection = navigation.match(
+    /  - Deployment Modes:\n((?:    .*\n)+?)(?=  - [A-Z]|\s*$)/,
+  )?.[1];
+  assert.ok(deploymentModesSection, "Deployment Modes navigation section must exist");
+
+  for (const page of [
+    "user-guide/deployment-modes.md",
+    "user-guide/embedded-engine.md",
+    "user-guide/http-server.md",
+    "user-guide/standalone-server.md",
+    "user-guide/standalone-configuration.md",
+    "user-guide/standalone-operations.md",
+  ]) {
+    assert.equal(
+      navigation.match(new RegExp(page.replaceAll(".", "\\."), "g"))?.length,
+      1,
+      `${page} must appear exactly once in navigation`,
+    );
+    assert.ok(
+      deploymentModesSection.includes(page),
+      `${page} must be grouped under Deployment Modes`,
+    );
+  }
+
+  for (const expected of [
+    "# Deployment Modes",
+    "## Choose a mode",
+    "## How HTTP and standalone relate",
+    "(embedded-engine.md)",
+    "(http-server.md)",
+    "(standalone-server.md)",
+    "(standalone-configuration.md)",
+    "(standalone-operations.md)",
+  ]) {
+    assert.ok(overview.includes(expected), `deployment overview should include ${expected}`);
+  }
+});

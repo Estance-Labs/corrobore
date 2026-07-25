@@ -64,7 +64,13 @@ nav:
     - Quick Start: getting-started.md
     - Docker: getting-started-docker.md
     - Python Integration: getting-started-python.md
-  - Embedded Engine: user-guide/embedded-engine.md
+  - Deployment Modes:
+    - Overview: user-guide/deployment-modes.md
+    - Embedded Engine: user-guide/embedded-engine.md
+    - HTTP Server: user-guide/http-server.md
+    - Standalone Server CLI: user-guide/standalone-server.md
+    - Standalone Configuration: user-guide/standalone-configuration.md
+    - Standalone Operations: user-guide/standalone-operations.md
   - TAXII Ingestion: user-guide/ingestion.md
   - For LLM Agents: for-llms.md
   - Skills:
@@ -73,14 +79,10 @@ nav:
     - OpenCTI Harvester Agent: skills/corrobore/AGENT.md
   - Architecture: architecture.md
   - User Guide:
-    - Standalone Server CLI: user-guide/standalone-server.md
-    - Standalone Configuration: user-guide/standalone-configuration.md
-    - Standalone Operations: user-guide/standalone-operations.md
     - Cypher Support: user-guide/cypher.md
     - Intelligence Domains: user-guide/domains.md
     - Domain Provider Operations: user-guide/domain-provider-operations.md
     - Exporters & Validation: user-guide/exporters.md
-    - HTTP Server: user-guide/http-server.md
     - Learned Working Set: user-guide/working-set.md
   - API Reference:
     - Interactive reference: api/index.html

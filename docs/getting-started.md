@@ -13,6 +13,11 @@ Pick the mode that matches your deployment target:
 | HTTP + TAXII | `corrobore-http-server` + `corrobore-ingest` | Connector-driven ingestion workflows | `docker compose --profile taxii up --build --wait` |
 | Embedded | In-process `corrobore_engine` library | Rust applications embedding Corrobore directly | See [Use Corrobore in process](#use-corrobore-in-process) |
 
+The HTTP rows are service topologies: the supported standalone
+`corrobore server start` process exposes the HTTP API. See
+[Deployment Modes](user-guide/deployment-modes.md) for the distinction between
+the interface and its operational host.
+
 For Docker-specific examples and environment variables, see
 [Getting Started with Docker](getting-started-docker.md).
 
