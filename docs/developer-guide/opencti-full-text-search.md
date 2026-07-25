@@ -2,9 +2,10 @@
 
 Issue #46 implements the `read.full-text` compatibility subset behind the
 backend-neutral Knowledge Data Engine `search` operation. It does not accept
-Elasticsearch/OpenSearch Query DSL, arbitrary analyzers, aggregations or file
-content. Aggregations are exposed through the typed issue #47 contract; file
-content remains assigned to issue #48.
+Elasticsearch/OpenSearch Query DSL, arbitrary analyzers or aggregations.
+Aggregations are exposed through the typed issue #47 contract. File content is
+routed by `content: true` to the isolated pipeline documented in
+[OpenCTI file-content search](opencti-file-content-search.md).
 
 ## Request contract
 
@@ -28,8 +29,8 @@ The supported modes are `term`, `phrase`, `prefix`, and `fuzzy`.
 `prefix: true`. Fields, types and exact filters are conjunctive restrictions;
 all text terms are conjunctive as well.
 
-Unknown expression keys are rejected. The `content` field is rejected because
-file extraction and file-content search belong to #48.
+Unknown expression keys are rejected. `content: true` selects the dedicated
+file-content index; it is never mixed into graph object or relationship hits.
 
 ## Analysis and ranking
 

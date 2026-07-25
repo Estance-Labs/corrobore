@@ -44,6 +44,8 @@ pub enum FullTextRecordClass {
     Object,
     /// Canonical graph relationship.
     Relationship,
+    /// Extracted OpenCTI-managed file content.
+    FileContent,
 }
 
 /// Canonical, payload-independent search document.
@@ -83,6 +85,9 @@ pub enum FullTextMatchMode {
 }
 
 /// One exact structured predicate combined conjunctively with full text.
+///
+/// Repeating the same field expresses an any-of predicate for that field;
+/// predicates on different fields remain conjunctive.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FullTextFieldFilter {
     /// OpenCTI field name.
@@ -100,9 +105,9 @@ pub struct FullTextQuery {
     pub mode: FullTextMatchMode,
     /// Searchable fields; empty uses the documented default field set.
     pub fields: Vec<String>,
-    /// OpenCTI kinds; empty accepts every kind.
+    /// Accepted OpenCTI kinds; empty accepts every kind.
     pub kinds: Vec<String>,
-    /// Conjunctive exact field filters.
+    /// Exact filters, conjunctive across fields and disjunctive within a field.
     pub filters: Vec<FullTextFieldFilter>,
     /// Maximum hits in this page.
     pub limit: u32,
@@ -135,6 +140,15 @@ pub struct FullTextSearchHit {
     pub revision: u64,
     /// Tantivy relevance score.
     pub score: f32,
+    /// Bounded highlighted context for content-bearing records.
+    #[serde(default)]
+    pub snippet: Option<String>,
+    /// Exact normalized terms highlighted in the snippet.
+    #[serde(default)]
+    pub highlights: Vec<String>,
+    /// Payload-free provenance and filter metadata.
+    #[serde(default)]
+    pub metadata: BTreeMap<String, String>,
 }
 
 /// Stable page of authorized full-text hits.
@@ -427,6 +441,9 @@ impl FullTextIndex {
                 kind: stored_text(&document, fields.kind)?.to_owned(),
                 revision: stored_u64(&document, fields.revision)?,
                 score,
+                snippet: None,
+                highlights: Vec::new(),
+                metadata: BTreeMap::new(),
             });
         }
         authorized.sort_by(|left, right| {
@@ -1009,15 +1026,23 @@ fn compile_query(
         .parse_query(&input)
         .map_err(|error| FullTextSearchError::InvalidQuery(error.to_string()))?;
     let mut clauses: Vec<(Occur, Box<dyn Query>)> = vec![(Occur::Must, text_query)];
-    for kind in &request.kinds {
-        clauses.push((
-            Occur::Must,
-            Box::new(TermQuery::new(
-                Term::from_field_text(fields.kind, &normalize_keyword(kind)),
-                IndexRecordOption::Basic,
-            )),
-        ));
+    if !request.kinds.is_empty() {
+        let kind_clauses = request
+            .kinds
+            .iter()
+            .map(|kind| {
+                (
+                    Occur::Should,
+                    Box::new(TermQuery::new(
+                        Term::from_field_text(fields.kind, &normalize_keyword(kind)),
+                        IndexRecordOption::Basic,
+                    )) as Box<dyn Query>,
+                )
+            })
+            .collect();
+        clauses.push((Occur::Must, Box::new(BooleanQuery::new(kind_clauses))));
     }
+    let mut filters_by_field = BTreeMap::<String, (Field, Vec<String>)>::new();
     for filter in &request.filters {
         let field_name = normalize_field_name(&filter.field)?;
         let suffix = field_suffix(&field_name);
@@ -1030,13 +1055,26 @@ fn compile_query(
                 )),
             )])));
         };
-        clauses.push((
-            Occur::Must,
-            Box::new(TermQuery::new(
-                Term::from_field_text(*field, &normalize_keyword(&filter.value)),
-                IndexRecordOption::Basic,
-            )),
-        ));
+        filters_by_field
+            .entry(suffix)
+            .or_insert_with(|| (*field, Vec::new()))
+            .1
+            .push(filter.value.clone());
+    }
+    for (_, (field, values)) in filters_by_field {
+        let value_clauses = values
+            .into_iter()
+            .map(|value| {
+                (
+                    Occur::Should,
+                    Box::new(TermQuery::new(
+                        Term::from_field_text(field, &normalize_keyword(&value)),
+                        IndexRecordOption::Basic,
+                    )) as Box<dyn Query>,
+                )
+            })
+            .collect();
+        clauses.push((Occur::Must, Box::new(BooleanQuery::new(value_clauses))));
     }
     Ok(Box::new(BooleanQuery::new(clauses)))
 }
@@ -1079,11 +1117,6 @@ fn normalize_field_name(field: &str) -> Result<String, FullTextSearchError> {
         return Err(FullTextSearchError::InvalidQuery(format!(
             "unsupported search field {field:?}"
         )));
-    }
-    if field == "content" {
-        return Err(FullTextSearchError::InvalidQuery(
-            "file-content search is delivered by issue #48".to_owned(),
-        ));
     }
     Ok(field)
 }

@@ -21,6 +21,10 @@ use graph_core::{
 };
 use opencti_access::AccessContext;
 use opencti_access::{AccessMetadata, OpenCtiAccessPolicy};
+use opencti_file_search::{
+    EnqueueOutcome, ExtractionArtifact, FileContentError, FileContentIndex,
+    FileContentIndexSettings, FileContentQuery, FileDescriptor, FileJobMetrics, FileJobStore,
+};
 use opencti_search::{
     FullTextDocument, FullTextIndex, FullTextIndexSettings, FullTextQuery, FullTextRebuildOutcome,
     FullTextSearchPage, FullTextSearchReadiness, document_from_node, document_from_relationship,
@@ -54,6 +58,12 @@ const FULL_TEXT_SCHEMA_VERSION: &str = "opencti-full-text-v1";
 const FULL_TEXT_CURSOR_KEY: &str = "cursor.key";
 const FULL_TEXT_WRITER_MEMORY_BYTES: usize = 50_000_000;
 const FULL_TEXT_MAX_CANDIDATES: usize = 100_000;
+const FILE_CONTENT_SCHEMA_VERSION: &str = "opencti-file-content-v1";
+const FILE_CONTENT_WRITER_MEMORY_BYTES: usize = 50_000_000;
+const FILE_CONTENT_MAX_CANDIDATES: usize = 100_000;
+const FILE_CONTENT_SNIPPET_CHARS: usize = 240;
+const FILE_CONTENT_MAX_ATTEMPTS: u32 = 3;
+const FILE_CONTENT_LEASE_MS: u64 = 60_000;
 
 /// Bounded resident-record budgets for the standalone canonical store.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -325,6 +335,7 @@ pub struct CanonicalEngineStore {
     resident_relationships: HashMap<RelationshipId, Relationship>,
     resident_policy_fingerprint: Option<String>,
     last_projection_stats: CanonicalProjectionStats,
+    file_content_index: Option<FileContentIndex>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -387,6 +398,7 @@ impl CanonicalEngineStore {
             resident_relationships: HashMap::new(),
             resident_policy_fingerprint: None,
             last_projection_stats: CanonicalProjectionStats::default(),
+            file_content_index: None,
         };
         store.migrate_legacy_snapshot_if_needed()?;
         store.refresh_index_stats();
@@ -619,6 +631,145 @@ impl CanonicalEngineStore {
         self.full_text_index()?
             .rebuild_with_checkpoint(&documents, 5_000, None)
             .map_err(full_text_error)
+    }
+
+    /// Persist one completed extraction artifact and atomically publish the
+    /// resulting file-content search generation.
+    pub fn publish_file_content(
+        &mut self,
+        artifact: ExtractionArtifact,
+        now_ms: u64,
+    ) -> GraphStorageResult<FullTextRebuildOutcome> {
+        let mut metadata = self.file_content_store()?;
+        metadata
+            .publish_artifact(artifact, now_ms)
+            .map_err(file_content_error)?;
+        self.file_content_index()?
+            .rebuild_from_store(&metadata)
+            .map_err(file_content_error)
+    }
+
+    /// Enqueue one canonical file version for processing by the isolated
+    /// extraction worker. Replays of the same file, hash and version are
+    /// idempotent.
+    pub fn enqueue_file_extraction(
+        &self,
+        descriptor: FileDescriptor,
+        now_ms: u64,
+    ) -> GraphStorageResult<EnqueueOutcome> {
+        self.file_content_store()?
+            .enqueue(descriptor, now_ms)
+            .map_err(file_content_error)
+    }
+
+    /// Read bounded queue, retry, quarantine, byte and lag measurements.
+    pub fn file_extraction_metrics(&self, now_ms: u64) -> GraphStorageResult<FileJobMetrics> {
+        Ok(self.file_content_store()?.metrics(now_ms))
+    }
+
+    /// Delete one file and synchronously publish visibility without its stale
+    /// extracted chunks.
+    pub fn delete_file_content(
+        &mut self,
+        file_id: &str,
+    ) -> GraphStorageResult<FullTextRebuildOutcome> {
+        let mut metadata = self.file_content_store()?;
+        metadata.delete_file(file_id).map_err(file_content_error)?;
+        self.file_content_index()?
+            .rebuild_from_store(&metadata)
+            .map_err(file_content_error)
+    }
+
+    /// Search only authorized extracted file content. Rebuild is generation
+    /// aware, so newly published metadata cannot remain hidden behind an older
+    /// otherwise healthy derived index.
+    pub fn search_file_content(
+        &mut self,
+        query: &FileContentQuery,
+        access: &AccessContext,
+    ) -> GraphStorageResult<FullTextSearchPage> {
+        let metadata = self.file_content_store()?;
+        let index = self.file_content_index()?;
+        index
+            .rebuild_from_store(&metadata)
+            .map_err(file_content_error)?;
+        index.search(query, access).map_err(file_content_error)
+    }
+
+    /// Rebuild file-content search entirely from Corrobore-owned extraction
+    /// metadata; object storage remains authoritative for re-extraction.
+    pub fn rebuild_file_content_index(&mut self) -> GraphStorageResult<FullTextRebuildOutcome> {
+        let metadata = self.file_content_store()?;
+        self.file_content_index()?
+            .rebuild_from_store(&metadata)
+            .map_err(file_content_error)
+    }
+
+    fn file_content_store(&self) -> GraphStorageResult<FileJobStore> {
+        FileJobStore::open(
+            self.root.path().join("file-content").join("metadata"),
+            FILE_CONTENT_MAX_ATTEMPTS,
+            FILE_CONTENT_LEASE_MS,
+        )
+        .map_err(file_content_error)
+    }
+
+    fn file_content_index(&mut self) -> GraphStorageResult<&FileContentIndex> {
+        if self.file_content_index.is_none() {
+            let root = self.root.path().join("search").join("file-content-v1");
+            self.file_content_index = Some(
+                FileContentIndex::open(
+                    root,
+                    FileContentIndexSettings {
+                        schema_version: FILE_CONTENT_SCHEMA_VERSION.to_owned(),
+                        cursor_key: self.file_content_cursor_key()?,
+                        writer_memory_bytes: FILE_CONTENT_WRITER_MEMORY_BYTES,
+                        max_candidates: FILE_CONTENT_MAX_CANDIDATES,
+                        snippet_chars: FILE_CONTENT_SNIPPET_CHARS,
+                    },
+                )
+                .map_err(file_content_error)?,
+            );
+        }
+        self.file_content_index
+            .as_ref()
+            .ok_or_else(|| GraphStorageError::OperationFailed {
+                operation: "initialize_file_content_index",
+                message: "index initialization did not retain its handle".to_owned(),
+            })
+    }
+
+    fn file_content_cursor_key(&self) -> GraphStorageResult<Vec<u8>> {
+        let search_root = self.root.path().join("search").join("file-content-v1");
+        fs::create_dir_all(&search_root)
+            .map_err(|error| io_error("create_file_content_index_root", &search_root, error))?;
+        let key_path = search_root.join(FULL_TEXT_CURSOR_KEY);
+        match fs::read(&key_path) {
+            Ok(key) if key.len() >= 32 => return Ok(key),
+            Ok(_) => {
+                return Err(GraphStorageError::OperationFailed {
+                    operation: "read_file_content_cursor_key",
+                    message: "persistent file-content cursor key is shorter than 32 bytes"
+                        .to_owned(),
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(io_error("read_file_content_cursor_key", &key_path, error));
+            }
+        }
+        let mut key = vec![0_u8; 32];
+        getrandom::fill(&mut key).map_err(|error| GraphStorageError::OperationFailed {
+            operation: "generate_file_content_cursor_key",
+            message: error.to_string(),
+        })?;
+        let temporary = search_root.join(format!("{FULL_TEXT_CURSOR_KEY}.next"));
+        fs::write(&temporary, &key)
+            .map_err(|error| io_error("write_file_content_cursor_key", &temporary, error))?;
+        set_private_file_permissions(&temporary)?;
+        fs::rename(&temporary, &key_path)
+            .map_err(|error| io_error("publish_file_content_cursor_key", &key_path, error))?;
+        Ok(key)
     }
 
     fn full_text_index(&self) -> GraphStorageResult<FullTextIndex> {
@@ -1974,6 +2125,13 @@ fn graph_error(error: impl std::fmt::Display) -> GraphStorageError {
 fn full_text_error(error: opencti_search::FullTextSearchError) -> GraphStorageError {
     GraphStorageError::OperationFailed {
         operation: "canonical_full_text_index",
+        message: error.to_string(),
+    }
+}
+
+fn file_content_error(error: FileContentError) -> GraphStorageError {
+    GraphStorageError::OperationFailed {
+        operation: "canonical_file_content_index",
         message: error.to_string(),
     }
 }

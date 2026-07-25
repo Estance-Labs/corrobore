@@ -65,6 +65,33 @@ fn compose_stack_wires_runtime_auth_health_and_persistence() {
 }
 
 #[test]
+fn file_worker_profile_is_process_isolated_and_resource_bounded() {
+    let compose = repository_file("docker-compose.yml");
+
+    for expected in [
+        "corrobore-file-worker:",
+        "profiles: [\"file-search\"]",
+        "entrypoint: [\"/usr/local/bin/corrobore-file-worker\"]",
+        "CORROBORE_FILE_METADATA_DIR: /graph-data/file-content/metadata",
+        "CORROBORE_FILE_BLOB_ROOT: /opencti-files",
+        ":/opencti-files:ro",
+        "read_only: true",
+        "network_mode: none",
+        "cap_drop: [\"ALL\"]",
+        "no-new-privileges:true",
+        "pids_limit: 64",
+        "mem_limit:",
+        "cpus:",
+        "/tmp:size=64m,noexec,nosuid,nodev",
+    ] {
+        assert!(
+            compose.contains(expected),
+            "file worker profile should include {expected}"
+        );
+    }
+}
+
+#[test]
 fn container_image_stays_secret_free_and_backend_only() {
     let dockerfile = repository_file("Dockerfile");
 
@@ -89,7 +116,8 @@ fn container_image_stays_secret_free_and_backend_only() {
         "ENTRYPOINT [\"/usr/local/bin/corrobore\"]",
         "CMD [\"server\", \"start\"",
         "USER 65532:65532",
-        "VOLUME [\"/data\"]",
+        "VOLUME [\"/data\", \"/graph-data\"]",
+        "target/release/corrobore-file-worker",
         "STOPSIGNAL SIGTERM",
         "HEALTHCHECK",
         "\"server\", \"status\"",

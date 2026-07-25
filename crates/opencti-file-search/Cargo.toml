@@ -1,5 +1,5 @@
 [package]
-name = "graph-storage"
+name = "opencti-file-search"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,28 +9,28 @@ homepage.workspace = true
 documentation.workspace = true
 
 [lib]
-name = "graph_storage"
+name = "opencti_file_search"
 path = "src/lib.rs"
 
+[[bin]]
+name = "corrobore-file-worker"
+path = "src/bin/corrobore-file-worker.rs"
+
 [dependencies]
+calamine = { workspace = true }
+csv = { workspace = true }
+fs4 = { workspace = true }
 getrandom = { workspace = true }
-graph-core = { path = "../graph-core" }
+lopdf = { workspace = true }
 opencti-access = { path = "../opencti-access" }
-opencti-file-search = { path = "../opencti-file-search" }
 opencti-search = { path = "../opencti-search" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 thiserror = { workspace = true }
-tracing = { workspace = true }
 
 [dev-dependencies]
-criterion = { workspace = true }
-proptest = { workspace = true }
-sha2 = { workspace = true }
-
-[[bench]]
-name = "page_in"
-harness = false
+zip = { version = "4", default-features = false, features = ["deflate"] }
 
 [lints]
 workspace = true

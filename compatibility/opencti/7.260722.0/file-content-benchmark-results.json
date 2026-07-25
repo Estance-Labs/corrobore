@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-07-25T19:57:54Z",
+  "engine": "corrobore-file-content-tantivy-0.26.1",
+  "environment": {
+    "architecture": "arm64",
+    "operating_system": "macOS 26.5.2",
+    "build_profile": "release"
+  },
+  "profile": {
+    "id": "small-file-content",
+    "files": 100000,
+    "matching_files": 98,
+    "workload": "phrase-file-content",
+    "warmup_iterations": 20,
+    "measurement_iterations": 60,
+    "concurrency": 1
+  },
+  "ingestion": {
+    "elapsed_seconds": 1.765346458,
+    "throughput_files_per_second": 56646.105
+  },
+  "metrics": {
+    "latency_p50_ms": 1.121,
+    "latency_p95_ms": 1.198,
+    "latency_p99_ms": 1.238,
+    "throughput_ops_per_second": 894.485,
+    "resident_memory_bytes": null,
+    "writer_memory_bytes": 50000000,
+    "disk_bytes": 66854856,
+    "max_candidates": 100000
+  },
+  "parity_gate": {
+    "reference_engine": "opensearch-3.7.0",
+    "reference_full_text_p95_ms": 5.134,
+    "maximum_regression_percent": 20,
+    "maximum_p95_ms": 6.1608,
+    "passed": true
+  },
+  "reproduction": {
+    "command": "cargo run --release -p opencti-file-search --example small_profile_benchmark --locked",
+    "temporary_index_cleanup": "automatic"
+  }
+}

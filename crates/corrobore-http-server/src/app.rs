@@ -38,7 +38,7 @@ use axum::{
 use corrobore_engine::{
     CorroboreEngine, EnginePersistence, GraphDirection, KnowledgeDataOperation,
     PreparedKnowledgeDataProjection, ReadFilter, ReadFilterOperator, ReadPredicate,
-    full_text_query_from_search_request,
+    file_content_query_from_search_request, full_text_query_from_search_request,
 };
 use corrobore_engine::{DivergenceBaseline, ShadowSamplingPolicy};
 use graph_storage::{
@@ -268,15 +268,23 @@ impl EnginePersistence for PersistentEnginePersistence {
         access: &corrobore_engine::AccessContext,
     ) -> Result<Option<PreparedKnowledgeDataProjection>, String> {
         if let KnowledgeDataOperation::Search(request) = operation {
-            let query =
-                full_text_query_from_search_request(request).map_err(|error| error.message)?;
             let mut store = self
                 .store
                 .lock()
                 .map_err(|_| "canonical graph store lock is poisoned".to_owned())?;
-            let page = store
-                .search_full_text(&query, access)
-                .map_err(|error| error.to_string())?;
+            let page = if let Some(query) =
+                file_content_query_from_search_request(request).map_err(|error| error.message)?
+            {
+                store
+                    .search_file_content(&query, access)
+                    .map_err(|error| error.to_string())?
+            } else {
+                let query =
+                    full_text_query_from_search_request(request).map_err(|error| error.message)?;
+                store
+                    .search_full_text(&query, access)
+                    .map_err(|error| error.to_string())?
+            };
             return Ok(Some(PreparedKnowledgeDataProjection {
                 graph: graph_core::Graph::new(),
                 page_ins: 0,

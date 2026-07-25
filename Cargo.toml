@@ -12,6 +12,7 @@ members = [
     "crates/graph-storage",
     "crates/opencti-access",
     "crates/opencti-adapter",
+    "crates/opencti-file-search",
     "crates/opencti-search",
     "crates/corrobore-engine",
     "crates/corrobore-http-server",
@@ -39,17 +40,21 @@ documentation = "https://docs.corrobore.org/"
 [workspace.dependencies]
 axum = { version = "0.8", features = ["multipart"] }
 axum-server = { version = "0.8", features = ["tls-rustls"] }
+calamine = "0.36"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { version = "4", features = ["derive"] }
+csv = "1"
 # Property-based and benchmark tooling used by the testing-depth crates. Kept in
 # the workspace table so versions stay aligned; each crate opts in as a
 # dev-dependency only where the tests/benches actually live.
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 dotenvy = "0.15"
+fs4 = "0.13"
 getrandom = "0.3"
 hmac = "0.12"
 http-body-util = "0.1"
 nom = "8"
+lopdf = "0.44"
 proptest = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rustls = "0.23"
