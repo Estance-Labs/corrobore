@@ -32,6 +32,7 @@
 //! carries the mandatory `# HELP` / `# TYPE` header lines and a single sample.
 
 use axum::{extract::State, http::header, response::IntoResponse};
+use corrobore_engine::SHADOW_LATENCY_BUCKETS_MS;
 
 use crate::app::AppState;
 use crate::durability::collect_durability_snapshot;
@@ -224,6 +225,53 @@ pub async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
         checkpoint = sync.last_acknowledged_sequence,
         shadow_reads = u8::from(sync.shadow_reads_enabled),
     ));
+    let shadow_series = state
+        .opencti_shadow
+        .lock()
+        .map(|runtime| runtime.metrics().series())
+        .unwrap_or_default();
+    body.push_str(
+        "# HELP corrobore_opencti_shadow_comparisons_total OpenCTI shadow comparisons by bounded query class and release.\n\
+# TYPE corrobore_opencti_shadow_comparisons_total counter\n\
+# HELP corrobore_opencti_shadow_equivalent_total Equivalent OpenCTI shadow comparisons.\n\
+# TYPE corrobore_opencti_shadow_equivalent_total counter\n\
+# HELP corrobore_opencti_shadow_security_blocking_total Blocking security divergences.\n\
+# TYPE corrobore_opencti_shadow_security_blocking_total counter\n\
+# HELP corrobore_opencti_shadow_latency_ms Shadow-read provider latency distribution in milliseconds.\n\
+# TYPE corrobore_opencti_shadow_latency_ms histogram\n",
+    );
+    for series in shadow_series {
+        let query_class = series.query_class.as_str();
+        let release = prometheus_label(&series.release);
+        body.push_str(&format!(
+            "corrobore_opencti_shadow_comparisons_total{{query_class=\"{query_class}\",release=\"{release}\"}} {}\n\
+corrobore_opencti_shadow_equivalent_total{{query_class=\"{query_class}\",release=\"{release}\"}} {}\n\
+corrobore_opencti_shadow_security_blocking_total{{query_class=\"{query_class}\",release=\"{release}\"}} {}\n",
+            series.comparisons, series.equivalent, series.security_blocking,
+        ));
+        for (provider, buckets) in [
+            ("reference", series.reference_latency_buckets),
+            ("shadow", series.shadow_latency_buckets),
+        ] {
+            for (upper_bound, count) in SHADOW_LATENCY_BUCKETS_MS.iter().zip(buckets) {
+                let upper_bound = if *upper_bound == u64::MAX {
+                    "+Inf".to_owned()
+                } else {
+                    upper_bound.to_string()
+                };
+                body.push_str(&format!(
+                    "corrobore_opencti_shadow_latency_ms_bucket{{query_class=\"{query_class}\",release=\"{release}\",provider=\"{provider}\",le=\"{upper_bound}\"}} {count}\n"
+                ));
+            }
+        }
+    }
 
     ([(header::CONTENT_TYPE, PROMETHEUS_CONTENT_TYPE)], body)
+}
+
+fn prometheus_label(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
 }

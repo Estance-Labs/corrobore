@@ -28,8 +28,10 @@ use std::{
 };
 
 use axum::{
+    Json, Router,
     body::{Body, to_bytes},
     http::{Method, Request, StatusCode, header},
+    routing::post,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use corrobore_http_server::{AppState, ServerConfig, build_router};
@@ -742,6 +744,222 @@ async fn opencti_sync_http_contract_commits_and_reports_checkpoint_status() {
     assert_eq!(payload["result"]["lag"], 0);
     assert_eq!(payload["result"]["shadow_reads_enabled"], false);
 
+    let _ = fs::remove_dir_all(storage_root);
+}
+
+#[tokio::test]
+async fn opencti_shadow_read_returns_reference_and_persists_correlated_parity_report() {
+    async fn reference_provider(
+        Json(request): Json<corrobore_engine::KnowledgeDataRequest>,
+    ) -> Json<corrobore_engine::KnowledgeDataResponseEnvelope> {
+        Json(corrobore_engine::KnowledgeDataResponseEnvelope {
+            contract_version: corrobore_engine::ContractVersion::CURRENT,
+            correlation_id: request.context.correlation_id,
+            outcome: corrobore_engine::KnowledgeDataOutcome::Success {
+                response: corrobore_engine::KnowledgeDataResponse::Record(None),
+            },
+        })
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("reference listener should bind");
+    let reference_endpoint = format!(
+        "http://{}/v1/knowledge-data",
+        listener.local_addr().expect("reference address")
+    );
+    let reference_server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().route("/v1/knowledge-data", post(reference_provider)),
+        )
+        .await
+        .expect("reference server should run");
+    });
+
+    let storage_root = unique_store_dir("opencti-shadow-http-root");
+    let app = test_app_with_store_dir_and_extra_env(
+        unique_store_dir("opencti-shadow-http-sessions"),
+        HashMap::from([
+            ("CORROBORE_STORAGE_MODE".to_owned(), "persistent".to_owned()),
+            (
+                "CORROBORE_STORAGE_DIR".to_owned(),
+                storage_root.display().to_string(),
+            ),
+            (
+                "CORROBORE_OPENCTI_SHADOW_REFERENCE_ENDPOINT".to_owned(),
+                reference_endpoint,
+            ),
+            (
+                "CORROBORE_OPENCTI_SHADOW_REFERENCE_VERSION".to_owned(),
+                "opensearch-2.19.2".to_owned(),
+            ),
+            (
+                "CORROBORE_OPENCTI_SHADOW_RELEASE".to_owned(),
+                "issue-43-http".to_owned(),
+            ),
+            (
+                "CORROBORE_OPENCTI_SHADOW_SAMPLE_BASIS_POINTS".to_owned(),
+                "10000".to_owned(),
+            ),
+        ]),
+    );
+
+    let synchronizer = opencti_adapter::OpenCtiSynchronizer::new(Default::default());
+    let batch = opencti_adapter::OpenCtiSyncBatch::new(
+        "opencti--shadow-http",
+        "snapshot--shadow-http",
+        opencti_adapter::SyncPhase::Snapshot,
+        1,
+        true,
+        vec![
+            opencti_adapter::OpenCtiMutation::new(
+                "operation--shadow-http-1",
+                1,
+                opencti_adapter::MutationClass::Upsert,
+                json!({
+                    "id": "indicator--shadow-http-fixture",
+                    "type": "indicator",
+                    "name": "Shadow HTTP fixture"
+                }),
+            )
+            .expect("fixture mutation"),
+        ],
+    )
+    .expect("fixture batch");
+    let mut expected_graph = graph_core::Graph::new();
+    let mut expected_checkpoint =
+        opencti_adapter::SyncCheckpoint::new("opencti--shadow-http", "snapshot--shadow-http");
+    synchronizer
+        .apply_batch(&mut expected_graph, &mut expected_checkpoint, batch.clone())
+        .expect("fixture batch should apply");
+    let expected = synchronizer
+        .digest(&expected_graph)
+        .expect("fixture digest");
+    let synchronize = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/opencti/sync/batches")
+                .header(header::AUTHORIZATION, "Bearer token-123")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "batch": batch,
+                        "expected": expected
+                    })
+                    .to_string(),
+                ))
+                .expect("sync request should build"),
+        )
+        .await
+        .expect("sync gate request should respond");
+    let synchronize_status = synchronize.status();
+    let synchronize_body = to_bytes(synchronize.into_body(), usize::MAX)
+        .await
+        .expect("sync gate response body");
+    assert_eq!(
+        synchronize_status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&synchronize_body)
+    );
+
+    let correlation_id = "correlation--shadow-http";
+    let shadow_request = json!({
+        "request": {
+            "contract_version": {"major": 1, "minor": 0},
+            "context": {
+                "request_id": "request--shadow-http",
+                "correlation_id": correlation_id,
+                "access": {
+                    "subject_id": "user--shadow-http",
+                    "organization_ids": ["organization--alpha"],
+                    "marking_ids": [],
+                    "tenant_id": "tenant--alpha",
+                    "roles": ["analyst"],
+                    "attributes": {}
+                },
+                "consistency": "read_your_writes"
+            },
+            "operation": {
+                "operation": "get_by_id",
+                "request": {"id": "indicator--missing"}
+            }
+        },
+        "metadata": {
+            "environment": "test",
+            "entity_type": "indicator",
+            "user_cohort": "contract"
+        }
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/opencti/shadow/reads")
+                .header(header::AUTHORIZATION, "Bearer token-123")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(shadow_request.to_string()))
+                .expect("shadow request should build"),
+        )
+        .await
+        .expect("shadow read should respond");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("reference response body");
+    let reference: Value = serde_json::from_slice(&body).expect("reference response JSON");
+    assert_eq!(reference["correlation_id"], correlation_id);
+    assert_eq!(reference["outcome"]["status"], "success");
+    assert_eq!(reference["outcome"]["response"]["response"], "record");
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let reports = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/opencti/shadow/reports?query_class=point_read&release=issue-43-http")
+                .header(header::AUTHORIZATION, "Bearer token-123")
+                .body(Body::empty())
+                .expect("reports request should build"),
+        )
+        .await
+        .expect("reports should respond");
+    assert_eq!(reports.status(), StatusCode::OK);
+    let body = to_bytes(reports.into_body(), usize::MAX)
+        .await
+        .expect("reports response body");
+    let payload: Value = serde_json::from_slice(&body).expect("reports JSON");
+    assert_eq!(payload["result"][0]["correlation_id"], correlation_id);
+    assert_eq!(payload["result"][0]["equivalent"], true);
+    assert_eq!(payload["result"][0]["gate"], "pass");
+
+    let metrics = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/metrics")
+                .body(Body::empty())
+                .expect("metrics request should build"),
+        )
+        .await
+        .expect("metrics should respond");
+    let body = to_bytes(metrics.into_body(), usize::MAX)
+        .await
+        .expect("metrics body");
+    let metrics = String::from_utf8(body.to_vec()).expect("metrics should be UTF-8");
+    assert!(metrics.contains(
+        "corrobore_opencti_shadow_comparisons_total{query_class=\"point_read\",release=\"issue-43-http\"} 1"
+    ));
+    assert!(metrics.contains(
+        "corrobore_opencti_shadow_latency_ms_bucket{query_class=\"point_read\",release=\"issue-43-http\",provider=\"reference\",le=\"+Inf\"} 1"
+    ));
+
+    reference_server.abort();
     let _ = fs::remove_dir_all(storage_root);
 }
 

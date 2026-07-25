@@ -109,6 +109,17 @@ rejected.
 | `limits.import_max_body_bytes` | `CORROBORE_HTTP_IMPORT_MAX_BODY_BYTES` | `--import-max-body-bytes` | `33554432` |
 | `limits.opencti_sync_max_operations` | `CORROBORE_OPENCTI_SYNC_MAX_OPERATIONS` | `--opencti-sync-max-operations` | `512` |
 | `limits.opencti_sync_max_replay_identities` | `CORROBORE_OPENCTI_SYNC_MAX_REPLAY_IDENTITIES` | `--opencti-sync-max-replay-identities` | `4096` |
+| — | `CORROBORE_OPENCTI_SHADOW_REFERENCE_ENDPOINT` | — | unset |
+| — | `CORROBORE_OPENCTI_SHADOW_REFERENCE_VERSION` | — | `unconfigured` |
+| — | `CORROBORE_OPENCTI_SHADOW_REFERENCE_AUTH_TOKEN` | — | unset; prefer file source |
+| — | `CORROBORE_OPENCTI_SHADOW_REFERENCE_AUTH_TOKEN_FILE` | — | unset |
+| — | `CORROBORE_OPENCTI_SHADOW_RELEASE` | — | package version |
+| — | `CORROBORE_OPENCTI_SHADOW_SAMPLE_BASIS_POINTS` | — | `0` |
+| — | `CORROBORE_OPENCTI_SHADOW_MAX_CONCURRENCY` | — | `4` |
+| — | `CORROBORE_OPENCTI_SHADOW_TIMEOUT_MS` | — | `2000` |
+| — | `CORROBORE_OPENCTI_SHADOW_MAX_REPORTS` | — | `10000` |
+| — | `CORROBORE_OPENCTI_SHADOW_SAMPLING_POLICY_FILE` | — | unset |
+| — | `CORROBORE_OPENCTI_SHADOW_BASELINE_FILE` | — | unset |
 | `limits.rate_limit_per_second` | `CORROBORE_HTTP_RATE_LIMIT_PER_SECOND` | `--rate-limit-per-second` | `50` |
 | `limits.rate_limit_burst` | `CORROBORE_HTTP_RATE_LIMIT_BURST` | `--rate-limit-burst` | `200` |
 | `interfaces.enabled` | `CORROBORE_SERVER_INTERFACES` | `--interfaces` | `["http"]` |

@@ -55,6 +55,7 @@ fn config(web_dir: Option<String>) -> ServerConfig {
         import_max_body_bytes: 2_048,
         opencti_sync_max_operations: 512,
         opencti_sync_max_replay_identities: 4_096,
+        opencti_shadow: Default::default(),
         rate_limit_per_second: 1_000,
         rate_limit_burst: 1_000,
         web_dir,

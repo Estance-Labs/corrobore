@@ -5,11 +5,12 @@ use std::collections::BTreeMap;
 
 use corrobore_engine::{
     AccessContext, ConformanceCase, ConsistencyLevel, ContractVersion, CorroboreEngine,
-    CorroboreKnowledgeDataProvider, ExpectedConformanceOutcome, GetByIdRequest, HealthRequest,
-    InitializeRequest, KnowledgeDataErrorCode, KnowledgeDataOperation, KnowledgeDataOutcome,
-    KnowledgeDataRequest, KnowledgeDataResponse, ListRequest, OperationKind, PaginateRequest,
-    RequestContext, execute_remote_contract, run_conformance_cases,
+    CorroboreKnowledgeDataProvider, EnginePersistence, ExpectedConformanceOutcome, GetByIdRequest,
+    HealthRequest, InitializeRequest, KnowledgeDataErrorCode, KnowledgeDataOperation,
+    KnowledgeDataOutcome, KnowledgeDataRequest, KnowledgeDataResponse, ListRequest, OperationKind,
+    PaginateRequest, RequestContext, execute_remote_contract, run_conformance_cases,
 };
+use graph_core::Graph;
 
 fn context(correlation_id: &str) -> RequestContext {
     RequestContext {
@@ -303,4 +304,67 @@ fn reusable_conformance_cases_run_against_embedded_and_remote_endpoints() {
         .expect("response should deserialize")
     });
     assert_eq!(remote, embedded);
+}
+
+#[derive(Debug)]
+struct PagedReadPersistence {
+    projection: Graph,
+}
+
+impl EnginePersistence for PagedReadPersistence {
+    fn load_graph(&self) -> Result<Graph, String> {
+        Ok(Graph::new())
+    }
+
+    fn persist_graph(&mut self, _graph: &Graph) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn prepare_graph_for_request(&mut self, _query: &str) -> Result<Option<Graph>, String> {
+        Ok(Some(self.projection.clone()))
+    }
+}
+
+#[test]
+fn knowledge_data_reads_hydrate_paged_persistence_before_provider_dispatch() {
+    let mut source = CorroboreEngine::strict_default();
+    source
+        .write("CREATE (n:Indicator {name: 'persistent-shadow-record'})")
+        .expect("fixture mutation should succeed");
+    let fixture = match provider(&mut source)
+        .execute(request(
+            KnowledgeDataOperation::List(ListRequest {
+                kinds: vec!["Indicator".to_owned()],
+                limit: 10,
+            }),
+            "correlation--paged-source",
+        ))
+        .outcome
+    {
+        KnowledgeDataOutcome::Success {
+            response: KnowledgeDataResponse::Records(page),
+        } => page.records[0].clone(),
+        other => panic!("expected fixture page, got {other:?}"),
+    };
+
+    let mut paged = CorroboreEngine::builder()
+        .persistence(Box::new(PagedReadPersistence {
+            projection: source.graph().clone(),
+        }))
+        .build()
+        .expect("paged engine should initialize metadata-only");
+    assert!(paged.graph().list_nodes().expect("cold graph").is_empty());
+
+    let hydrated = provider(&mut paged).execute(request(
+        KnowledgeDataOperation::GetById(GetByIdRequest {
+            id: fixture.id.clone(),
+        }),
+        "correlation--paged-shadow",
+    ));
+    match hydrated.outcome {
+        KnowledgeDataOutcome::Success {
+            response: KnowledgeDataResponse::Record(Some(record)),
+        } => assert_eq!(record.id, fixture.id),
+        other => panic!("paged Knowledge Data read must hydrate projection, got {other:?}"),
+    }
 }

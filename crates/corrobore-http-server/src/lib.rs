@@ -29,6 +29,7 @@ pub mod explorer_timeline;
 pub mod handlers;
 pub mod lifecycle;
 pub mod logging;
+pub mod opencti_shadow;
 pub mod opencti_sync;
 pub mod security;
 pub mod session_runtime;

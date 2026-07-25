@@ -47,6 +47,17 @@ Application errors use the JSON envelope above. Transport middleware can reject 
 | `CORROBORE_HTTP_IMPORT_MAX_BODY_BYTES` | `33554432` | STIX import body limit (32 MiB). |
 | `CORROBORE_OPENCTI_SYNC_MAX_OPERATIONS` | `512` | Maximum mutations admitted in one OpenCTI synchronization batch. |
 | `CORROBORE_OPENCTI_SYNC_MAX_REPLAY_IDENTITIES` | `4096` | Bounded replay identities and dead-letter diagnostics retained in the durable checkpoint. |
+| `CORROBORE_OPENCTI_SHADOW_REFERENCE_ENDPOINT` | unset | Fixed Knowledge Data Engine endpoint backed by the reference Elasticsearch/OpenSearch provider. |
+| `CORROBORE_OPENCTI_SHADOW_REFERENCE_VERSION` | `unconfigured` | Explicit provider version retained in every comparison report. |
+| `CORROBORE_OPENCTI_SHADOW_REFERENCE_AUTH_TOKEN` | unset | Optional inline reference-provider bearer token; prefer the file source. |
+| `CORROBORE_OPENCTI_SHADOW_REFERENCE_AUTH_TOKEN_FILE` | unset | Protected file containing the reference-provider bearer token. |
+| `CORROBORE_OPENCTI_SHADOW_RELEASE` | package version | Bounded Corrobore release label used by parity and latency metrics. |
+| `CORROBORE_OPENCTI_SHADOW_SAMPLE_BASIS_POINTS` | `0` | Deterministic fallback sample rate from `0` through `10000`. |
+| `CORROBORE_OPENCTI_SHADOW_MAX_CONCURRENCY` | `4` | Independent concurrency ceiling; excess shadow work is shed. |
+| `CORROBORE_OPENCTI_SHADOW_TIMEOUT_MS` | `2000` | Independent shadow deadline that never extends reference latency. |
+| `CORROBORE_OPENCTI_SHADOW_MAX_REPORTS` | `10000` | Bounded durable privacy-safe report retention. |
+| `CORROBORE_OPENCTI_SHADOW_SAMPLING_POLICY_FILE` | unset | JSON rules selecting environment, operation, query class, entity, organization, tenant, cohort, and percentage. |
+| `CORROBORE_OPENCTI_SHADOW_BASELINE_FILE` | unset | JSON list of exact divergence fingerprints with required owner and expiry. |
 | `CORROBORE_HTTP_RATE_LIMIT_PER_SECOND` | `50` | Sustained global protected-route rate. |
 | `CORROBORE_HTTP_RATE_LIMIT_BURST` | `200` | Global burst allowance. |
 | `CORROBORE_HTTP_WEB_DIR` | unset | Optional directory containing the production explorer build. Unset keeps API-only mode. |
@@ -332,6 +343,32 @@ Returns the restored phase, acknowledged sequence, source high-water mark, lag,
 queue depth, retry/rejection/quarantine counters, divergence status, and
 shadow-read gate. The same lag, queue, retry, rejection, checkpoint, and gate
 values are exported on `/metrics`.
+
+## `POST /v1/opencti/shadow/reads`
+
+Forwards one supported typed Knowledge Data Engine read to the configured
+Elasticsearch/OpenSearch reference endpoint and returns that response envelope
+unchanged. When synchronization parity, deterministic sampling, and the
+concurrency budget all permit it, the same request runs asynchronously against
+Corrobore. Shadow success, failure, timeout, or shedding never delays or alters
+the reference response.
+
+The body contains `request` and non-sensitive `metadata`. A single correlation
+ID links the request, both executions, durable report, and metrics. Persistent
+storage is mandatory.
+
+## `GET /v1/opencti/shadow/reports`
+
+Returns newest-first privacy-safe reports, optionally filtered by
+`query_class`, `release`, and a bounded `limit`. Reports contain provider
+versions, both latencies, ID-set, significant-property, ordering, cursor,
+aggregation, relationship, permission, error, and performance dimensions.
+Record identities are SHA-256 evidence handles; property values and remote
+error messages are never persisted.
+
+`/metrics` exports comparison and equivalent totals, blocking security
+divergences, and cumulative latency histograms using only `query_class`,
+`release`, and the bounded `provider` dimension.
 
 ## `POST /v1/stix/validate`
 

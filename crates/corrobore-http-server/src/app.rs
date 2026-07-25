@@ -36,6 +36,7 @@ use axum::{
     routing::{get, post},
 };
 use corrobore_engine::{CorroboreEngine, EnginePersistence};
+use corrobore_engine::{DivergenceBaseline, ShadowSamplingPolicy};
 use graph_storage::{
     CanonicalEngineStore, CanonicalProjectionRequest, CanonicalStoreOptions, DurableTransactionId,
     FileBackedGraphStore, GraphId, GraphStorageError, GraphStoreRecoveryReport, RecordFormat,
@@ -71,12 +72,14 @@ use crate::{
         import::{import_stix_bundle, import_stix_bundle_file},
         license::{admin_license_status, license_status},
         metrics::metrics,
+        opencti_shadow::{execute_opencti_shadow_read, opencti_shadow_reports},
         opencti_sync::{apply_opencti_sync_batch, opencti_sync_status},
         operational::{liveness, readiness, version},
         seed::seed_search,
         session::{session_health, session_logs, start_session, stop_session},
         stix_validate::validate_stix,
     },
+    opencti_shadow::OpenCtiShadowRuntime,
     opencti_sync::OpenCtiSyncRuntime,
     security::OperationalEndpointPolicy,
     session_runtime::SessionRuntime,
@@ -118,6 +121,8 @@ pub enum AppStateInitError {
     DomainProviderInitFailed { reason: String },
     #[error("failed to restore OpenCTI synchronization state: {reason}")]
     OpenCtiSyncStateFailed { reason: String },
+    #[error("failed to restore OpenCTI shadow-read state: {reason}")]
+    OpenCtiShadowStateFailed { reason: String },
 }
 
 #[derive(Clone)]
@@ -130,6 +135,7 @@ pub struct AppState {
     pub config: Arc<ServerConfig>,
     pub lifecycle: Arc<ServerLifecycle>,
     pub opencti_sync: Arc<Mutex<OpenCtiSyncRuntime>>,
+    pub opencti_shadow: Arc<Mutex<OpenCtiShadowRuntime>>,
     pub(crate) domain_providers: Option<Arc<crate::enterprise::registry::DomainProviderRegistry>>,
     pub started_at: Instant,
 }
@@ -156,6 +162,42 @@ impl AppState {
             },
         )
         .map_err(|reason| AppStateInitError::OpenCtiSyncStateFailed { reason })?;
+        let shadow_state_path = match &runtime_store {
+            RuntimeStoreProvider::Persistent(runtime) => Some(
+                runtime
+                    .root_path
+                    .join("runtime")
+                    .join("opencti-shadow-reports.json"),
+            ),
+            RuntimeStoreProvider::Ephemeral => None,
+        };
+        let shadow_policy = config
+            .opencti_shadow
+            .sampling_policy_file
+            .as_deref()
+            .map(read_shadow_json::<ShadowSamplingPolicy>)
+            .transpose()
+            .map_err(|reason| AppStateInitError::OpenCtiShadowStateFailed { reason })?
+            .unwrap_or(ShadowSamplingPolicy {
+                default_percentage_basis_points: config.opencti_shadow.sample_basis_points,
+                rules: Vec::new(),
+            });
+        let shadow_baselines = config
+            .opencti_shadow
+            .baseline_file
+            .as_deref()
+            .map(read_shadow_json::<Vec<DivergenceBaseline>>)
+            .transpose()
+            .map_err(|reason| AppStateInitError::OpenCtiShadowStateFailed { reason })?
+            .unwrap_or_default();
+        let opencti_shadow = OpenCtiShadowRuntime::open(
+            shadow_state_path,
+            shadow_policy,
+            shadow_baselines,
+            config.opencti_shadow.max_concurrency,
+            config.opencti_shadow.max_reports,
+        )
+        .map_err(|reason| AppStateInitError::OpenCtiShadowStateFailed { reason })?;
         let domain_providers = initialize_domain_providers(&config)?;
         let timeline = ExplorerTimelineStore::new(&config.session_store_dir);
         let lifecycle = Arc::new(ServerLifecycle::initializing());
@@ -170,12 +212,20 @@ impl AppState {
             config: Arc::new(config),
             lifecycle: Arc::clone(&lifecycle),
             opencti_sync: Arc::new(Mutex::new(opencti_sync)),
+            opencti_shadow: Arc::new(Mutex::new(opencti_shadow)),
             domain_providers,
             started_at: Instant::now(),
         };
         lifecycle.mark_ready();
         Ok(state)
     }
+}
+
+fn read_shadow_json<T: serde::de::DeserializeOwned>(path: &str) -> Result<T, String> {
+    let bytes = fs::read(path)
+        .map_err(|error| format!("failed to read shadow configuration {path}: {error}"))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("failed to parse shadow configuration {path}: {error}"))
 }
 
 #[derive(Debug)]
@@ -519,6 +569,11 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/import/stix/file", post(import_stix_bundle_file))
         .route("/v1/opencti/sync/batches", post(apply_opencti_sync_batch))
         .route("/v1/opencti/sync/status", get(opencti_sync_status))
+        .route(
+            "/v1/opencti/shadow/reads",
+            post(execute_opencti_shadow_read),
+        )
+        .route("/v1/opencti/shadow/reports", get(opencti_shadow_reports))
         .layer(DefaultBodyLimit::max(state.config.import_max_body_bytes));
 
     // 2.3: a global token-bucket rate limiter guards all protected routes.

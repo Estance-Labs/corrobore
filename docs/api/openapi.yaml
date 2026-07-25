@@ -829,6 +829,67 @@ paths:
                   result: {$ref: '#/components/schemas/OpenCtiSyncStatus'}
         '401': {$ref: '#/components/responses/Unauthorized'}
 
+  /v1/opencti/shadow/reads:
+    post:
+      operationId: executeOpenCtiShadowRead
+      summary: Return the reference read while comparing Corrobore asynchronously
+      tags: [Import]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [request, metadata]
+              properties:
+                request:
+                  type: object
+                  description: Versioned Knowledge Data Engine read request.
+                metadata:
+                  type: object
+                  required: [environment]
+                  properties:
+                    environment: {type: string}
+                    entity_type: {type: [string, 'null']}
+                    user_cohort: {type: [string, 'null']}
+      responses:
+        '200':
+          description: Unmodified reference Knowledge Data Engine response envelope
+          content:
+            application/json:
+              schema: {type: object}
+        '400':
+          description: Mutation or unsupported operation supplied
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '422':
+          description: Persistent report storage is required
+        '503':
+          description: Reference provider is unconfigured or unavailable
+
+  /v1/opencti/shadow/reports:
+    get:
+      operationId: listOpenCtiShadowReports
+      summary: Query privacy-safe durable shadow parity reports
+      tags: [Import]
+      parameters:
+        - {name: query_class, in: query, required: false, schema: {type: string}}
+        - {name: release, in: query, required: false, schema: {type: string}}
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 0, maximum: 500}}
+      responses:
+        '200':
+          description: Newest-first redacted parity reports
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, result]
+                properties:
+                  ok: {type: boolean, const: true}
+                  result:
+                    type: array
+                    items: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
   /v1/stix/validate:
     post:
       operationId: validateStix
