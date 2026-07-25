@@ -19,6 +19,8 @@ use graph_core::{
     AdjacencyDirection, Graph, GraphPager, GraphPersistenceSnapshot, GraphSequenceFloor, Node,
     NodeId, PropertyValue, RecordStatus, Relationship, RelationshipId,
 };
+use opencti_access::AccessContext;
+use opencti_access::{AccessMetadata, OpenCtiAccessPolicy};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
@@ -130,6 +132,8 @@ pub struct CanonicalProjectionRequest {
     pub include_relationships: bool,
     /// Optional bounded adjacency expansion rooted at selected identifiers.
     pub adjacency: Option<CanonicalAdjacencyProjection>,
+    /// Request-scoped authorization facts evaluated before payload page-in.
+    pub access_context: Option<AccessContext>,
 }
 
 impl CanonicalProjectionRequest {
@@ -143,6 +147,7 @@ impl CanonicalProjectionRequest {
             relationship_type: None,
             include_relationships: false,
             adjacency: None,
+            access_context: None,
         }
     }
 
@@ -156,6 +161,7 @@ impl CanonicalProjectionRequest {
             relationship_type: None,
             include_relationships: false,
             adjacency: None,
+            access_context: None,
         }
     }
 
@@ -169,6 +175,7 @@ impl CanonicalProjectionRequest {
             relationship_type: None,
             include_relationships: false,
             adjacency: None,
+            access_context: None,
         }
     }
 
@@ -182,6 +189,7 @@ impl CanonicalProjectionRequest {
             relationship_type: None,
             include_relationships: true,
             adjacency: None,
+            access_context: None,
         }
     }
 
@@ -211,6 +219,12 @@ impl CanonicalProjectionRequest {
     pub fn with_adjacency(mut self, adjacency: CanonicalAdjacencyProjection) -> Self {
         self.include_relationships = true;
         self.adjacency = Some(adjacency);
+        self
+    }
+
+    /// Scope index selection and payload residency to one access policy.
+    pub fn with_access_context(mut self, access_context: AccessContext) -> Self {
+        self.access_context = Some(access_context);
         self
     }
 }
@@ -264,6 +278,10 @@ pub struct CanonicalStoreStats {
     pub property_index_entries: u64,
     /// Temporal scalar index values.
     pub temporal_index_entries: u64,
+    /// Current node access-policy documents.
+    pub node_access_index_entries: u64,
+    /// Current relationship access-policy documents.
+    pub relationship_access_index_entries: u64,
 }
 
 /// Diagnostics for the most recent bounded projection.
@@ -275,6 +293,12 @@ pub struct CanonicalProjectionStats {
     pub page_ins: u64,
     /// Resident payload cache hits for this projection.
     pub cache_hits: u64,
+    /// Candidates rejected through compact access metadata before page-in.
+    pub authorization_denials: u64,
+    /// Whether a policy-scope change invalidated the resident payload cache.
+    pub policy_cache_invalidated: bool,
+    /// Low-cardinality timing class that does not reveal record existence.
+    pub timing_class: &'static str,
 }
 
 /// WAL-backed, append-only canonical graph store.
@@ -287,6 +311,7 @@ pub struct CanonicalEngineStore {
     stats: CanonicalStoreStats,
     resident_nodes: HashMap<NodeId, Node>,
     resident_relationships: HashMap<RelationshipId, Relationship>,
+    resident_policy_fingerprint: Option<String>,
     last_projection_stats: CanonicalProjectionStats,
 }
 
@@ -348,6 +373,7 @@ impl CanonicalEngineStore {
             stats: CanonicalStoreStats::default(),
             resident_nodes: HashMap::new(),
             resident_relationships: HashMap::new(),
+            resident_policy_fingerprint: None,
             last_projection_stats: CanonicalProjectionStats::default(),
         };
         store.migrate_legacy_snapshot_if_needed()?;
@@ -401,6 +427,23 @@ impl CanonicalEngineStore {
         &mut self,
         request: CanonicalProjectionRequest,
     ) -> GraphStorageResult<Graph> {
+        let policy = request
+            .access_context
+            .as_ref()
+            .map(OpenCtiAccessPolicy::compile)
+            .transpose()
+            .map_err(|error| GraphStorageError::OperationFailed {
+                operation: "load_canonical_graph_projection",
+                message: error.to_string(),
+            })?;
+        let policy_fingerprint = policy.as_ref().map(OpenCtiAccessPolicy::fingerprint);
+        let policy_cache_invalidated = self.resident_policy_fingerprint != policy_fingerprint
+            && (!self.resident_nodes.is_empty() || !self.resident_relationships.is_empty());
+        if self.resident_policy_fingerprint != policy_fingerprint {
+            self.resident_nodes.clear();
+            self.resident_relationships.clear();
+        }
+        self.resident_policy_fingerprint = policy_fingerprint;
         let mut access_paths = Vec::new();
         if !request.identifiers.is_empty() {
             access_paths.push("identifier_index");
@@ -425,18 +468,24 @@ impl CanonicalEngineStore {
         if request.adjacency.is_some() {
             access_paths.push("persistent_adjacency");
         }
-        let mut node_ids = if request.include_nodes {
-            self.select_indexed_node_ids(&request)?
+        if request.access_context.is_some() {
+            // Candidate IDs are authorized from compact catalog and adjacency
+            // metadata before the payload pager is invoked.
+            access_paths.push("access_policy_index");
+        }
+        let (mut node_ids, mut authorization_denials) = if request.include_nodes {
+            self.select_indexed_node_ids(&request, policy.as_ref())?
         } else {
-            Vec::new()
+            (Vec::new(), 0)
         };
-        let relationship_ids = if let Some(adjacency) = &request.adjacency {
-            self.select_adjacency_relationship_ids(&mut node_ids, adjacency)?
+        let (relationship_ids, relationship_denials) = if let Some(adjacency) = &request.adjacency {
+            self.select_adjacency_relationship_ids(&mut node_ids, adjacency, policy.as_ref())?
         } else if request.include_relationships {
-            self.select_relationship_ids(request.relationship_type.as_deref())?
+            self.select_relationship_ids(request.relationship_type.as_deref(), policy.as_ref())?
         } else {
-            Vec::new()
+            (Vec::new(), 0)
         };
+        authorization_denials = authorization_denials.saturating_add(relationship_denials);
         self.enforce_relationship_budget(relationship_ids.len())?;
         self.enforce_adjacency_budget(relationship_ids.len().saturating_mul(2))?;
 
@@ -480,6 +529,13 @@ impl CanonicalEngineStore {
             access_paths,
             page_ins,
             cache_hits,
+            authorization_denials,
+            policy_cache_invalidated,
+            timing_class: if !request.identifiers.is_empty() && nodes.is_empty() {
+                "visibility_miss"
+            } else {
+                "selected"
+            },
         };
         Graph::from_current_records(nodes, relationships, self.sequence_floor())
             .map_err(graph_error)
@@ -515,6 +571,7 @@ impl CanonicalEngineStore {
         // Drop the request cache so the next read observes cataloged versions.
         self.resident_nodes.clear();
         self.resident_relationships.clear();
+        self.resident_policy_fingerprint = None;
         self.stats.resident_hot_nodes = 0;
         self.stats.resident_hot_relationships = 0;
         self.stats.resident_warm_adjacency_entries = 0;
@@ -525,7 +582,8 @@ impl CanonicalEngineStore {
     fn select_indexed_node_ids(
         &self,
         request: &CanonicalProjectionRequest,
-    ) -> GraphStorageResult<Vec<NodeId>> {
+        policy: Option<&OpenCtiAccessPolicy>,
+    ) -> GraphStorageResult<(Vec<NodeId>, u64)> {
         let mut selected: Option<HashSet<NodeId>> = (!request.identifiers.is_empty()).then(|| {
             request
                 .identifiers
@@ -564,7 +622,12 @@ impl CanonicalEngineStore {
         );
         ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
         ids.dedup();
-        Ok(ids)
+        let before = ids.len();
+        if let Some(policy) = policy {
+            ids.retain(|node_id| self.node_is_authorized(node_id, policy));
+        }
+        let authorization_denials = before.saturating_sub(ids.len()) as u64;
+        Ok((ids, authorization_denials))
     }
 
     fn property_filter_node_ids(
@@ -632,7 +695,8 @@ impl CanonicalEngineStore {
         &self,
         node_ids: &mut Vec<NodeId>,
         request: &CanonicalAdjacencyProjection,
-    ) -> GraphStorageResult<Vec<RelationshipId>> {
+        policy: Option<&OpenCtiAccessPolicy>,
+    ) -> GraphStorageResult<(Vec<RelationshipId>, u64)> {
         if request.max_depth == 0 || request.max_relationships == 0 {
             return Err(GraphStorageError::OperationFailed {
                 operation: "load_canonical_graph_projection",
@@ -648,6 +712,7 @@ impl CanonicalEngineStore {
         let mut visited_nodes = node_ids.iter().cloned().collect::<HashSet<_>>();
         let mut frontier = node_ids.clone();
         let mut relationship_ids = HashSet::new();
+        let mut authorization_denials = 0_u64;
         for _ in 0..request.max_depth {
             let mut next = Vec::new();
             for owner in frontier {
@@ -680,6 +745,22 @@ impl CanonicalEngineStore {
                         .cmp(right.relationship_id.as_str())
                 });
                 entries.dedup_by(|left, right| left.relationship_id == right.relationship_id);
+                if let Some(policy) = policy {
+                    entries.retain(|entry| {
+                        let neighbor = if entry.source_node_id == owner {
+                            &entry.target_node_id
+                        } else {
+                            &entry.source_node_id
+                        };
+                        let allowed = self
+                            .relationship_is_authorized(&entry.relationship_id, policy)
+                            && self.node_is_authorized(neighbor, policy);
+                        if !allowed {
+                            authorization_denials = authorization_denials.saturating_add(1);
+                        }
+                        allowed
+                    });
+                }
                 if request.supernode_threshold > 0
                     && entries.len() as u32 > request.supernode_threshold
                     && allowed_types.is_empty()
@@ -727,13 +808,14 @@ impl CanonicalEngineStore {
         }
         let mut ids = relationship_ids.into_iter().collect::<Vec<_>>();
         ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
-        Ok(ids)
+        Ok((ids, authorization_denials))
     }
 
     fn select_relationship_ids(
         &self,
         relationship_type: Option<&str>,
-    ) -> GraphStorageResult<Vec<RelationshipId>> {
+        policy: Option<&OpenCtiAccessPolicy>,
+    ) -> GraphStorageResult<(Vec<RelationshipId>, u64)> {
         let mut ids = match relationship_type {
             Some(value) => {
                 let relationship_type =
@@ -754,7 +836,64 @@ impl CanonicalEngineStore {
         };
         ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
         ids.dedup();
-        Ok(ids)
+        let mut authorization_denials = 0_u64;
+        if let Some(policy) = policy {
+            let endpoints = self.relationship_endpoints();
+            ids.retain(|relationship_id| {
+                let allowed = self.relationship_is_authorized(relationship_id, policy)
+                    && endpoints
+                        .get(relationship_id)
+                        .is_some_and(|(source, target)| {
+                            self.node_is_authorized(source, policy)
+                                && self.node_is_authorized(target, policy)
+                        });
+                if !allowed {
+                    authorization_denials = authorization_denials.saturating_add(1);
+                }
+                allowed
+            });
+        }
+        Ok((ids, authorization_denials))
+    }
+
+    fn relationship_endpoints(&self) -> HashMap<RelationshipId, (NodeId, NodeId)> {
+        let mut endpoints = HashMap::new();
+        for record in crate::snapshot_persisted_adjacency_records(&self.state.adjacency_storage) {
+            for entry in record.entries {
+                endpoints
+                    .entry(entry.relationship_id)
+                    .or_insert((entry.source_node_id, entry.target_node_id));
+            }
+        }
+        endpoints
+    }
+
+    fn node_is_authorized(&self, node_id: &NodeId, policy: &OpenCtiAccessPolicy) -> bool {
+        self.state
+            .catalog
+            .metadata_indexes
+            .node_access
+            .get(node_id)
+            .map_or_else(
+                || policy.is_system(),
+                |metadata| policy.evaluate(metadata).allowed(),
+            )
+    }
+
+    fn relationship_is_authorized(
+        &self,
+        relationship_id: &RelationshipId,
+        policy: &OpenCtiAccessPolicy,
+    ) -> bool {
+        self.state
+            .catalog
+            .metadata_indexes
+            .relationship_access
+            .get(relationship_id)
+            .map_or_else(
+                || policy.is_system(),
+                |metadata| policy.evaluate(metadata).allowed(),
+            )
     }
 
     fn pager(&self) -> GraphStorageResult<FileBackedGraphPager> {
@@ -864,6 +1003,14 @@ impl CanonicalEngineStore {
                     .sum::<u64>()
             })
             .sum();
+        self.stats.node_access_index_entries =
+            self.state.catalog.metadata_indexes.node_access.len() as u64;
+        self.stats.relationship_access_index_entries = self
+            .state
+            .catalog
+            .metadata_indexes
+            .relationship_access
+            .len() as u64;
         self.stats.resident_cold_nodes = self
             .stats
             .node_index_entries
@@ -1446,6 +1593,7 @@ fn node_read_index_document(node: &Node) -> GraphStorageResult<NodeReadIndexDocu
         active,
         identifiers,
         values,
+        access: access_document(node.property("opencti.access"))?,
     })
 }
 
@@ -1576,7 +1724,25 @@ fn encode_relationship_mutation(
         encoded_record: encode_payload(PersistedRecordKind::Relationship, relationship)?,
         envelope,
         relationship_type: relationship.rel_type().clone(),
+        active: relationship.status() != RecordStatus::Tombstoned,
+        access: access_document(relationship.property("opencti.access"))?,
     })
+}
+
+fn access_document(value: Option<&PropertyValue>) -> GraphStorageResult<AccessMetadata> {
+    match value {
+        Some(PropertyValue::Json(value)) => {
+            AccessMetadata::from_value(value).map_err(|error| GraphStorageError::OperationFailed {
+                operation: "encode_opencti_access_index",
+                message: error.to_string(),
+            })
+        }
+        None => Ok(AccessMetadata::default()),
+        Some(_) => Err(GraphStorageError::OperationFailed {
+            operation: "encode_opencti_access_index",
+            message: "opencti.access must be canonical JSON".to_owned(),
+        }),
+    }
 }
 
 fn encode_payload(

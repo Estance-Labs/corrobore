@@ -92,6 +92,7 @@ nav:
     - OpenCTI Model Adapter: developer-guide/opencti-model-adapter.md
     - Knowledge Data Engine Contract: developer-guide/knowledge-data-engine.md
     - OpenCTI Core Reads: developer-guide/opencti-core-reads.md
+    - OpenCTI Query Authorization: developer-guide/opencti-query-authorization.md
     - OpenCTI Shadow Reads: developer-guide/opencti-shadow-reads.md
     - Standalone Acceptance Matrix: acceptance/standalone-server.md
     - Release Notes Process: developer-guide/release-notes-process.md

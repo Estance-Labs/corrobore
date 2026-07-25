@@ -111,9 +111,10 @@ pub use catalog_indexes::{
     CatalogIndexLookupMode, GraphCatalogIndexes, LabelIndexCatalogEntry, LabelIndexNodeMetadata,
     NodeLabel, NodeReadIndexDocument, NodeReadIndexValue, RelationshipTypeIndexCatalogEntry,
     RelationshipTypeIndexRelationshipMetadata, index_node_labels, index_relationship_type,
-    replace_node_read_indexes, resolve_identifier_index_entries, resolve_label_index_entries,
-    resolve_node_ids_by_label, resolve_property_index_entries, resolve_property_presence_entries,
-    resolve_relationship_ids_by_type, resolve_relationship_type_index_entries,
+    replace_node_read_indexes, replace_relationship_access_index, resolve_identifier_index_entries,
+    resolve_label_index_entries, resolve_node_ids_by_label, resolve_property_index_entries,
+    resolve_property_presence_entries, resolve_relationship_ids_by_type,
+    resolve_relationship_type_index_entries,
 };
 pub use catalog_metadata::{persist_graph_catalog_metadata, read_persisted_graph_catalog_metadata};
 pub use catalog_rebuild::{
@@ -147,6 +148,7 @@ pub use log::{
     open_append_only_node_record_log, open_append_only_relationship_record_log,
 };
 pub use manifest::{GraphId, RecordFormat, StorageManifest, StorageTimestamp, StorageVersion};
+pub use opencti_access::AccessContext as CanonicalAccessContext;
 pub use record::{
     GraphRecordVersion, PersistedRecordEnvelope, PersistedRecordId, PersistedRecordKind,
     RecordChecksum, StorageRef, StorageSegment, create_adjacency_record_envelope,

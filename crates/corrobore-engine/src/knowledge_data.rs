@@ -19,6 +19,10 @@ use std::{
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use graph_core::{Graph, Node, NodeId, PropertyValue, Relationship};
 use hmac::{Hmac, Mac};
+pub use opencti_access::{
+    AccessContext, AccessDecision, AccessDecisionReason, AccessMetadata, AccessPolicyError,
+    OpenCtiAccessPolicy,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -60,23 +64,6 @@ pub enum ConsistencyLevel {
     ReadYourWrites,
     /// Pagination and multi-read operations share a stable snapshot.
     Snapshot,
-}
-
-/// Authorization facts propagated to a provider without transport metadata.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AccessContext {
-    /// Stable caller identity.
-    pub subject_id: String,
-    /// Organizations visible to the caller.
-    pub organization_ids: Vec<String>,
-    /// Markings visible to the caller.
-    pub marking_ids: Vec<String>,
-    /// Optional tenant boundary.
-    pub tenant_id: Option<String>,
-    /// Provider-neutral role names.
-    pub roles: Vec<String>,
-    /// Extension attributes negotiated by an adapter.
-    pub attributes: BTreeMap<String, String>,
 }
 
 /// Cross-cutting request context shared by embedded and remote execution.
@@ -1087,6 +1074,23 @@ pub struct KnowledgeDataResponseEnvelope {
     pub outcome: KnowledgeDataOutcome,
 }
 
+/// Payload-free security audit event for one policy decision summary.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecurityAuditEvent {
+    /// Request correlation identity.
+    pub correlation_id: String,
+    /// Operation evaluated.
+    pub operation: OperationKind,
+    /// Stable policy generation.
+    pub policy_version: String,
+    /// Whether the request produced an authorized view.
+    pub allowed: bool,
+    /// Number of candidates rejected before they could enter the result.
+    pub authorization_denials: u64,
+    /// Stable decision reason without record identifiers or payload values.
+    pub reason: AccessDecisionReason,
+}
+
 /// Expected outcome for a reusable conformance case.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExpectedConformanceOutcome {
@@ -1181,6 +1185,12 @@ pub struct PaginationTokenClaims {
     /// Number of records already returned under the original query limit.
     #[serde(default)]
     pub returned: u32,
+    /// Policy generation active when the cursor was issued.
+    #[serde(default)]
+    pub policy_version: String,
+    /// Pseudonymous normalized access-context fingerprint.
+    #[serde(default)]
+    pub access_fingerprint: String,
 }
 
 /// Issues and verifies opaque pagination tokens.
@@ -1272,6 +1282,40 @@ impl PaginationTokenCodec {
         }
         Ok(claims)
     }
+
+    /// Verify query claims and reject reuse after an access-policy change.
+    pub fn verify_for_access(
+        &self,
+        token: &str,
+        query_fingerprint: &str,
+        schema_version: &str,
+        policy: &OpenCtiAccessPolicy,
+    ) -> Result<PaginationTokenClaims, KnowledgeDataError> {
+        let claims = self.verify(token, query_fingerprint, schema_version)?;
+        if claims.policy_version != policy.policy_version()
+            || claims.access_fingerprint != self.access_binding(policy)?
+        {
+            return Err(KnowledgeDataError::new(
+                KnowledgeDataErrorCode::StalePaginationToken,
+                "pagination token belongs to another access-policy generation",
+                false,
+            ));
+        }
+        Ok(claims)
+    }
+
+    fn access_binding(&self, policy: &OpenCtiAccessPolicy) -> Result<String, KnowledgeDataError> {
+        let mut mac = Hmac::<Sha256>::new_from_slice(&self.key).map_err(|_| {
+            KnowledgeDataError::new(
+                KnowledgeDataErrorCode::Internal,
+                "failed to initialize pagination access binding",
+                false,
+            )
+        })?;
+        mac.update(b"opencti-access-binding\0");
+        mac.update(policy.fingerprint().as_bytes());
+        Ok(URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes()))
+    }
 }
 
 fn invalid_pagination_token() -> KnowledgeDataError {
@@ -1350,23 +1394,35 @@ impl KnowledgeDataEngine for CorroboreKnowledgeDataProvider<'_> {
         context: &RequestContext,
     ) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
         validate_operation_before_projection(&operation)?;
+        let operation_kind = operation.kind();
+        let access_policy = OpenCtiAccessPolicy::compile(&context.access).map_err(|error| {
+            KnowledgeDataError::new(
+                KnowledgeDataErrorCode::InvalidRequest,
+                error.to_string(),
+                false,
+            )
+        })?;
         let query_class = core_read_query_class(&operation);
+        let audit_events_before = self.engine.security_audit_events.len();
         let started = Instant::now();
         let projection_stats = self
             .engine
-            .prepare_knowledge_data_operation(&operation)
+            .prepare_knowledge_data_operation(&operation, &context.access)
             .map_err(|error| map_projection_error(&error.to_string()))?
             .unwrap_or_default();
+        let authorization_denials = projection_stats.2;
         let result = match operation {
             KnowledgeDataOperation::Initialize(request) => self.initialize(request),
             KnowledgeDataOperation::Health(request) => self.health(request),
-            KnowledgeDataOperation::GetById(request) => self.get_by_id(request, context),
-            KnowledgeDataOperation::List(request) => self.list(request, context),
-            KnowledgeDataOperation::Paginate(request) => self.paginate(request, context),
-            KnowledgeDataOperation::Count(request) => self.count(request, context),
-            KnowledgeDataOperation::Neighbors(request) => self.neighbors(request, context),
-            KnowledgeDataOperation::Traverse(request) => self.traverse(request, context),
-            KnowledgeDataOperation::Subgraph(request) => self.subgraph(request, context),
+            KnowledgeDataOperation::GetById(request) => {
+                self.get_by_id(request, context, &access_policy)
+            }
+            KnowledgeDataOperation::List(request) => self.list(request, &access_policy),
+            KnowledgeDataOperation::Paginate(request) => self.paginate(request, &access_policy),
+            KnowledgeDataOperation::Count(request) => self.count(request, &access_policy),
+            KnowledgeDataOperation::Neighbors(request) => self.neighbors(request, &access_policy),
+            KnowledgeDataOperation::Traverse(request) => self.traverse(request, &access_policy),
+            KnowledgeDataOperation::Subgraph(request) => self.subgraph(request, &access_policy),
             unsupported => {
                 let operation = unsupported.kind();
                 let _ = context;
@@ -1386,6 +1442,21 @@ impl KnowledgeDataEngine for CorroboreKnowledgeDataProvider<'_> {
                 projection_stats.0,
                 projection_stats.1,
             );
+        }
+        if self.engine.security_audit_events.len() == audit_events_before {
+            self.engine.record_security_audit_event(SecurityAuditEvent {
+                correlation_id: context.correlation_id.clone(),
+                operation: operation_kind,
+                policy_version: access_policy.policy_version().to_owned(),
+                allowed: !matches!(operation_kind, OperationKind::GetById)
+                    || authorization_denials == 0,
+                authorization_denials,
+                reason: if access_policy.is_system() {
+                    AccessDecisionReason::System
+                } else {
+                    AccessDecisionReason::PolicyApplied
+                },
+            });
         }
         result
     }
@@ -1670,9 +1741,10 @@ impl CorroboreKnowledgeDataProvider<'_> {
     }
 
     fn get_by_id(
-        &self,
+        &mut self,
         request: GetByIdRequest,
         context: &RequestContext,
+        access_policy: &OpenCtiAccessPolicy,
     ) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
         if request.id.trim().is_empty() {
             return Err(KnowledgeDataError::new(
@@ -1684,12 +1756,17 @@ impl CorroboreKnowledgeDataProvider<'_> {
         let Some(node) = resolve_node_by_identifier(self.engine.graph(), &request.id)? else {
             return Ok(KnowledgeDataResponse::Record(None));
         };
-        if !node_is_accessible(&node, &context.access) {
-            return Err(KnowledgeDataError::new(
-                KnowledgeDataErrorCode::Unauthorized,
-                "record exists but is not visible to this access context",
-                false,
-            ));
+        let decision = node_access_decision(&node, access_policy);
+        self.engine.record_security_audit_event(SecurityAuditEvent {
+            correlation_id: context.correlation_id.clone(),
+            operation: OperationKind::GetById,
+            policy_version: access_policy.policy_version().to_owned(),
+            allowed: decision.allowed(),
+            authorization_denials: u64::from(!decision.allowed()),
+            reason: decision.reason(),
+        });
+        if !decision.allowed() {
+            return Ok(KnowledgeDataResponse::Record(None));
         }
         Ok(KnowledgeDataResponse::Record(Some(node_to_record(node)?)))
     }
@@ -1697,10 +1774,10 @@ impl CorroboreKnowledgeDataProvider<'_> {
     fn list(
         &self,
         request: ListRequest,
-        context: &RequestContext,
+        access_policy: &OpenCtiAccessPolicy,
     ) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
         validate_list_request(&request)?;
-        let mut records = self.filtered_records(&request, &context.access)?;
+        let mut records = self.filtered_records(&request, access_policy)?;
         records.truncate(request.limit as usize);
         Ok(KnowledgeDataResponse::Records(RecordPage {
             records,
@@ -1711,7 +1788,7 @@ impl CorroboreKnowledgeDataProvider<'_> {
     fn paginate(
         &self,
         request: PaginateRequest,
-        context: &RequestContext,
+        access_policy: &OpenCtiAccessPolicy,
     ) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
         validate_list_request(&request.query)?;
         if request.page_size == 0 || request.page_size > 1_000 {
@@ -1726,11 +1803,15 @@ impl CorroboreKnowledgeDataProvider<'_> {
             .token
             .as_deref()
             .map(|token| {
-                self.pagination
-                    .verify(token, &query_fingerprint, CORROBORE_SCHEMA_VERSION)
+                self.pagination.verify_for_access(
+                    token,
+                    &query_fingerprint,
+                    CORROBORE_SCHEMA_VERSION,
+                    access_policy,
+                )
             })
             .transpose()?;
-        let records = self.filtered_records(&request.query, &context.access)?;
+        let records = self.filtered_records(&request.query, access_policy)?;
         let snapshot_fingerprint = snapshot_fingerprint(&records)?;
         if claims
             .as_ref()
@@ -1787,6 +1868,8 @@ impl CorroboreKnowledgeDataProvider<'_> {
                 cursor,
                 snapshot_fingerprint,
                 returned: total_returned,
+                policy_version: access_policy.policy_version().to_owned(),
+                access_fingerprint: self.pagination.access_binding(access_policy)?,
             })?)
         } else {
             None
@@ -1800,7 +1883,7 @@ impl CorroboreKnowledgeDataProvider<'_> {
     fn count(
         &self,
         request: CountRequest,
-        context: &RequestContext,
+        access_policy: &OpenCtiAccessPolicy,
     ) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
         if !request.filter.is_null()
             && request
@@ -1817,14 +1900,14 @@ impl CorroboreKnowledgeDataProvider<'_> {
             limit: 10_000,
         };
         validate_list_request(&query)?;
-        let count = self.filtered_records(&query, &context.access)?.len() as u64;
+        let count = self.filtered_records(&query, access_policy)?.len() as u64;
         Ok(KnowledgeDataResponse::Count(CountResult { count }))
     }
 
     fn neighbors(
         &self,
         request: NeighborsRequest,
-        context: &RequestContext,
+        access_policy: &OpenCtiAccessPolicy,
     ) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
         if !request.incoming && !request.outgoing {
             return Err(KnowledgeDataError::new(
@@ -1844,7 +1927,7 @@ impl CorroboreKnowledgeDataProvider<'_> {
             1,
             direction,
             request.policy,
-            &context.access,
+            access_policy,
         )
         .map(KnowledgeDataResponse::Graph)
     }
@@ -1852,7 +1935,7 @@ impl CorroboreKnowledgeDataProvider<'_> {
     fn traverse(
         &self,
         request: TraverseRequest,
-        context: &RequestContext,
+        access_policy: &OpenCtiAccessPolicy,
     ) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
         if !request.constraints.is_null()
             && request
@@ -1871,7 +1954,7 @@ impl CorroboreKnowledgeDataProvider<'_> {
             request.max_depth,
             request.direction,
             request.policy,
-            &context.access,
+            access_policy,
         )
         .map(KnowledgeDataResponse::Graph)
     }
@@ -1879,7 +1962,7 @@ impl CorroboreKnowledgeDataProvider<'_> {
     fn subgraph(
         &self,
         request: SubgraphRequest,
-        context: &RequestContext,
+        access_policy: &OpenCtiAccessPolicy,
     ) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
         if !request.projection.is_null()
             && request
@@ -1898,7 +1981,7 @@ impl CorroboreKnowledgeDataProvider<'_> {
             request.max_depth,
             request.direction,
             request.policy,
-            &context.access,
+            access_policy,
         )
         .map(KnowledgeDataResponse::Graph)
     }
@@ -1906,7 +1989,7 @@ impl CorroboreKnowledgeDataProvider<'_> {
     fn filtered_records(
         &self,
         request: &ListRequest,
-        access: &AccessContext,
+        access_policy: &OpenCtiAccessPolicy,
     ) -> Result<Vec<KnowledgeRecord>, KnowledgeDataError> {
         let mut records: Vec<KnowledgeRecord> = self
             .engine
@@ -1914,7 +1997,7 @@ impl CorroboreKnowledgeDataProvider<'_> {
             .list_nodes()
             .map_err(graph_error)?
             .into_iter()
-            .filter(|node| node_is_accessible(node, access))
+            .filter(|node| node_access_decision(node, access_policy).allowed())
             .map(node_to_record)
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
@@ -1930,7 +2013,7 @@ impl CorroboreKnowledgeDataProvider<'_> {
         max_depth: u32,
         direction: GraphDirection,
         policy: GraphReadPolicy,
-        access: &AccessContext,
+        access_policy: &OpenCtiAccessPolicy,
     ) -> Result<GraphResult, KnowledgeDataError> {
         validate_graph_read(&start_ids, max_depth, &policy)?;
         let graph = self.engine.graph();
@@ -1944,7 +2027,7 @@ impl CorroboreKnowledgeDataProvider<'_> {
             let Some(node) = resolve_node_by_identifier(graph, &identifier)? else {
                 continue;
             };
-            if !node_is_accessible(&node, access) {
+            if !node_access_decision(&node, access_policy).allowed() {
                 continue;
             }
             let canonical_id = canonical_node_id(&node);
@@ -1973,6 +2056,23 @@ impl CorroboreKnowledgeDataProvider<'_> {
                 continue;
             }
             let mut relationships = incident_relationships(graph, &owner, direction)?;
+            relationships.retain(|relationship| {
+                if !relationship_access_decision(relationship, access_policy).allowed() {
+                    return false;
+                }
+                let neighbor_id = if relationship.source() == &owner {
+                    relationship.target()
+                } else {
+                    relationship.source()
+                };
+                graph
+                    .get_node(neighbor_id)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|neighbor| {
+                        node_access_decision(&neighbor, access_policy).allowed()
+                    })
+            });
             relationships.sort_by(|left, right| {
                 canonical_relationship_id(left).cmp(&canonical_relationship_id(right))
             });
@@ -2022,7 +2122,7 @@ impl CorroboreKnowledgeDataProvider<'_> {
                 let Some(neighbor) = graph.get_node(&neighbor_id).map_err(graph_error)? else {
                     continue;
                 };
-                if !node_is_accessible(&neighbor, access) {
+                if !node_access_decision(&neighbor, access_policy).allowed() {
                     continue;
                 }
                 let neighbor_record = node_to_record(neighbor.clone())?;
@@ -2247,63 +2347,25 @@ fn json_contains_identifier(value: &Value, identifier: &str) -> bool {
     }
 }
 
-fn node_is_accessible(node: &Node, access: &AccessContext) -> bool {
-    if access.roles.iter().any(|role| role == "system") {
-        return true;
-    }
-    let Some(PropertyValue::Json(metadata)) = node.property("opencti.access") else {
-        return true;
+fn node_access_decision(node: &Node, policy: &OpenCtiAccessPolicy) -> AccessDecision {
+    let value = match node.property("opencti.access") {
+        Some(PropertyValue::Json(value)) => Some(value),
+        Some(_) => return policy.evaluate_value(Some(&Value::Bool(false))),
+        None => None,
     };
-    let markings = json_string_array(metadata.get("marking_ids"));
-    if !markings
-        .iter()
-        .all(|marking| access.marking_ids.contains(marking))
-    {
-        return false;
-    }
-    let organizations = json_string_array(metadata.get("organization_ids"));
-    if !organizations.is_empty()
-        && !organizations
-            .iter()
-            .any(|organization| access.organization_ids.contains(organization))
-    {
-        return false;
-    }
-    let tenants = json_string_array(metadata.get("tenant_ids"));
-    if access
-        .tenant_id
-        .as_ref()
-        .is_some_and(|tenant| !tenants.is_empty() && !tenants.contains(tenant))
-    {
-        return false;
-    }
-    let members = metadata
-        .get("authorized_members")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    members.is_empty()
-        || members.iter().any(|member| {
-            json_contains_identifier(member, &access.subject_id)
-                || access
-                    .roles
-                    .iter()
-                    .any(|role| json_contains_identifier(member, role))
-                || access
-                    .organization_ids
-                    .iter()
-                    .any(|organization| json_contains_identifier(member, organization))
-        })
+    policy.evaluate_value(value)
 }
 
-fn json_string_array(value: Option<&Value>) -> Vec<String> {
-    value
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_owned)
-        .collect()
+fn relationship_access_decision(
+    relationship: &Relationship,
+    policy: &OpenCtiAccessPolicy,
+) -> AccessDecision {
+    let value = match relationship.property("opencti.access") {
+        Some(PropertyValue::Json(value)) => Some(value),
+        Some(_) => return policy.evaluate_value(Some(&Value::Bool(false))),
+        None => None,
+    };
+    policy.evaluate_value(value)
 }
 
 fn record_matches_request(record: &KnowledgeRecord, request: &ListRequest) -> bool {

@@ -23,6 +23,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use graph_core::{NodeId, RelationshipId, RelationshipType};
+use opencti_access::AccessMetadata;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -44,6 +45,10 @@ struct PersistedGraphCatalogMetadata {
     property_indexes: Vec<(String, HashMap<String, Vec<crate::LabelIndexNodeMetadata>>)>,
     #[serde(default)]
     temporal_indexes: Vec<(String, HashMap<String, Vec<crate::LabelIndexNodeMetadata>>)>,
+    #[serde(default)]
+    node_access_indexes: Vec<(NodeId, AccessMetadata)>,
+    #[serde(default)]
+    relationship_access_indexes: Vec<(RelationshipId, AccessMetadata)>,
 }
 
 /// Persist derived catalog metadata for fast startup.
@@ -169,6 +174,18 @@ impl PersistedGraphCatalogMetadata {
                 .iter()
                 .map(|(field, values)| (field.clone(), values.clone()))
                 .collect(),
+            node_access_indexes: catalog
+                .metadata_indexes
+                .node_access
+                .iter()
+                .map(|(node_id, access)| (node_id.clone(), access.clone()))
+                .collect(),
+            relationship_access_indexes: catalog
+                .metadata_indexes
+                .relationship_access
+                .iter()
+                .map(|(relationship_id, access)| (relationship_id.clone(), access.clone()))
+                .collect(),
         }
     }
 
@@ -210,6 +227,16 @@ impl PersistedGraphCatalogMetadata {
                     self.temporal_indexes,
                     "read_persisted_graph_catalog_metadata",
                     "temporal indexes",
+                )?,
+                node_access: collect_unique_pairs(
+                    self.node_access_indexes,
+                    "read_persisted_graph_catalog_metadata",
+                    "node access indexes",
+                )?,
+                relationship_access: collect_unique_pairs(
+                    self.relationship_access_indexes,
+                    "read_persisted_graph_catalog_metadata",
+                    "relationship access indexes",
                 )?,
             },
         })

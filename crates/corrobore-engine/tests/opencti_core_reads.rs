@@ -158,7 +158,7 @@ fn clear_access() -> AccessContext {
         subject_id: "user--00000000-0000-4000-8000-000000000020".to_owned(),
         organization_ids: vec!["identity--00000000-0000-4000-8000-000000000010".to_owned()],
         marking_ids: vec!["marking-definition--00000000-0000-4000-8000-000000000001".to_owned()],
-        tenant_id: None,
+        tenant_id: Some("grouping--00000000-0000-4000-8000-000000000030".to_owned()),
         roles: vec!["analyst".to_owned()],
         attributes: BTreeMap::new(),
     }
@@ -344,8 +344,10 @@ fn simple_filters_and_access_context_hide_inaccessible_values() {
         "core-denied",
     );
     assert_eq!(
-        amber.outcome.error().map(|error| error.code),
-        Some(KnowledgeDataErrorCode::Unauthorized)
+        amber.outcome,
+        KnowledgeDataOutcome::Success {
+            response: KnowledgeDataResponse::Record(None)
+        }
     );
 
     let clear_indicators = page(execute(
@@ -384,10 +386,7 @@ fn simple_filters_and_access_context_hide_inaccessible_values() {
             .iter()
             .map(|record| record.id.as_str())
             .collect::<Vec<_>>(),
-        [
-            "indicator--00000000-0000-4000-8000-000000000040",
-            "indicator--00000000-0000-4000-8000-000000000042",
-        ]
+        ["indicator--00000000-0000-4000-8000-000000000040"]
     );
     let serialized = serde_json::to_string(&clear_indicators).expect("page serializes");
     assert!(!serialized.contains("Documentation domain indicator"));

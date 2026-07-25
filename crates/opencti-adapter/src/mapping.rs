@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 
 use chrono::DateTime;
 use graph_core::{Node, NodeId, NodeInput, PropertyValue, Relationship, RelationshipInput};
+pub use opencti_access::AccessMetadata;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -156,27 +157,6 @@ pub struct Reference {
     pub field: String,
     /// Referenced identifier.
     pub target: String,
-}
-
-/// Access-policy inputs carried by an OpenCTI record.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct AccessMetadata {
-    /// Object markings.
-    pub marking_ids: Vec<String>,
-    /// Organizations granted access.
-    pub organization_ids: Vec<String>,
-    /// Authorized member documents, including group restrictions and rights.
-    pub authorized_members: Vec<Value>,
-    /// Tenant boundaries.
-    pub tenant_ids: Vec<String>,
-    /// Creator identifiers.
-    pub creator_ids: Vec<String>,
-    /// Owner identifiers.
-    pub owner_ids: Vec<String>,
-    /// Provider-neutral sharing-policy document.
-    pub sharing_policy: Option<Value>,
-    /// OpenCTI authority identifiers.
-    pub authorized_authorities: Vec<String>,
 }
 
 /// Semantically typed timestamp fields preserved from OpenCTI.

@@ -15,6 +15,7 @@ path = "src/lib.rs"
 [dependencies]
 export-stix = { path = "../export-stix" }
 graph-core = { path = "../graph-core" }
+opencti-access = { path = "../opencti-access" }
 shared-runtime = { path = "../shared-runtime" }
 base64 = "0.22"
 hmac = { workspace = true }

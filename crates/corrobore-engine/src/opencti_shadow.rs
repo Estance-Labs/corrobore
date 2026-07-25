@@ -391,6 +391,19 @@ pub fn compare_shadow_read(
             .push("shadow_latency_budget".to_owned());
     }
     differences.normalize();
+    if request
+        .context
+        .access
+        .attributes
+        .get("policy_version")
+        .is_some_and(|version| !version.trim().is_empty())
+        && !differences.is_functionally_equivalent()
+    {
+        differences
+            .security
+            .push("authorization_result_mismatch".to_owned());
+        differences.normalize();
+    }
     let equivalent = differences.is_functionally_equivalent();
     let fingerprint = divergence_fingerprint(query_class, &differences);
     let baseline =

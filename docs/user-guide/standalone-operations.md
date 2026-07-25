@@ -187,7 +187,11 @@ of silently loading the complete graph. Monitor
 `corrobore_storage_index_entries`, WAL lag, checkpoint age and compaction
 backlog before changing these limits. Fundamental OpenCTI reads additionally
 export per-query-class P50/P95/P99 latency, records examined, page-ins and cache
-hits under the `corrobore_opencti_core_read_*` metric family.
+hits under the `corrobore_opencti_core_read_*` metric family. The
+`node_access` and `relationship_access` values of
+`corrobore_storage_index_entries` confirm that payload-free authorization
+indexes were recovered. They contain counts only and never expose subjects,
+record identifiers or policy metadata.
 
 ### One-time migration from the legacy graph snapshot
 

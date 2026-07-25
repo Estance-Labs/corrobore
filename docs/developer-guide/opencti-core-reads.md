@@ -28,12 +28,18 @@ routing remain outside this issue.
 
 ## Access semantics
 
-Authorization is evaluated before values enter a response. System-role callers
-may read every record. Other callers are checked against the mapped OpenCTI
-marking, organization, tenant, and authorized-member metadata. A direct lookup
-of an inaccessible existing record returns `UNAUTHORIZED`; collection and graph
-reads omit inaccessible records and relationships without exposing their
-identifiers or properties.
+Authorization is evaluated during candidate selection, before values enter a
+response or payload cache. System-role callers may read every record. Other
+callers are checked against the mapped OpenCTI marking, organization, tenant,
+authorized-member, creator, owner, authority and sharing-policy metadata. A
+direct lookup of an inaccessible existing record is indistinguishable from a
+missing identifier; collection and graph reads omit inaccessible nodes and
+relationships without exposing their identifiers, topology or properties.
+
+Pagination tokens and resident caches are bound to the normalized access
+policy. Every graph path requires access to all nodes and relationships. See
+[OpenCTI query authorization](opencti-query-authorization.md) for the complete
+decision, invalidation, audit and shadow-enforcement contract.
 
 Unknown, empty and tombstoned indexed lookups return provider-neutral empty
 results without scanning or paging unrelated payloads.
@@ -46,6 +52,7 @@ The canonical store persists compact metadata with each atomic node mutation:
 - label to current node;
 - canonical scalar property value to current node;
 - canonical temporal value to current node;
+- payload-free node and relationship access policy documents;
 - incoming and outgoing typed adjacency.
 
 Updates replace stale metadata entries and tombstones remove them. On startup,
@@ -71,8 +78,10 @@ duplicates and omissions.
 
 `opencti_core_reads` validates exact corpus IDs, properties, direction, type,
 count, ordering, access filtering, pagination, graph provenance, and safety
-limits. `opencti_read_indexes` validates cold indexed reads, bounded persistent
-adjacency, and unknown/tombstoned behavior.
+limits. `opencti_authorization` validates the OpenCTI policy and
+non-inference contract. `opencti_read_indexes` and `opencti_access_pushdown`
+validate cold indexed reads, bounded persistent adjacency, access selection
+before page-in, policy cache invalidation, and unknown/tombstoned behavior.
 
 Prometheus exposes request count, P50/P95/P99 latency, records examined,
 payload page-ins, and cache hits with `query_class` as the only label:
