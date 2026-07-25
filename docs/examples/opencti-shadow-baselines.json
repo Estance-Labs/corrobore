@@ -1,0 +1,9 @@
+[
+  {
+    "id": "baseline--example-known-functional-gap",
+    "query_class": "aggregation",
+    "fingerprint": "sha256:0000000000000000",
+    "owner": "team-opencti-adapter",
+    "expires_at_unix_ms": 4070908800000
+  }
+]

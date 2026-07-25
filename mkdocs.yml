@@ -91,6 +91,7 @@ nav:
     - OpenCTI Compatibility Inventory: developer-guide/opencti-compatibility.md
     - OpenCTI Model Adapter: developer-guide/opencti-model-adapter.md
     - Knowledge Data Engine Contract: developer-guide/knowledge-data-engine.md
+    - OpenCTI Shadow Reads: developer-guide/opencti-shadow-reads.md
     - Standalone Acceptance Matrix: acceptance/standalone-server.md
     - Release Notes Process: developer-guide/release-notes-process.md
   - Release Notes:

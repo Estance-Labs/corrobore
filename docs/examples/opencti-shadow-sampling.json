@@ -1,0 +1,15 @@
+{
+  "default_percentage_basis_points": 0,
+  "rules": [
+    {
+      "environment": "production",
+      "operation": "get_by_id",
+      "query_class": "point_read",
+      "entity_type": "indicator",
+      "organization_id": "identity--example-organization",
+      "tenant_id": "tenant--example",
+      "user_cohort": "analyst-canary",
+      "percentage_basis_points": 500
+    }
+  ]
+}

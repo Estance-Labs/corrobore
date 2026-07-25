@@ -69,6 +69,8 @@ pub struct ServerConfig {
     pub opencti_sync_max_operations: usize,
     /// Maximum replay identities and dead-letter diagnostics retained.
     pub opencti_sync_max_replay_identities: usize,
+    /// OpenCTI asynchronous shadow-read policy and reference provider.
+    pub opencti_shadow: OpenCtiShadowConfig,
     /// Sustained request rate per second for the global rate limiter (2.3).
     pub rate_limit_per_second: u64,
     /// Burst allowance for the global rate limiter (2.3).
@@ -144,6 +146,7 @@ impl fmt::Debug for ServerConfig {
                 "opencti_sync_max_replay_identities",
                 &self.opencti_sync_max_replay_identities,
             )
+            .field("opencti_shadow", &self.opencti_shadow)
             .field("rate_limit_per_second", &self.rate_limit_per_second)
             .field("rate_limit_burst", &self.rate_limit_burst)
             .field("web_dir", &self.web_dir)
@@ -171,6 +174,76 @@ impl fmt::Debug for ServerConfig {
                 &self.domain_provider_manifest_file,
             )
             .finish()
+    }
+}
+
+/// OpenCTI shadow-read transport, sampling, deadline, and retention settings.
+#[derive(Clone, PartialEq, Eq)]
+pub struct OpenCtiShadowConfig {
+    /// Fixed reference Knowledge Data Engine endpoint.
+    pub reference_endpoint: Option<String>,
+    /// Optional bearer token for the reference endpoint.
+    pub reference_auth_token: Option<String>,
+    /// Origin of the reference bearer token.
+    pub reference_auth_token_source: Option<SecretSource>,
+    /// Operator-supplied Elasticsearch/OpenSearch version.
+    pub reference_version: String,
+    /// Bounded Corrobore release label used in reports and metrics.
+    pub release: String,
+    /// Fallback deterministic sampling percentage in basis points.
+    pub sample_basis_points: u16,
+    /// Maximum accepted shadow executions.
+    pub max_concurrency: usize,
+    /// Independent shadow deadline.
+    pub timeout_ms: u64,
+    /// Maximum durable reports retained.
+    pub max_reports: usize,
+    /// Optional JSON sampling policy file.
+    pub sampling_policy_file: Option<String>,
+    /// Optional JSON baseline file.
+    pub baseline_file: Option<String>,
+}
+
+impl fmt::Debug for OpenCtiShadowConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OpenCtiShadowConfig")
+            .field("reference_endpoint", &self.reference_endpoint)
+            .field(
+                "reference_auth_token",
+                &self.reference_auth_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "reference_auth_token_source",
+                &self.reference_auth_token_source,
+            )
+            .field("reference_version", &self.reference_version)
+            .field("release", &self.release)
+            .field("sample_basis_points", &self.sample_basis_points)
+            .field("max_concurrency", &self.max_concurrency)
+            .field("timeout_ms", &self.timeout_ms)
+            .field("max_reports", &self.max_reports)
+            .field("sampling_policy_file", &self.sampling_policy_file)
+            .field("baseline_file", &self.baseline_file)
+            .finish()
+    }
+}
+
+impl Default for OpenCtiShadowConfig {
+    fn default() -> Self {
+        Self {
+            reference_endpoint: None,
+            reference_auth_token: None,
+            reference_auth_token_source: None,
+            reference_version: "unconfigured".to_owned(),
+            release: env!("CARGO_PKG_VERSION").to_owned(),
+            sample_basis_points: 0,
+            max_concurrency: 4,
+            timeout_ms: 2_000,
+            max_reports: 10_000,
+            sampling_policy_file: None,
+            baseline_file: None,
+        }
     }
 }
 
@@ -381,6 +454,91 @@ impl ServerConfig {
                 .unwrap_or("4096"),
         )?;
 
+        let reference_endpoint = vars
+            .get("CORROBORE_OPENCTI_SHADOW_REFERENCE_ENDPOINT")
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        let (reference_auth_token, reference_auth_token_source) = resolve_secret(
+            vars,
+            "CORROBORE_OPENCTI_SHADOW_REFERENCE_AUTH_TOKEN",
+            "CORROBORE_OPENCTI_SHADOW_REFERENCE_AUTH_TOKEN_FILE",
+            "opencti_shadow.reference_auth_token",
+            "opencti_shadow.reference_auth_token_file",
+        )?;
+        let reference_version = vars
+            .get("CORROBORE_OPENCTI_SHADOW_REFERENCE_VERSION")
+            .map_or("unconfigured", String::as_str)
+            .trim()
+            .to_owned();
+        let release = vars
+            .get("CORROBORE_OPENCTI_SHADOW_RELEASE")
+            .map_or(env!("CARGO_PKG_VERSION"), String::as_str)
+            .trim()
+            .to_owned();
+        if reference_endpoint.is_some() && reference_version.is_empty() {
+            return Err(ConfigError::InvalidEnv {
+                name: "CORROBORE_OPENCTI_SHADOW_REFERENCE_VERSION",
+                value: reference_version,
+            });
+        }
+        if release.is_empty() {
+            return Err(ConfigError::InvalidEnv {
+                name: "CORROBORE_OPENCTI_SHADOW_RELEASE",
+                value: release,
+            });
+        }
+        let sample_basis_points = parse_u16(
+            "CORROBORE_OPENCTI_SHADOW_SAMPLE_BASIS_POINTS",
+            vars.get("CORROBORE_OPENCTI_SHADOW_SAMPLE_BASIS_POINTS")
+                .map(String::as_str)
+                .unwrap_or("0"),
+        )?;
+        if sample_basis_points > 10_000 {
+            return Err(ConfigError::InvalidEnv {
+                name: "CORROBORE_OPENCTI_SHADOW_SAMPLE_BASIS_POINTS",
+                value: sample_basis_points.to_string(),
+            });
+        }
+        let max_concurrency = parse_positive_usize(
+            "CORROBORE_OPENCTI_SHADOW_MAX_CONCURRENCY",
+            vars.get("CORROBORE_OPENCTI_SHADOW_MAX_CONCURRENCY")
+                .map(String::as_str)
+                .unwrap_or("4"),
+        )?;
+        let timeout_ms = parse_positive_u64(
+            "CORROBORE_OPENCTI_SHADOW_TIMEOUT_MS",
+            vars.get("CORROBORE_OPENCTI_SHADOW_TIMEOUT_MS")
+                .map(String::as_str)
+                .unwrap_or("2000"),
+        )?;
+        let max_reports = parse_positive_usize(
+            "CORROBORE_OPENCTI_SHADOW_MAX_REPORTS",
+            vars.get("CORROBORE_OPENCTI_SHADOW_MAX_REPORTS")
+                .map(String::as_str)
+                .unwrap_or("10000"),
+        )?;
+        let sampling_policy_file = vars
+            .get("CORROBORE_OPENCTI_SHADOW_SAMPLING_POLICY_FILE")
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        let baseline_file = vars
+            .get("CORROBORE_OPENCTI_SHADOW_BASELINE_FILE")
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        let opencti_shadow = OpenCtiShadowConfig {
+            reference_endpoint,
+            reference_auth_token,
+            reference_auth_token_source,
+            reference_version,
+            release,
+            sample_basis_points,
+            max_concurrency,
+            timeout_ms,
+            max_reports,
+            sampling_policy_file,
+            baseline_file,
+        };
+
         let rate_limit_per_second = parse_u64(
             "CORROBORE_HTTP_RATE_LIMIT_PER_SECOND",
             vars.get("CORROBORE_HTTP_RATE_LIMIT_PER_SECOND")
@@ -484,6 +642,7 @@ impl ServerConfig {
             import_max_body_bytes,
             opencti_sync_max_operations,
             opencti_sync_max_replay_identities,
+            opencti_shadow,
             rate_limit_per_second,
             rate_limit_burst,
             web_dir,
@@ -950,6 +1109,11 @@ mod tests {
         assert_eq!(config.import_max_body_bytes, 32 * 1024 * 1024);
         assert_eq!(config.opencti_sync_max_operations, 512);
         assert_eq!(config.opencti_sync_max_replay_identities, 4_096);
+        assert_eq!(config.opencti_shadow.reference_endpoint, None);
+        assert_eq!(config.opencti_shadow.sample_basis_points, 0);
+        assert_eq!(config.opencti_shadow.max_concurrency, 4);
+        assert_eq!(config.opencti_shadow.timeout_ms, 2_000);
+        assert_eq!(config.opencti_shadow.max_reports, 10_000);
 
         // 2.3: rate-limiting defaults are permissive but present.
         assert_eq!(config.rate_limit_per_second, 50);
@@ -967,6 +1131,87 @@ mod tests {
         assert_eq!(config.storage_max_warm_adjacency_entries, 65_536);
         assert_eq!(config.domain_provider_dir, None);
         assert_eq!(config.domain_provider_manifest_file, None);
+    }
+
+    #[test]
+    fn config_contract_parses_bounded_opencti_shadow_controls() {
+        let vars = HashMap::from([
+            (
+                "CORROBORE_HTTP_AUTH_TOKEN".to_owned(),
+                "token-123".to_owned(),
+            ),
+            (
+                "CORROBORE_OPENCTI_SHADOW_REFERENCE_ENDPOINT".to_owned(),
+                "https://reference.example.test/v1/knowledge-data".to_owned(),
+            ),
+            (
+                "CORROBORE_OPENCTI_SHADOW_REFERENCE_VERSION".to_owned(),
+                "opensearch-2.19.2".to_owned(),
+            ),
+            (
+                "CORROBORE_OPENCTI_SHADOW_REFERENCE_AUTH_TOKEN".to_owned(),
+                "reference-secret".to_owned(),
+            ),
+            (
+                "CORROBORE_OPENCTI_SHADOW_RELEASE".to_owned(),
+                "release-43".to_owned(),
+            ),
+            (
+                "CORROBORE_OPENCTI_SHADOW_SAMPLE_BASIS_POINTS".to_owned(),
+                "2500".to_owned(),
+            ),
+            (
+                "CORROBORE_OPENCTI_SHADOW_MAX_CONCURRENCY".to_owned(),
+                "7".to_owned(),
+            ),
+            (
+                "CORROBORE_OPENCTI_SHADOW_TIMEOUT_MS".to_owned(),
+                "750".to_owned(),
+            ),
+            (
+                "CORROBORE_OPENCTI_SHADOW_MAX_REPORTS".to_owned(),
+                "99".to_owned(),
+            ),
+        ]);
+
+        let config = ServerConfig::from_map(&vars).expect("shadow configuration should parse");
+        assert_eq!(
+            config.opencti_shadow.reference_endpoint.as_deref(),
+            Some("https://reference.example.test/v1/knowledge-data")
+        );
+        assert_eq!(
+            config.opencti_shadow.reference_auth_token.as_deref(),
+            Some("reference-secret")
+        );
+        assert_eq!(config.opencti_shadow.reference_version, "opensearch-2.19.2");
+        assert_eq!(config.opencti_shadow.release, "release-43");
+        assert_eq!(config.opencti_shadow.sample_basis_points, 2_500);
+        assert_eq!(config.opencti_shadow.max_concurrency, 7);
+        assert_eq!(config.opencti_shadow.timeout_ms, 750);
+        assert_eq!(config.opencti_shadow.max_reports, 99);
+        assert!(!format!("{config:?}").contains("reference-secret"));
+    }
+
+    #[test]
+    fn config_contract_rejects_out_of_range_shadow_sampling() {
+        let vars = HashMap::from([
+            (
+                "CORROBORE_HTTP_AUTH_TOKEN".to_owned(),
+                "token-123".to_owned(),
+            ),
+            (
+                "CORROBORE_OPENCTI_SHADOW_SAMPLE_BASIS_POINTS".to_owned(),
+                "10001".to_owned(),
+            ),
+        ]);
+
+        assert!(matches!(
+            ServerConfig::from_map(&vars),
+            Err(ConfigError::InvalidEnv {
+                name: "CORROBORE_OPENCTI_SHADOW_SAMPLE_BASIS_POINTS",
+                ..
+            })
+        ));
     }
 
     #[test]

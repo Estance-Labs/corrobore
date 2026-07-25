@@ -61,6 +61,7 @@
 //! ```
 
 mod knowledge_data;
+mod opencti_shadow;
 
 use std::collections::HashMap;
 
@@ -85,6 +86,7 @@ pub use shared_runtime::{
 use thiserror::Error;
 
 pub use knowledge_data::*;
+pub use opencti_shadow::*;
 
 const DEFAULT_WORKSPACE_ID: &str = "workspace--embedded-default";
 const DEFAULT_SESSION_ID: &str = "session--embedded-default";
@@ -393,13 +395,7 @@ impl CorroboreEngine {
         &mut self,
         request: EngineRequest,
     ) -> Result<CypherResponse, EngineError> {
-        if let Some(adapter) = self.persistence.as_mut()
-            && let Some(projection) = adapter
-                .prepare_graph_for_request(&request.query)
-                .map_err(EngineError::Persistence)?
-        {
-            self.gateway.replace_graph(projection);
-        }
+        self.prepare_graph_for_query(&request.query)?;
         let workspace_id = match request.workspace_id {
             Some(value) => {
                 WorkspaceId::new(value).map_err(|error| EngineError::InvalidConfiguration {
@@ -466,6 +462,17 @@ impl CorroboreEngine {
             }
         }
         Ok(response)
+    }
+
+    fn prepare_graph_for_query(&mut self, query: &str) -> Result<(), EngineError> {
+        if let Some(adapter) = self.persistence.as_mut()
+            && let Some(projection) = adapter
+                .prepare_graph_for_request(query)
+                .map_err(EngineError::Persistence)?
+        {
+            self.gateway.replace_graph(projection);
+        }
+        Ok(())
     }
 
     /// Executes a query, auto-detecting read or mutation mode.

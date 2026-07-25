@@ -1059,6 +1059,15 @@ impl KnowledgeDataEngine for CorroboreKnowledgeDataProvider<'_> {
         operation: KnowledgeDataOperation,
         context: &RequestContext,
     ) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
+        if let Some(query) = knowledge_data_projection_query(&operation) {
+            self.engine.prepare_graph_for_query(query).map_err(|_| {
+                KnowledgeDataError::new(
+                    KnowledgeDataErrorCode::BackendUnavailable,
+                    "failed to prepare the persistent Knowledge Data projection",
+                    true,
+                )
+            })?;
+        }
         match operation {
             KnowledgeDataOperation::Initialize(request) => self.initialize(request),
             KnowledgeDataOperation::Health(request) => self.health(request),
@@ -1077,6 +1086,18 @@ impl KnowledgeDataEngine for CorroboreKnowledgeDataProvider<'_> {
 
     fn is_cancelled(&self, cancellation_id: &str) -> bool {
         self.cancelled.contains(cancellation_id)
+    }
+}
+
+fn knowledge_data_projection_query(operation: &KnowledgeDataOperation) -> Option<&'static str> {
+    match operation {
+        KnowledgeDataOperation::Health(request) if request.verbose => Some("MATCH (n) RETURN n"),
+        KnowledgeDataOperation::GetById(_)
+        | KnowledgeDataOperation::List(_)
+        | KnowledgeDataOperation::Paginate(_)
+        | KnowledgeDataOperation::Count(_) => Some("MATCH (n) RETURN n"),
+        KnowledgeDataOperation::Neighbors(_) => Some("MATCH (n)-[r]->(m) RETURN n, r, m"),
+        _ => None,
     }
 }
 

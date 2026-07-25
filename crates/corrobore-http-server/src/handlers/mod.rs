@@ -27,6 +27,7 @@ pub mod health;
 pub mod import;
 pub mod license;
 pub mod metrics;
+pub mod opencti_shadow;
 pub mod opencti_sync;
 pub mod operational;
 pub mod seed;
