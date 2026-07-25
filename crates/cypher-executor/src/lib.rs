@@ -26,11 +26,11 @@
 //! graph, enforcing execution policies (read-only, mutation, mixed) and
 //! collecting execution records for auditability.
 
-use std::collections::HashMap;
+use std::{cmp::Ordering, collections::HashMap};
 
 use cypher_parser::{
     ComparisonOperator, LiteralValue, ParseErrorCode, ParsedQuery, ProjectionItem, PropertyRef,
-    QueryAst, QueryKind, parse_query,
+    QueryAst, QueryKind, WhereExpression, parse_query,
 };
 use cypher_planner::{build_function_call_plan, build_logical_plan};
 use function_registry::{FunctionRegistry, FunctionValue, ModelFunctionAdapter, RegistryError};
@@ -708,16 +708,22 @@ impl CypherPipelineExecutor {
             return Ok(Vec::new());
         };
 
-        if let Some(order_by) = &return_clause.order_by {
-            let property = order_by.field.clone();
+        if !return_clause.order_by.is_empty() {
             rows.sort_by(|left, right| {
-                let left_value = property_ref_to_sort_key(left, &property);
-                let right_value = property_ref_to_sort_key(right, &property);
-                let ordering = left_value.cmp(&right_value);
-                match order_by.direction {
-                    cypher_parser::OrderDirection::Asc => ordering,
-                    cypher_parser::OrderDirection::Desc => ordering.reverse(),
+                for order_by in &return_clause.order_by {
+                    let ordering = compare_optional_property_values(
+                        property_ref_value(left, &order_by.field),
+                        property_ref_value(right, &order_by.field),
+                    );
+                    let ordering = match order_by.direction {
+                        cypher_parser::OrderDirection::Asc => ordering,
+                        cypher_parser::OrderDirection::Desc => ordering.reverse(),
+                    };
+                    if !ordering.is_eq() {
+                        return ordering;
+                    }
                 }
+                row_identity(left).cmp(&row_identity(right))
             });
         }
 
@@ -729,14 +735,9 @@ impl CypherPipelineExecutor {
             rows.truncate(limit);
         }
 
-        let mut records = if return_clause
-            .items
-            .iter()
-            .all(|item| matches!(item, ProjectionItem::Count(_)))
-        {
-            let mut fields = HashMap::new();
-            fields.insert("count".to_owned(), rows.len().to_string());
-            vec![ExecutionRecord { fields }]
+        let has_aggregation = return_clause.items.iter().any(is_aggregation_projection);
+        let mut records = if has_aggregation {
+            vec![aggregate_record(&rows, &return_clause.items)?]
         } else {
             rows.into_iter()
                 .map(|row| project_record(&row, &return_clause.items))
@@ -885,18 +886,48 @@ fn relationship_type_matches(relationship: &Relationship, expected_type: Option<
 }
 
 fn evaluate_where(row: &ExecutionRow, where_clause: &cypher_parser::WhereClause) -> bool {
-    let Some(left_value) = property_ref_value(row, &where_clause.left) else {
-        return false;
-    };
+    evaluate_where_expression(row, &where_clause.expression)
+}
 
-    match (&left_value, &where_clause.right) {
-        (PropertyValue::String(left), LiteralValue::String(right)) => match where_clause.operator {
-            ComparisonOperator::Eq => left == right,
-            ComparisonOperator::NotEq => left != right,
-            _ => false,
-        },
-        (PropertyValue::Integer(left), LiteralValue::Integer(right)) => match where_clause.operator
-        {
+fn evaluate_where_expression(row: &ExecutionRow, expression: &WhereExpression) -> bool {
+    match expression {
+        WhereExpression::Comparison {
+            left,
+            operator,
+            right,
+        } => property_ref_value(row, left)
+            .is_some_and(|left| compare_property_literal(left, right, operator)),
+        WhereExpression::In {
+            left,
+            values,
+            negated,
+        } => {
+            let matches = property_ref_value(row, left).is_some_and(|actual| {
+                values
+                    .iter()
+                    .any(|expected| property_contains_literal(actual, expected))
+            });
+            if *negated { !matches } else { matches }
+        }
+        WhereExpression::Exists { left, exists } => {
+            property_ref_value(row, left).is_some() == *exists
+        }
+        WhereExpression::And(children) => children
+            .iter()
+            .all(|child| evaluate_where_expression(row, child)),
+        WhereExpression::Or(children) => children
+            .iter()
+            .any(|child| evaluate_where_expression(row, child)),
+    }
+}
+
+fn compare_property_literal(
+    left: &PropertyValue,
+    right: &LiteralValue,
+    operator: &ComparisonOperator,
+) -> bool {
+    match (left, right) {
+        (PropertyValue::String(left), LiteralValue::String(right)) => match operator {
             ComparisonOperator::Eq => left == right,
             ComparisonOperator::NotEq => left != right,
             ComparisonOperator::Gt => left > right,
@@ -904,7 +935,26 @@ fn evaluate_where(row: &ExecutionRow, where_clause: &cypher_parser::WhereClause)
             ComparisonOperator::Lt => left < right,
             ComparisonOperator::Lte => left <= right,
         },
-        (PropertyValue::Bool(left), LiteralValue::Boolean(right)) => match where_clause.operator {
+        (PropertyValue::Integer(left), LiteralValue::Integer(right)) => match operator {
+            ComparisonOperator::Eq => left == right,
+            ComparisonOperator::NotEq => left != right,
+            ComparisonOperator::Gt => left > right,
+            ComparisonOperator::Gte => left >= right,
+            ComparisonOperator::Lt => left < right,
+            ComparisonOperator::Lte => left <= right,
+        },
+        (PropertyValue::Float(left), LiteralValue::Float(right)) => right
+            .parse::<f64>()
+            .ok()
+            .is_some_and(|right| compare_f64(*left, right, operator)),
+        (PropertyValue::Integer(left), LiteralValue::Float(right)) => right
+            .parse::<f64>()
+            .ok()
+            .is_some_and(|right| compare_f64(*left as f64, right, operator)),
+        (PropertyValue::Float(left), LiteralValue::Integer(right)) => {
+            compare_f64(*left, *right as f64, operator)
+        }
+        (PropertyValue::Bool(left), LiteralValue::Boolean(right)) => match operator {
             ComparisonOperator::Eq => left == right,
             ComparisonOperator::NotEq => left != right,
             _ => false,
@@ -913,10 +963,181 @@ fn evaluate_where(row: &ExecutionRow, where_clause: &cypher_parser::WhereClause)
     }
 }
 
-fn property_ref_to_sort_key(row: &ExecutionRow, property: &PropertyRef) -> String {
-    property_ref_value(row, property)
-        .map(property_value_to_string)
-        .unwrap_or_default()
+fn compare_f64(left: f64, right: f64, operator: &ComparisonOperator) -> bool {
+    match operator {
+        ComparisonOperator::Eq => left == right,
+        ComparisonOperator::NotEq => left != right,
+        ComparisonOperator::Gt => left > right,
+        ComparisonOperator::Gte => left >= right,
+        ComparisonOperator::Lt => left < right,
+        ComparisonOperator::Lte => left <= right,
+    }
+}
+
+fn property_contains_literal(actual: &PropertyValue, expected: &LiteralValue) -> bool {
+    match actual {
+        PropertyValue::StringList(values) => match expected {
+            LiteralValue::String(expected) => values.iter().any(|value| value == expected),
+            _ => false,
+        },
+        PropertyValue::IntegerList(values) => match expected {
+            LiteralValue::Integer(expected) => values.iter().any(|value| value == expected),
+            _ => false,
+        },
+        PropertyValue::FloatList(values) => match expected {
+            LiteralValue::Float(expected) => expected
+                .parse::<f64>()
+                .ok()
+                .is_some_and(|expected| values.contains(&expected)),
+            _ => false,
+        },
+        PropertyValue::BoolList(values) => match expected {
+            LiteralValue::Boolean(expected) => values.iter().any(|value| value == expected),
+            _ => false,
+        },
+        actual => compare_property_literal(actual, expected, &ComparisonOperator::Eq),
+    }
+}
+
+fn compare_optional_property_values(
+    left: Option<&PropertyValue>,
+    right: Option<&PropertyValue>,
+) -> Ordering {
+    match (left, right) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Less,
+        (Some(_), None) => Ordering::Greater,
+        (Some(left), Some(right)) => compare_property_values(left, right),
+    }
+}
+
+fn compare_property_values(left: &PropertyValue, right: &PropertyValue) -> Ordering {
+    match (left, right) {
+        (PropertyValue::Integer(left), PropertyValue::Integer(right)) => left.cmp(right),
+        (PropertyValue::Float(left), PropertyValue::Float(right)) => left.total_cmp(right),
+        (PropertyValue::Integer(left), PropertyValue::Float(right)) => {
+            (*left as f64).total_cmp(right)
+        }
+        (PropertyValue::Float(left), PropertyValue::Integer(right)) => {
+            left.total_cmp(&(*right as f64))
+        }
+        (PropertyValue::String(left), PropertyValue::String(right)) => left.cmp(right),
+        (PropertyValue::Bool(left), PropertyValue::Bool(right)) => left.cmp(right),
+        _ => property_value_to_string(left).cmp(&property_value_to_string(right)),
+    }
+}
+
+fn row_identity(row: &ExecutionRow) -> String {
+    let mut values = row
+        .bindings
+        .iter()
+        .map(|(variable, value)| format!("{variable}:{}", binding_to_string(value)))
+        .collect::<Vec<_>>();
+    values.sort();
+    values.join("|")
+}
+
+fn is_aggregation_projection(item: &ProjectionItem) -> bool {
+    matches!(
+        item,
+        ProjectionItem::Count(_)
+            | ProjectionItem::Sum(_)
+            | ProjectionItem::Average(_)
+            | ProjectionItem::Minimum(_)
+            | ProjectionItem::Maximum(_)
+    )
+}
+
+fn aggregate_record(
+    rows: &[ExecutionRow],
+    items: &[ProjectionItem],
+) -> Result<ExecutionRecord, ExecutionError> {
+    if items.iter().any(|item| !is_aggregation_projection(item)) {
+        return Err(ExecutionError::InvalidQuery(
+            "aggregate and non-aggregate projections cannot be mixed without GROUP BY".to_owned(),
+        ));
+    }
+    let mut fields = HashMap::new();
+    for item in items {
+        match item {
+            ProjectionItem::Count(variable) => {
+                let count = rows
+                    .iter()
+                    .filter(|row| variable == "*" || row.bindings.contains_key(variable))
+                    .count();
+                fields.insert("count".to_owned(), count.to_string());
+            }
+            ProjectionItem::Sum(property) => {
+                fields.insert(
+                    format!("sum({}.{})", property.variable, property.property),
+                    numeric_projection(rows, property, NumericProjection::Sum)?,
+                );
+            }
+            ProjectionItem::Average(property) => {
+                fields.insert(
+                    format!("avg({}.{})", property.variable, property.property),
+                    numeric_projection(rows, property, NumericProjection::Average)?,
+                );
+            }
+            ProjectionItem::Minimum(property) => {
+                fields.insert(
+                    format!("min({}.{})", property.variable, property.property),
+                    numeric_projection(rows, property, NumericProjection::Minimum)?,
+                );
+            }
+            ProjectionItem::Maximum(property) => {
+                fields.insert(
+                    format!("max({}.{})", property.variable, property.property),
+                    numeric_projection(rows, property, NumericProjection::Maximum)?,
+                );
+            }
+            ProjectionItem::Variable(_) | ProjectionItem::Property(_) => {}
+        }
+    }
+    Ok(ExecutionRecord { fields })
+}
+
+#[derive(Clone, Copy)]
+enum NumericProjection {
+    Sum,
+    Average,
+    Minimum,
+    Maximum,
+}
+
+fn numeric_projection(
+    rows: &[ExecutionRow],
+    property: &PropertyRef,
+    operation: NumericProjection,
+) -> Result<String, ExecutionError> {
+    let values = rows
+        .iter()
+        .filter_map(|row| property_ref_value(row, property))
+        .filter_map(|value| match value {
+            PropertyValue::Integer(value) => Some(*value as f64),
+            PropertyValue::Float(value) if value.is_finite() => Some(*value),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        return Ok("null".to_owned());
+    }
+    let value = match operation {
+        NumericProjection::Sum => values.iter().sum::<f64>(),
+        NumericProjection::Average => values.iter().sum::<f64>() / values.len() as f64,
+        NumericProjection::Minimum => values.iter().copied().fold(f64::INFINITY, f64::min),
+        NumericProjection::Maximum => values.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+    };
+    if !value.is_finite() {
+        return Err(ExecutionError::InvalidQuery(
+            "numeric aggregation overflowed a finite result".to_owned(),
+        ));
+    }
+    if value.fract() == 0.0 {
+        Ok(format!("{value:.0}"))
+    } else {
+        Ok(value.to_string())
+    }
 }
 
 fn project_record(row: &ExecutionRow, items: &[ProjectionItem]) -> ExecutionRecord {
@@ -942,6 +1163,10 @@ fn project_record(row: &ExecutionRow, items: &[ProjectionItem]) -> ExecutionReco
                     fields.insert("count".to_owned(), "1".to_owned());
                 }
             }
+            ProjectionItem::Sum(_)
+            | ProjectionItem::Average(_)
+            | ProjectionItem::Minimum(_)
+            | ProjectionItem::Maximum(_) => {}
         }
     }
 
@@ -1000,7 +1225,12 @@ fn literal_to_property_value(literal: &LiteralValue) -> PropertyValue {
     match literal {
         LiteralValue::String(s) => PropertyValue::String(s.clone()),
         LiteralValue::Integer(i) => PropertyValue::Integer(*i),
+        LiteralValue::Float(value) => value
+            .parse::<f64>()
+            .map(PropertyValue::Float)
+            .unwrap_or(PropertyValue::Null),
         LiteralValue::Boolean(b) => PropertyValue::Bool(*b),
+        LiteralValue::Null => PropertyValue::Null,
     }
 }
 
@@ -1101,32 +1331,38 @@ mod tests {
             .insert("n".to_owned(), BindingValue::Node(actor));
 
         let integer_gte = WhereClause {
-            left: PropertyRef {
-                variable: "n".to_owned(),
-                property: "score".to_owned(),
+            expression: WhereExpression::Comparison {
+                left: PropertyRef {
+                    variable: "n".to_owned(),
+                    property: "score".to_owned(),
+                },
+                operator: ComparisonOperator::Gte,
+                right: LiteralValue::Integer(10),
             },
-            operator: ComparisonOperator::Gte,
-            right: LiteralValue::Integer(10),
         };
         assert!(evaluate_where(&row, &integer_gte));
 
         let bool_not_eq = WhereClause {
-            left: PropertyRef {
-                variable: "n".to_owned(),
-                property: "active".to_owned(),
+            expression: WhereExpression::Comparison {
+                left: PropertyRef {
+                    variable: "n".to_owned(),
+                    property: "active".to_owned(),
+                },
+                operator: ComparisonOperator::NotEq,
+                right: LiteralValue::Boolean(false),
             },
-            operator: ComparisonOperator::NotEq,
-            right: LiteralValue::Boolean(false),
         };
         assert!(evaluate_where(&row, &bool_not_eq));
 
         let missing_property = WhereClause {
-            left: PropertyRef {
-                variable: "n".to_owned(),
-                property: "missing".to_owned(),
+            expression: WhereExpression::Comparison {
+                left: PropertyRef {
+                    variable: "n".to_owned(),
+                    property: "missing".to_owned(),
+                },
+                operator: ComparisonOperator::Eq,
+                right: LiteralValue::String("x".to_owned()),
             },
-            operator: ComparisonOperator::Eq,
-            right: LiteralValue::String("x".to_owned()),
         };
         assert!(!evaluate_where(&row, &missing_property));
     }
@@ -1173,7 +1409,7 @@ mod tests {
             return_clause: Some(ReturnClause {
                 distinct: false,
                 items: vec![ProjectionItem::Variable("n".to_owned())],
-                order_by: None,
+                order_by: Vec::new(),
                 skip: None,
                 limit: None,
             }),

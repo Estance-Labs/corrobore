@@ -85,6 +85,10 @@ pub enum CanonicalPropertyOperator {
     NotEqual,
     /// Property presence.
     Exists,
+    /// Exact membership in a non-empty typed set.
+    In,
+    /// Exclusion from a non-empty typed set.
+    NotIn,
     /// Strict lower bound.
     GreaterThan,
     /// Inclusive lower bound.
@@ -786,6 +790,40 @@ impl CanonicalEngineStore {
                     Ok(equal)
                 } else {
                     Ok(present().difference(&equal).cloned().collect())
+                }
+            }
+            CanonicalPropertyOperator::In | CanonicalPropertyOperator::NotIn => {
+                let values = filter
+                    .value
+                    .as_ref()
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| GraphStorageError::OperationFailed {
+                        operation: "load_canonical_graph_projection",
+                        message: format!("filter {} requires a value array", filter.field),
+                    })?;
+                let mut included = HashSet::new();
+                for value in values {
+                    let encoded = serde_json::to_string(value).map_err(|error| {
+                        GraphStorageError::OperationFailed {
+                            operation: "load_canonical_graph_projection",
+                            message: format!("failed to encode filter value: {error}"),
+                        }
+                    })?;
+                    included.extend(
+                        resolve_property_index_entries(
+                            &self.state.catalog,
+                            &filter.field,
+                            &encoded,
+                            temporal,
+                        )
+                        .into_iter()
+                        .map(|entry| entry.node_id),
+                    );
+                }
+                if filter.operator == CanonicalPropertyOperator::In {
+                    Ok(included)
+                } else {
+                    Ok(present().difference(&included).cloned().collect())
                 }
             }
             operator => {
@@ -1835,6 +1873,7 @@ fn indexed_value_matches_range(
         CanonicalPropertyOperator::Equal => ordering.is_eq(),
         CanonicalPropertyOperator::NotEqual => !ordering.is_eq(),
         CanonicalPropertyOperator::Exists => true,
+        CanonicalPropertyOperator::In | CanonicalPropertyOperator::NotIn => false,
     })
 }
 

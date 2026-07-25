@@ -119,8 +119,7 @@ pub fn build_logical_plan(ast: &QueryAst) -> LogicalPlan {
         .query
         .as_ref()
         .and_then(|query| query.return_clause.as_ref())
-        .and_then(|return_clause| return_clause.order_by.as_ref())
-        .is_some()
+        .is_some_and(|return_clause| !return_clause.order_by.is_empty())
         || ast
             .clauses
             .iter()

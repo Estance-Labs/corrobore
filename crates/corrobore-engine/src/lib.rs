@@ -63,7 +63,7 @@
 mod knowledge_data;
 mod opencti_shadow;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use export_stix::{StixExportBundle, export_stix_subset_bundle};
 use graph_core::{
@@ -246,6 +246,7 @@ pub trait EnginePersistence: std::fmt::Debug + Send {
             | KnowledgeDataOperation::List(_)
             | KnowledgeDataOperation::Paginate(_)
             | KnowledgeDataOperation::Count(_) => Some("MATCH (n) RETURN n"),
+            KnowledgeDataOperation::Aggregate(_) => Some("MATCH (n)-[r]->(m) RETURN n, r, m"),
             KnowledgeDataOperation::Neighbors(_)
             | KnowledgeDataOperation::Traverse(_)
             | KnowledgeDataOperation::Subgraph(_) => Some("MATCH (n)-[r]->(m) RETURN n, r, m"),
@@ -428,6 +429,7 @@ impl CorroboreEngineBuilder {
             persistence,
             core_read_metrics: CoreReadMetrics::default(),
             security_audit_events: Vec::new(),
+            advanced_query_cache: BTreeMap::new(),
         })
     }
 }
@@ -442,6 +444,7 @@ pub struct CorroboreEngine {
     persistence: Option<Box<dyn EnginePersistence>>,
     core_read_metrics: CoreReadMetrics,
     security_audit_events: Vec<SecurityAuditEvent>,
+    advanced_query_cache: BTreeMap<String, AggregationResult>,
 }
 
 impl CorroboreEngine {
@@ -480,6 +483,9 @@ impl CorroboreEngine {
         &mut self,
         request: EngineRequest,
     ) -> Result<CypherResponse, EngineError> {
+        if contains_mutation_keywords(&request.query) {
+            self.advanced_query_cache.clear();
+        }
         self.prepare_graph_for_query(&request.query)?;
         let workspace_id = match request.workspace_id {
             Some(value) => {
@@ -555,6 +561,7 @@ impl CorroboreEngine {
                 .prepare_graph_for_request(query)
                 .map_err(EngineError::Persistence)?
         {
+            self.advanced_query_cache.clear();
             self.gateway.replace_graph(projection);
         }
         Ok(())
@@ -570,6 +577,7 @@ impl CorroboreEngine {
                 .prepare_knowledge_data_operation(operation, access)
                 .map_err(EngineError::Persistence)?
         {
+            self.advanced_query_cache.clear();
             let stats = PreparedKnowledgeDataExecution {
                 page_ins: projection.page_ins,
                 cache_hits: projection.cache_hits,

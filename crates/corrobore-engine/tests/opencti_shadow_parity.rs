@@ -4,12 +4,13 @@
 use std::collections::BTreeMap;
 
 use corrobore_engine::{
-    AccessContext, AggregateRequest, AggregationResult, ContractVersion, DivergenceBaseline,
-    DivergenceSeverity, GetByIdRequest, GraphResult, KnowledgeDataError, KnowledgeDataErrorCode,
-    KnowledgeDataOperation, KnowledgeDataOutcome, KnowledgeDataRequest, KnowledgeDataResponse,
-    KnowledgeDataResponseEnvelope, KnowledgeRecord, ListRequest, OperationKind, ProviderDescriptor,
-    ProviderExecution, QueryClass, RecordPage, RequestContext, ShadowComparisonGate, ShadowMetrics,
-    ShadowRequestMetadata, ShadowSamplingPolicy, ShadowSamplingRule, compare_shadow_read,
+    AccessContext, AggregateRequest, Aggregation, AggregationPlan, AggregationResult,
+    ContractVersion, DivergenceBaseline, DivergenceSeverity, GetByIdRequest, GraphResult,
+    KnowledgeDataError, KnowledgeDataErrorCode, KnowledgeDataOperation, KnowledgeDataOutcome,
+    KnowledgeDataRequest, KnowledgeDataResponse, KnowledgeDataResponseEnvelope, KnowledgeRecord,
+    ListRequest, OperationKind, ProviderDescriptor, ProviderExecution, QueryClass, RecordPage,
+    RequestContext, ShadowComparisonGate, ShadowMetrics, ShadowRequestMetadata,
+    ShadowSamplingPolicy, ShadowSamplingRule, compare_shadow_read,
 };
 use serde_json::{Value, json};
 
@@ -147,6 +148,7 @@ fn comparison_reports_all_dimensions_and_redacts_inaccessible_values() {
                 ),
             ],
             next_token: Some("reference-token".to_owned()),
+            total_count: None,
         }),
     );
     let shadow = execution(
@@ -169,6 +171,7 @@ fn comparison_reports_all_dimensions_and_redacts_inaccessible_values() {
                 ),
             ],
             next_token: None,
+            total_count: None,
         }),
     );
 
@@ -354,7 +357,13 @@ fn metrics_are_bounded_to_query_class_and_release_labels() {
 fn aggregation_relationship_and_latency_dimensions_apply_deterministic_gates() {
     let aggregation_request = request(
         KnowledgeDataOperation::Aggregate(AggregateRequest {
-            plan: json!({"field": "entity_type"}),
+            plan: AggregationPlan {
+                aggregation: Aggregation::Terms {
+                    field: "entity_type".to_owned(),
+                    limit: 10,
+                },
+                ..AggregationPlan::default()
+            },
         }),
         "correlation--aggregation",
     );
@@ -368,6 +377,9 @@ fn aggregation_relationship_and_latency_dimensions_apply_deterministic_gates() {
             "correlation--aggregation",
             KnowledgeDataResponse::Aggregation(AggregationResult {
                 buckets: vec![json!({"key": "indicator", "count": 2})],
+                value: None,
+                examined_records: 2,
+                generation: "reference-generation".to_owned(),
             }),
         ),
         execution(
@@ -378,6 +390,9 @@ fn aggregation_relationship_and_latency_dimensions_apply_deterministic_gates() {
             "correlation--aggregation",
             KnowledgeDataResponse::Aggregation(AggregationResult {
                 buckets: vec![json!({"key": "indicator", "count": 3})],
+                value: None,
+                examined_records: 3,
+                generation: "shadow-generation".to_owned(),
             }),
         ),
         &[],
@@ -499,10 +514,12 @@ fn opencti_compatibility_corpus_produces_repeatable_end_to_end_reports() {
             })
             .collect(),
         next_token: None,
+        total_count: None,
     });
     let shadow_response = KnowledgeDataResponse::Records(RecordPage {
         records,
         next_token: None,
+        total_count: None,
     });
     let compare = || {
         compare_shadow_read(

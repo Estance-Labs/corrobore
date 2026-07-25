@@ -188,6 +188,32 @@ fn cold_point_and_filtered_reads_use_compact_identifier_property_and_temporal_in
         vec!["label_index", "property_index", "temporal_index"]
     );
 
+    let membership = reopened
+        .load_projection(
+            CanonicalProjectionRequest::for_label("OpenCtiType_indicator").with_property_filters([
+                CanonicalPropertyFilter {
+                    field: "opencti.field.name".to_owned(),
+                    operator: CanonicalPropertyOperator::In,
+                    value: Some(json!(["Indexed indicator", "another value"])),
+                },
+            ]),
+        )
+        .unwrap();
+    assert_eq!(membership.list_nodes().unwrap().len(), 1);
+
+    let exclusion = reopened
+        .load_projection(
+            CanonicalProjectionRequest::for_label("OpenCtiType_indicator").with_property_filters([
+                CanonicalPropertyFilter {
+                    field: "opencti.field.name".to_owned(),
+                    operator: CanonicalPropertyOperator::NotIn,
+                    value: Some(json!(["Unrelated indicator"])),
+                },
+            ]),
+        )
+        .unwrap();
+    assert_eq!(exclusion.list_nodes().unwrap().len(), 1);
+
     let _ = fs::remove_dir_all(root.path());
 }
 

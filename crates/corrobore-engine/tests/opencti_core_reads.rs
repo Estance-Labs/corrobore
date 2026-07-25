@@ -223,6 +223,7 @@ fn indicator_list() -> ListRequest {
             direction: SortDirection::Ascending,
         }],
         limit: 100,
+        ..ListRequest::default()
     }
 }
 
@@ -376,6 +377,7 @@ fn simple_filters_and_access_context_hide_inaccessible_values() {
                 direction: SortDirection::Ascending,
             }],
             limit: 100,
+            ..ListRequest::default()
         }),
         clear_access(),
         "core-filtered",

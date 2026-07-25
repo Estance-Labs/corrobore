@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-07-25T17:16:19Z",
+  "engine": "corrobore-advanced-query-cache-v1",
+  "environment": {
+    "architecture": "arm64",
+    "operating_system": "macOS 26.5.2",
+    "build_profile": "release"
+  },
+  "profile": {
+    "id": "small",
+    "objects": 100000,
+    "relationships": 500000,
+    "records": 600000,
+    "warmup_iterations": 20,
+    "measurement_iterations": 60,
+    "concurrency": 1
+  },
+  "ingestion": {
+    "elapsed_seconds": 1.370757875,
+    "throughput_records_per_second": 437714.064
+  },
+  "workload_metrics": {
+    "terms-aggregation": {
+      "latency_p50_ms": 0.005792,
+      "latency_p95_ms": 0.009,
+      "latency_p99_ms": 0.047,
+      "throughput_ops_per_second": 172651.934
+    },
+    "date-histogram": {
+      "latency_p50_ms": 0.008959,
+      "latency_p95_ms": 0.011333,
+      "latency_p99_ms": 0.053083,
+      "throughput_ops_per_second": 111619.600
+    }
+  },
+  "memory": {
+    "maximum_resident_set_bytes": 3077865472,
+    "peak_memory_footprint_bytes": 2871806544
+  },
+  "parity_gate": {
+    "reference_engine": "opensearch-3.7.0",
+    "maximum_regression_percent": 20,
+    "terms_reference_p95_ms": 4.845,
+    "terms_maximum_p95_ms": 5.814,
+    "terms_passed": true,
+    "histogram_reference_p95_ms": 4.857,
+    "histogram_maximum_p95_ms": 5.8284,
+    "histogram_passed": true
+  },
+  "reproduction": {
+    "command": "cargo run --release -p corrobore-engine --example small_profile_advanced_query_benchmark --locked",
+    "memory_command": "/usr/bin/time -l target/release/examples/small_profile_advanced_query_benchmark"
+  }
+}

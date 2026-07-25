@@ -18,6 +18,7 @@ use std::{
 };
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::{DateTime, SecondsFormat, Utc};
 use graph_core::{Graph, Node, NodeId, PropertyValue, Relationship};
 use hmac::{Hmac, Mac};
 pub use opencti_access::{
@@ -285,6 +286,10 @@ pub enum ReadFilterOperator {
     NotEqual,
     /// Property presence, independent of its value.
     Exists,
+    /// Exact typed membership in a non-empty value set.
+    In,
+    /// Typed exclusion from a non-empty value set.
+    NotIn,
     /// Strict lower-bound comparison.
     GreaterThan,
     /// Inclusive lower-bound comparison.
@@ -304,6 +309,22 @@ pub struct ReadFilter {
     pub operator: ReadFilterOperator,
     /// Comparison value. `exists` requires this to be absent.
     pub value: Option<Value>,
+}
+
+/// Structural boolean predicate used by list, pagination and aggregation.
+///
+/// The tree is intentionally backend-neutral. Providers may push safe
+/// conditions into indexes, but must preserve this exact boolean structure
+/// when evaluating any bounded fallback candidates.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "operator", content = "arguments", rename_all = "snake_case")]
+pub enum ReadPredicate {
+    /// One typed leaf condition.
+    Condition(ReadFilter),
+    /// Every child predicate must match.
+    And(Vec<ReadPredicate>),
+    /// At least one child predicate must match.
+    Or(Vec<ReadPredicate>),
 }
 
 /// Stable ordering direction.
@@ -333,11 +354,17 @@ pub struct ListRequest {
     /// Conjunctive scalar predicates.
     #[serde(default)]
     pub filters: Vec<ReadFilter>,
+    /// Structural predicate evaluated in addition to legacy filters.
+    #[serde(default)]
+    pub predicate: Option<ReadPredicate>,
     /// Stable sort keys before the canonical-ID tie-breaker.
     #[serde(default)]
     pub order_by: Vec<ReadOrder>,
     /// Maximum records returned before pagination.
     pub limit: u32,
+    /// Return the access-filtered total matching the stable snapshot.
+    #[serde(default)]
+    pub include_total_count: bool,
 }
 
 impl Default for ListRequest {
@@ -345,8 +372,10 @@ impl Default for ListRequest {
         Self {
             kinds: Vec::new(),
             filters: Vec::new(),
+            predicate: None,
             order_by: Vec::new(),
             limit: 100,
+            include_total_count: false,
         }
     }
 }
@@ -395,11 +424,117 @@ pub struct CountRequest {
     pub filters: Vec<ReadFilter>,
 }
 
+/// Calendar interval supported by deterministic date histograms.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DateHistogramInterval {
+    /// One UTC hour after applying the declared timezone offset.
+    Hour,
+    /// One calendar day after applying the declared timezone offset.
+    Day,
+}
+
+/// Typed aggregation expression supported by the provider-neutral contract.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Aggregation {
+    /// Count the current aggregation subjects.
+    Count,
+    /// Count exact distinct values. Null and missing values are ignored.
+    Cardinality {
+        /// Record field to inspect.
+        field: String,
+    },
+    /// Return the most frequent exact values.
+    Terms {
+        /// Record field to inspect.
+        field: String,
+        /// Maximum number of buckets.
+        limit: u32,
+    },
+    /// Return calendar buckets for RFC 3339 timestamps.
+    DateHistogram {
+        /// Record field to inspect.
+        field: String,
+        /// Calendar interval.
+        interval: DateHistogramInterval,
+        /// Fixed timezone offset applied before bucketing.
+        time_zone_offset_minutes: i32,
+        /// Whether gaps between the first and last observed bucket are emitted.
+        include_empty: bool,
+    },
+    /// Sum finite numeric values. Missing and null values are ignored.
+    Sum {
+        /// Record field to inspect.
+        field: String,
+    },
+    /// Average finite numeric values. Missing and null values are ignored.
+    Average {
+        /// Record field to inspect.
+        field: String,
+    },
+    /// Minimum finite numeric value.
+    Minimum {
+        /// Record field to inspect.
+        field: String,
+    },
+    /// Maximum finite numeric value.
+    Maximum {
+        /// Record field to inspect.
+        field: String,
+    },
+    /// Restrict subjects before evaluating the child aggregation.
+    Filter {
+        /// Structural filter.
+        predicate: ReadPredicate,
+        /// Child aggregation.
+        aggregation: Box<Aggregation>,
+    },
+    /// Expand a JSON array field into nested subjects.
+    Nested {
+        /// Array field to expand.
+        path: String,
+        /// Child aggregation.
+        aggregation: Box<Aggregation>,
+    },
+    /// Return from nested subjects to their unique authorized parent records.
+    ReverseNested {
+        /// Child aggregation.
+        aggregation: Box<Aggregation>,
+    },
+}
+
+/// Bounded, typed aggregation plan.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AggregationPlan {
+    /// Record kinds to include; empty means nodes and relationships.
+    #[serde(default)]
+    pub kinds: Vec<String>,
+    /// Optional structural root predicate.
+    #[serde(default)]
+    pub predicate: Option<ReadPredicate>,
+    /// Aggregation expression.
+    pub aggregation: Aggregation,
+    /// Hard bound for access-filtered fallback candidates.
+    pub candidate_limit: u32,
+}
+
+impl Default for AggregationPlan {
+    fn default() -> Self {
+        Self {
+            kinds: Vec::new(),
+            predicate: None,
+            aggregation: Aggregation::Count,
+            candidate_limit: 10_000,
+        }
+    }
+}
+
 /// Aggregation input.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AggregateRequest {
-    /// Backend-neutral aggregation plan.
-    pub plan: Value,
+    /// Backend-neutral typed aggregation plan.
+    pub plan: AggregationPlan,
 }
 
 /// Neighbor input.
@@ -816,6 +951,8 @@ pub struct RecordPage {
     pub records: Vec<KnowledgeRecord>,
     /// Opaque continuation token.
     pub next_token: Option<String>,
+    /// Optional access-filtered total for the bound snapshot.
+    pub total_count: Option<u64>,
 }
 
 /// Count response.
@@ -830,6 +967,12 @@ pub struct CountResult {
 pub struct AggregationResult {
     /// Ordered aggregation buckets.
     pub buckets: Vec<Value>,
+    /// Scalar metric value when the aggregation is not bucketed.
+    pub value: Option<Value>,
+    /// Number of authorized root records examined by the plan.
+    pub examined_records: u64,
+    /// Deterministic generation fingerprint of the materialized input.
+    pub generation: String,
 }
 
 /// Graph response.
@@ -879,6 +1022,8 @@ pub enum CoreReadQueryClass {
     Count,
     /// Access-aware embedded full-text search.
     FullTextSearch,
+    /// Bounded typed aggregation.
+    Aggregation,
     /// One-hop neighborhood.
     Neighbors,
     /// Bounded traversal.
@@ -896,6 +1041,7 @@ impl CoreReadQueryClass {
             Self::Pagination => "pagination",
             Self::Count => "count",
             Self::FullTextSearch => "full_text_search",
+            Self::Aggregation => "aggregation",
             Self::Neighbors => "neighbors",
             Self::Traverse => "traverse",
             Self::Subgraph => "subgraph",
@@ -1446,6 +1592,7 @@ impl KnowledgeDataEngine for CorroboreKnowledgeDataProvider<'_> {
                 self.search(request, &context.access, prepared_full_text_page)
             }
             KnowledgeDataOperation::Count(request) => self.count(request, &access_policy),
+            KnowledgeDataOperation::Aggregate(request) => self.aggregate(request, &access_policy),
             KnowledgeDataOperation::Neighbors(request) => self.neighbors(request, &access_policy),
             KnowledgeDataOperation::Traverse(request) => self.traverse(request, &access_policy),
             KnowledgeDataOperation::Subgraph(request) => self.subgraph(request, &access_policy),
@@ -1456,11 +1603,14 @@ impl KnowledgeDataEngine for CorroboreKnowledgeDataProvider<'_> {
             }
         };
         if let Some(query_class) = query_class {
-            let records_examined = self
-                .engine
-                .graph()
-                .list_nodes()
-                .map_or(0, |records| records.len() as u64);
+            let records_examined = match &result {
+                Ok(KnowledgeDataResponse::Aggregation(result)) => result.examined_records,
+                _ => self
+                    .engine
+                    .graph()
+                    .list_nodes()
+                    .map_or(0, |records| records.len() as u64),
+            };
             self.engine.core_read_metrics.record(
                 query_class,
                 u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
@@ -1518,6 +1668,7 @@ fn validate_operation_before_projection(
         KnowledgeDataOperation::Search(request) => {
             full_text_query_from_search_request(request).map(|_| ())
         }
+        KnowledgeDataOperation::Aggregate(request) => validate_aggregation_plan(&request.plan),
         KnowledgeDataOperation::Neighbors(request) => {
             if !request.incoming && !request.outgoing {
                 return Err(KnowledgeDataError::new(
@@ -1545,6 +1696,7 @@ fn core_read_query_class(operation: &KnowledgeDataOperation) -> Option<CoreReadQ
         KnowledgeDataOperation::Paginate(_) => Some(CoreReadQueryClass::Pagination),
         KnowledgeDataOperation::Search(_) => Some(CoreReadQueryClass::FullTextSearch),
         KnowledgeDataOperation::Count(_) => Some(CoreReadQueryClass::Count),
+        KnowledgeDataOperation::Aggregate(_) => Some(CoreReadQueryClass::Aggregation),
         KnowledgeDataOperation::Neighbors(_) => Some(CoreReadQueryClass::Neighbors),
         KnowledgeDataOperation::Traverse(_) => Some(CoreReadQueryClass::Traverse),
         KnowledgeDataOperation::Subgraph(_) => Some(CoreReadQueryClass::Subgraph),
@@ -1710,14 +1862,12 @@ fn capability_status(operation: OperationKind) -> ProviderCapabilityStatus {
         | OperationKind::Paginate
         | OperationKind::Search
         | OperationKind::Count
+        | OperationKind::Aggregate
         | OperationKind::Neighbors
         | OperationKind::Traverse
         | OperationKind::Subgraph => ProviderCapabilityStatus::Supported,
         OperationKind::Migrate | OperationKind::Snapshot | OperationKind::Restore => {
             unsupported_status("portable lifecycle support is delivered by issue #52")
-        }
-        OperationKind::Aggregate => {
-            unsupported_status("advanced read planning is delivered by issue #47")
         }
         OperationKind::Create
         | OperationKind::Update
@@ -1911,10 +2061,12 @@ impl CorroboreKnowledgeDataProvider<'_> {
     ) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
         validate_list_request(&request)?;
         let mut records = self.filtered_records(&request, access_policy)?;
+        let total_count = request.include_total_count.then_some(records.len() as u64);
         records.truncate(request.limit as usize);
         Ok(KnowledgeDataResponse::Records(RecordPage {
             records,
             next_token: None,
+            total_count,
         }))
     }
 
@@ -2010,6 +2162,10 @@ impl CorroboreKnowledgeDataProvider<'_> {
         Ok(KnowledgeDataResponse::Records(RecordPage {
             records: page_records,
             next_token,
+            total_count: request
+                .query
+                .include_total_count
+                .then_some(records.len() as u64),
         }))
     }
 
@@ -2069,10 +2225,90 @@ impl CorroboreKnowledgeDataProvider<'_> {
             filters: request.filters,
             order_by: Vec::new(),
             limit: 10_000,
+            ..ListRequest::default()
         };
         validate_list_request(&query)?;
         let count = self.filtered_records(&query, access_policy)?.len() as u64;
         Ok(KnowledgeDataResponse::Count(CountResult { count }))
+    }
+
+    fn aggregate(
+        &mut self,
+        request: AggregateRequest,
+        access_policy: &OpenCtiAccessPolicy,
+    ) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
+        validate_aggregation_plan(&request.plan)?;
+        let cache_key = advanced_query_cache_key(&request.plan, access_policy)?;
+        if let Some(result) = self.engine.advanced_query_cache.get(&cache_key).cloned() {
+            return Ok(KnowledgeDataResponse::Aggregation(result));
+        }
+        let graph = self.engine.graph();
+        let mut records = graph
+            .list_nodes()
+            .map_err(graph_error)?
+            .into_iter()
+            .filter(|node| node_access_decision(node, access_policy).allowed())
+            .map(node_to_record)
+            .collect::<Result<Vec<_>, _>>()?;
+        for relationship in graph.list_relationships().map_err(graph_error)? {
+            let endpoints_allowed = graph
+                .get_node(relationship.source())
+                .map_err(graph_error)?
+                .is_some_and(|node| node_access_decision(&node, access_policy).allowed())
+                && graph
+                    .get_node(relationship.target())
+                    .map_err(graph_error)?
+                    .is_some_and(|node| node_access_decision(&node, access_policy).allowed());
+            if endpoints_allowed
+                && relationship_access_decision(&relationship, access_policy).allowed()
+            {
+                records.push(relationship_to_record(relationship)?);
+            }
+        }
+        records.retain(|record| {
+            (request.plan.kinds.is_empty()
+                || request
+                    .plan
+                    .kinds
+                    .iter()
+                    .any(|kind| kind.eq_ignore_ascii_case(&record.kind)))
+                && request
+                    .plan
+                    .predicate
+                    .as_ref()
+                    .is_none_or(|predicate| record_matches_predicate(record, predicate))
+        });
+        if records.len() > request.plan.candidate_limit as usize {
+            return Err(KnowledgeDataError::new(
+                KnowledgeDataErrorCode::QueryBudgetExceeded,
+                format!(
+                    "aggregation requires {} authorized candidates, exceeding candidate_limit {}",
+                    records.len(),
+                    request.plan.candidate_limit
+                ),
+                false,
+            ));
+        }
+        records.sort_by(|left, right| left.id.cmp(&right.id));
+        let generation = aggregation_generation(&records)?;
+        let subjects = records
+            .iter()
+            .map(|record| AggregationSubject {
+                root: record,
+                value: &record.body,
+            })
+            .collect::<Vec<_>>();
+        let (buckets, value) = evaluate_aggregation(&subjects, &request.plan.aggregation)?;
+        let result = AggregationResult {
+            buckets,
+            value,
+            examined_records: records.len() as u64,
+            generation,
+        };
+        self.engine
+            .advanced_query_cache
+            .insert(cache_key, result.clone());
+        Ok(KnowledgeDataResponse::Aggregation(result))
     }
 
     fn neighbors(
@@ -2365,16 +2601,10 @@ fn validate_list_request(request: &ListRequest) -> Result<(), KnowledgeDataError
         ));
     }
     for filter in &request.filters {
-        if filter.field.trim().is_empty()
-            || (filter.operator == ReadFilterOperator::Exists && filter.value.is_some())
-            || (filter.operator != ReadFilterOperator::Exists && filter.value.is_none())
-        {
-            return Err(KnowledgeDataError::new(
-                KnowledgeDataErrorCode::InvalidRequest,
-                "read filters require a field and operator-compatible value",
-                false,
-            ));
-        }
+        validate_read_filter(filter)?;
+    }
+    if let Some(predicate) = &request.predicate {
+        validate_read_predicate(predicate, 0, &mut 0)?;
     }
     if request
         .order_by
@@ -2388,6 +2618,141 @@ fn validate_list_request(request: &ListRequest) -> Result<(), KnowledgeDataError
         ));
     }
     Ok(())
+}
+
+fn validate_read_filter(filter: &ReadFilter) -> Result<(), KnowledgeDataError> {
+    let value_is_valid = match filter.operator {
+        ReadFilterOperator::Exists => filter.value.is_none(),
+        ReadFilterOperator::In | ReadFilterOperator::NotIn => filter
+            .value
+            .as_ref()
+            .and_then(Value::as_array)
+            .is_some_and(|values| !values.is_empty()),
+        _ => filter.value.is_some(),
+    };
+    if filter.field.trim().is_empty() || !value_is_valid {
+        return Err(KnowledgeDataError::new(
+            KnowledgeDataErrorCode::InvalidRequest,
+            "read filters require a field and operator-compatible value",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_read_predicate(
+    predicate: &ReadPredicate,
+    depth: usize,
+    nodes: &mut usize,
+) -> Result<(), KnowledgeDataError> {
+    *nodes = nodes.saturating_add(1);
+    if depth > 16 || *nodes > 128 {
+        return Err(KnowledgeDataError::new(
+            KnowledgeDataErrorCode::QueryBudgetExceeded,
+            "predicate exceeds the maximum depth 16 or node count 128",
+            false,
+        ));
+    }
+    match predicate {
+        ReadPredicate::Condition(filter) => validate_read_filter(filter),
+        ReadPredicate::And(children) | ReadPredicate::Or(children) => {
+            if children.is_empty() {
+                return Err(KnowledgeDataError::new(
+                    KnowledgeDataErrorCode::InvalidRequest,
+                    "boolean predicates must contain at least one child",
+                    false,
+                ));
+            }
+            for child in children {
+                validate_read_predicate(child, depth + 1, nodes)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_aggregation_plan(plan: &AggregationPlan) -> Result<(), KnowledgeDataError> {
+    if plan.candidate_limit == 0 || plan.candidate_limit > 1_000_000 {
+        return Err(KnowledgeDataError::new(
+            KnowledgeDataErrorCode::UnboundedOperation,
+            "aggregation candidate_limit must be between 1 and 1000000",
+            false,
+        ));
+    }
+    if plan.kinds.iter().any(|kind| kind.trim().is_empty()) {
+        return Err(KnowledgeDataError::new(
+            KnowledgeDataErrorCode::InvalidRequest,
+            "aggregation kinds must not contain blank values",
+            false,
+        ));
+    }
+    if let Some(predicate) = &plan.predicate {
+        validate_read_predicate(predicate, 0, &mut 0)?;
+    }
+    validate_aggregation(&plan.aggregation, 0)
+}
+
+fn validate_aggregation(aggregation: &Aggregation, depth: usize) -> Result<(), KnowledgeDataError> {
+    if depth > 16 {
+        return Err(KnowledgeDataError::new(
+            KnowledgeDataErrorCode::QueryBudgetExceeded,
+            "aggregation nesting exceeds the maximum depth 16",
+            false,
+        ));
+    }
+    match aggregation {
+        Aggregation::Count => Ok(()),
+        Aggregation::Terms { field, limit } => {
+            if field.trim().is_empty() || *limit == 0 || *limit > 1_000 {
+                Err(KnowledgeDataError::new(
+                    KnowledgeDataErrorCode::InvalidRequest,
+                    "terms requires a field and limit between 1 and 1000",
+                    false,
+                ))
+            } else {
+                Ok(())
+            }
+        }
+        Aggregation::Cardinality { field }
+        | Aggregation::Sum { field }
+        | Aggregation::Average { field }
+        | Aggregation::Minimum { field }
+        | Aggregation::Maximum { field }
+        | Aggregation::Nested { path: field, .. }
+        | Aggregation::DateHistogram { field, .. } => {
+            if field.trim().is_empty() {
+                return Err(KnowledgeDataError::new(
+                    KnowledgeDataErrorCode::InvalidRequest,
+                    "aggregation fields must not be blank",
+                    false,
+                ));
+            }
+            match aggregation {
+                Aggregation::Nested { aggregation, .. } => {
+                    validate_aggregation(aggregation, depth + 1)
+                }
+                Aggregation::DateHistogram {
+                    time_zone_offset_minutes,
+                    ..
+                } if !(-1_080..=1_080).contains(time_zone_offset_minutes) => {
+                    Err(KnowledgeDataError::new(
+                        KnowledgeDataErrorCode::InvalidRequest,
+                        "date histogram timezone offset must be between -1080 and 1080 minutes",
+                        false,
+                    ))
+                }
+                _ => Ok(()),
+            }
+        }
+        Aggregation::Filter {
+            predicate,
+            aggregation,
+        } => {
+            validate_read_predicate(predicate, 0, &mut 0)?;
+            validate_aggregation(aggregation, depth + 1)
+        }
+        Aggregation::ReverseNested { aggregation } => validate_aggregation(aggregation, depth + 1),
+    }
 }
 
 fn validate_graph_read(
@@ -2414,6 +2779,7 @@ fn validate_graph_read(
         filters: policy.filters.clone(),
         order_by: Vec::new(),
         limit: policy.max_results.min(10_000),
+        ..ListRequest::default()
     })
 }
 
@@ -2480,6 +2846,311 @@ fn relationship_to_value(relationship: Relationship) -> Result<Value, KnowledgeD
         Some(PropertyValue::Json(value)) => Ok(value.clone()),
         _ => serde_json::to_value(relationship).map_err(serialization_error),
     }
+}
+
+fn relationship_to_record(
+    relationship: Relationship,
+) -> Result<KnowledgeRecord, KnowledgeDataError> {
+    let id = canonical_relationship_id(&relationship);
+    let revision = relationship.version();
+    let body = relationship_to_value(relationship)?;
+    let kind = body
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("relationship")
+        .to_owned();
+    Ok(KnowledgeRecord {
+        id,
+        kind,
+        revision,
+        body,
+    })
+}
+
+#[derive(Clone, Copy)]
+struct AggregationSubject<'a> {
+    root: &'a KnowledgeRecord,
+    value: &'a Value,
+}
+
+fn evaluate_aggregation(
+    subjects: &[AggregationSubject<'_>],
+    aggregation: &Aggregation,
+) -> Result<(Vec<Value>, Option<Value>), KnowledgeDataError> {
+    match aggregation {
+        Aggregation::Count => Ok((Vec::new(), Some(Value::from(subjects.len() as u64)))),
+        Aggregation::Cardinality { field } => {
+            let mut values = BTreeSet::new();
+            for subject in subjects {
+                for value in aggregation_field_values(subject, field) {
+                    if !value.is_null() {
+                        values.insert(canonical_json(value)?);
+                    }
+                }
+            }
+            Ok((Vec::new(), Some(Value::from(values.len() as u64))))
+        }
+        Aggregation::Terms { field, limit } => {
+            let mut counts = BTreeMap::<String, (Value, u64)>::new();
+            for subject in subjects {
+                let mut seen = BTreeSet::new();
+                for value in aggregation_field_values(subject, field) {
+                    if value.is_null() {
+                        continue;
+                    }
+                    let canonical = canonical_json(value)?;
+                    if seen.insert(canonical.clone()) {
+                        let entry = counts
+                            .entry(canonical)
+                            .or_insert_with(|| (value.clone(), 0));
+                        entry.1 = entry.1.saturating_add(1);
+                    }
+                }
+            }
+            let mut buckets = counts
+                .into_values()
+                .map(|(key, count)| serde_json::json!({"key": key, "count": count}))
+                .collect::<Vec<_>>();
+            buckets.sort_by(|left, right| {
+                right["count"]
+                    .as_u64()
+                    .cmp(&left["count"].as_u64())
+                    .then_with(|| left["key"].to_string().cmp(&right["key"].to_string()))
+            });
+            buckets.truncate(*limit as usize);
+            Ok((buckets, None))
+        }
+        Aggregation::DateHistogram {
+            field,
+            interval,
+            time_zone_offset_minutes,
+            include_empty,
+        } => {
+            let interval_seconds = match interval {
+                DateHistogramInterval::Hour => 3_600_i64,
+                DateHistogramInterval::Day => 86_400_i64,
+            };
+            let offset_seconds = i64::from(*time_zone_offset_minutes) * 60;
+            let mut counts = BTreeMap::<i64, u64>::new();
+            for subject in subjects {
+                for value in aggregation_field_values(subject, field) {
+                    let Some(timestamp) = value
+                        .as_str()
+                        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+                        .map(|value| value.timestamp())
+                    else {
+                        continue;
+                    };
+                    let local = timestamp.saturating_add(offset_seconds);
+                    let bucket = local
+                        .div_euclid(interval_seconds)
+                        .saturating_mul(interval_seconds)
+                        .saturating_sub(offset_seconds);
+                    *counts.entry(bucket).or_default() += 1;
+                }
+            }
+            if *include_empty
+                && let (Some(first), Some(last)) = (
+                    counts.keys().next().copied(),
+                    counts.keys().next_back().copied(),
+                )
+            {
+                let mut cursor = first;
+                while cursor <= last {
+                    counts.entry(cursor).or_default();
+                    cursor = cursor.saturating_add(interval_seconds);
+                }
+            }
+            let buckets = counts
+                .into_iter()
+                .filter_map(|(timestamp, count)| {
+                    DateTime::<Utc>::from_timestamp(timestamp, 0).map(|date| {
+                        serde_json::json!({
+                            "key": date.to_rfc3339_opts(SecondsFormat::Millis, true),
+                            "count": count,
+                        })
+                    })
+                })
+                .collect();
+            Ok((buckets, None))
+        }
+        Aggregation::Sum { field } => numeric_aggregation(subjects, field, NumericAggregation::Sum),
+        Aggregation::Average { field } => {
+            numeric_aggregation(subjects, field, NumericAggregation::Average)
+        }
+        Aggregation::Minimum { field } => {
+            numeric_aggregation(subjects, field, NumericAggregation::Minimum)
+        }
+        Aggregation::Maximum { field } => {
+            numeric_aggregation(subjects, field, NumericAggregation::Maximum)
+        }
+        Aggregation::Filter {
+            predicate,
+            aggregation,
+        } => {
+            let filtered = subjects
+                .iter()
+                .copied()
+                .filter(|subject| subject_matches_predicate(subject, predicate))
+                .collect::<Vec<_>>();
+            evaluate_aggregation(&filtered, aggregation)
+        }
+        Aggregation::Nested { path, aggregation } => {
+            let mut nested = Vec::new();
+            for subject in subjects {
+                let Some(value) = aggregation_subject_field(subject, path) else {
+                    continue;
+                };
+                match value {
+                    Value::Array(values) => {
+                        nested.extend(values.iter().map(|value| AggregationSubject {
+                            root: subject.root,
+                            value,
+                        }))
+                    }
+                    value if !value.is_null() => nested.push(AggregationSubject {
+                        root: subject.root,
+                        value,
+                    }),
+                    _ => {}
+                }
+            }
+            evaluate_aggregation(&nested, aggregation)
+        }
+        Aggregation::ReverseNested { aggregation } => {
+            let mut roots = BTreeMap::new();
+            for subject in subjects {
+                roots
+                    .entry(subject.root.id.as_str())
+                    .or_insert(subject.root);
+            }
+            let root_subjects = roots
+                .into_values()
+                .map(|root| AggregationSubject {
+                    root,
+                    value: &root.body,
+                })
+                .collect::<Vec<_>>();
+            evaluate_aggregation(&root_subjects, aggregation)
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum NumericAggregation {
+    Sum,
+    Average,
+    Minimum,
+    Maximum,
+}
+
+fn numeric_aggregation(
+    subjects: &[AggregationSubject<'_>],
+    field: &str,
+    operation: NumericAggregation,
+) -> Result<(Vec<Value>, Option<Value>), KnowledgeDataError> {
+    let values = subjects
+        .iter()
+        .flat_map(|subject| aggregation_field_values(subject, field))
+        .filter_map(Value::as_f64)
+        .filter(|value| value.is_finite())
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        return Ok((Vec::new(), None));
+    }
+    let value = match operation {
+        NumericAggregation::Sum => values.iter().sum::<f64>(),
+        NumericAggregation::Average => values.iter().sum::<f64>() / values.len() as f64,
+        NumericAggregation::Minimum => values.iter().copied().fold(f64::INFINITY, f64::min),
+        NumericAggregation::Maximum => values.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+    };
+    let value = serde_json::Number::from_f64(value)
+        .map(Value::Number)
+        .ok_or_else(|| {
+            KnowledgeDataError::new(
+                KnowledgeDataErrorCode::InvalidRequest,
+                "numeric aggregation overflowed a finite JSON number",
+                false,
+            )
+        })?;
+    Ok((Vec::new(), Some(value)))
+}
+
+fn aggregation_field_values<'a>(
+    subject: &'a AggregationSubject<'a>,
+    field: &str,
+) -> Vec<&'a Value> {
+    match aggregation_subject_field(subject, field) {
+        Some(Value::Array(values)) => values.iter().collect(),
+        Some(value) => vec![value],
+        None => Vec::new(),
+    }
+}
+
+fn aggregation_subject_field<'a>(
+    subject: &'a AggregationSubject<'a>,
+    field: &str,
+) -> Option<&'a Value> {
+    if field == "$value" {
+        return Some(subject.value);
+    }
+    nested_json_field(subject.value, field).or_else(|| record_field(subject.root, field))
+}
+
+fn nested_json_field<'a>(value: &'a Value, field: &str) -> Option<&'a Value> {
+    let mut current = value;
+    for component in field.split('.') {
+        current = current.get(component)?;
+    }
+    Some(current)
+}
+
+fn subject_matches_predicate(subject: &AggregationSubject<'_>, predicate: &ReadPredicate) -> bool {
+    match predicate {
+        ReadPredicate::Condition(filter) => {
+            value_matches_filter(aggregation_subject_field(subject, &filter.field), filter)
+        }
+        ReadPredicate::And(children) => children
+            .iter()
+            .all(|child| subject_matches_predicate(subject, child)),
+        ReadPredicate::Or(children) => children
+            .iter()
+            .any(|child| subject_matches_predicate(subject, child)),
+    }
+}
+
+fn canonical_json(value: &Value) -> Result<String, KnowledgeDataError> {
+    serde_json::to_string(value).map_err(serialization_error)
+}
+
+fn aggregation_generation(records: &[KnowledgeRecord]) -> Result<String, KnowledgeDataError> {
+    let mut digest = Sha256::new();
+    digest.update(b"corrobore-advanced-query-v1");
+    for record in records {
+        digest.update(record.id.as_bytes());
+        digest.update([0]);
+        digest.update(record.revision.to_le_bytes());
+    }
+    Ok(digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
+fn advanced_query_cache_key(
+    plan: &AggregationPlan,
+    access_policy: &OpenCtiAccessPolicy,
+) -> Result<String, KnowledgeDataError> {
+    let mut digest = Sha256::new();
+    digest.update(b"corrobore-advanced-query-cache-v1");
+    digest.update(serde_json::to_vec(plan).map_err(serialization_error)?);
+    digest.update(access_policy.fingerprint().as_bytes());
+    Ok(digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
 }
 
 fn resolve_node_by_identifier(
@@ -2549,6 +3220,22 @@ fn record_matches_request(record: &KnowledgeRecord, request: &ListRequest) -> bo
             .filters
             .iter()
             .all(|filter| record_matches_filter(record, filter))
+        && request
+            .predicate
+            .as_ref()
+            .is_none_or(|predicate| record_matches_predicate(record, predicate))
+}
+
+fn record_matches_predicate(record: &KnowledgeRecord, predicate: &ReadPredicate) -> bool {
+    match predicate {
+        ReadPredicate::Condition(filter) => record_matches_filter(record, filter),
+        ReadPredicate::And(children) => children
+            .iter()
+            .all(|child| record_matches_predicate(record, child)),
+        ReadPredicate::Or(children) => children
+            .iter()
+            .any(|child| record_matches_predicate(record, child)),
+    }
 }
 
 fn record_matches_graph_policy(record: &KnowledgeRecord, policy: &GraphReadPolicy) -> bool {
@@ -2564,11 +3251,47 @@ fn record_matches_graph_policy(record: &KnowledgeRecord, policy: &GraphReadPolic
 }
 
 fn record_matches_filter(record: &KnowledgeRecord, filter: &ReadFilter) -> bool {
-    let actual = record_field(record, &filter.field);
+    value_matches_filter(record_field(record, &filter.field), filter)
+}
+
+fn value_matches_filter(actual: Option<&Value>, filter: &ReadFilter) -> bool {
     match filter.operator {
         ReadFilterOperator::Exists => actual.is_some(),
-        ReadFilterOperator::Equal => actual == filter.value.as_ref(),
+        ReadFilterOperator::Equal => {
+            actual
+                .zip(filter.value.as_ref())
+                .is_some_and(|(actual, expected)| {
+                    actual == expected
+                        || actual
+                            .as_array()
+                            .is_some_and(|values| values.iter().any(|value| value == expected))
+                })
+        }
         ReadFilterOperator::NotEqual => actual.is_some() && actual != filter.value.as_ref(),
+        ReadFilterOperator::In => actual.is_some_and(|actual| {
+            filter
+                .value
+                .as_ref()
+                .and_then(Value::as_array)
+                .is_some_and(|expected| match actual {
+                    Value::Array(actual) => actual
+                        .iter()
+                        .any(|actual| expected.iter().any(|value| value == actual)),
+                    actual => expected.iter().any(|value| value == actual),
+                })
+        }),
+        ReadFilterOperator::NotIn => actual.is_some_and(|actual| {
+            filter
+                .value
+                .as_ref()
+                .and_then(Value::as_array)
+                .is_some_and(|expected| match actual {
+                    Value::Array(actual) => actual
+                        .iter()
+                        .all(|actual| expected.iter().all(|value| value != actual)),
+                    actual => expected.iter().all(|value| value != actual),
+                })
+        }),
         operator => actual
             .zip(filter.value.as_ref())
             .and_then(|(actual, expected)| compare_values(actual, expected))
@@ -2579,7 +3302,9 @@ fn record_matches_filter(record: &KnowledgeRecord, filter: &ReadFilter) -> bool 
                 ReadFilterOperator::LessThanOrEqual => ordering.is_le(),
                 ReadFilterOperator::Equal
                 | ReadFilterOperator::NotEqual
-                | ReadFilterOperator::Exists => false,
+                | ReadFilterOperator::Exists
+                | ReadFilterOperator::In
+                | ReadFilterOperator::NotIn => false,
             }),
     }
 }
