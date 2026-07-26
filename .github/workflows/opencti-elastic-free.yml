@@ -50,8 +50,8 @@ jobs:
       - name: Verify the provider from the pinned Estance OpenCTI fork
         run: |
           git clone --filter=blob:none --no-checkout https://github.com/Estance-Labs/opencti.git /tmp/opencti
-          git -C /tmp/opencti fetch --depth 1 origin e5d780f11378d584d97261603d10157b62b36978
-          git -C /tmp/opencti checkout --detach e5d780f11378d584d97261603d10157b62b36978
+          git -C /tmp/opencti fetch --depth 1 origin df63a5107602a41aa8259e1d566532e36218c2a0
+          git -C /tmp/opencti checkout --detach df63a5107602a41aa8259e1d566532e36218c2a0
           cd /tmp/opencti/opencti-platform/opencti-graphql
           corepack enable
           yarn install --immutable

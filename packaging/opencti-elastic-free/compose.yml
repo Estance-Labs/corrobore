@@ -169,7 +169,7 @@ services:
       context: ../..
       dockerfile: packaging/opencti-elastic-free/Dockerfile.opencti
       args:
-        OPENCTI_COMMIT: e5d780f11378d584d97261603d10157b62b36978
+        OPENCTI_COMMIT: df63a5107602a41aa8259e1d566532e36218c2a0
     image: ghcr.io/estance-labs/opencti-corrobore:${OPENCTI_VERSION:-7.260722.0}
     depends_on:
       corrobore:

@@ -41,7 +41,7 @@ test("the shipped OpenCTI stack is pinned, Corrobore-backed, and Elastic-free", 
 
   const compatibility = JSON.parse(manifest);
   assert.equal(compatibility.opencti.version, "7.260722.0");
-  assert.equal(compatibility.opencti.commit, "e5d780f11378d584d97261603d10157b62b36978");
+  assert.equal(compatibility.opencti.commit, "df63a5107602a41aa8259e1d566532e36218c2a0");
   assert.equal(compatibility.opencti.upstream_commit, "e41adc1c3fd98a849602db33dbe550f689fe6d83");
   assert.equal(compatibility.opencti.repository, "https://github.com/Estance-Labs/opencti.git");
   assert.equal(compatibility.opencti.base_image, "docker.io/opencti/platform@sha256:636bbb791c512cfa4c55be3d934622c2996db7edc841e3391c9428752009a7ee");
@@ -65,7 +65,7 @@ test("the native OpenCTI provider is source-locked to the Estance fork", async (
 
   for (const expected of [
     "https://github.com/Estance-Labs/opencti.git",
-    "e5d780f11378d584d97261603d10157b62b36978",
+    "df63a5107602a41aa8259e1d566532e36218c2a0",
     "docker.io/opencti/platform@sha256:636bbb791c512cfa4c55be3d934622c2996db7edc841e3391c9428752009a7ee",
     "corrobore-provider-test.ts",
     "DATABASE_ENGINE",
@@ -74,7 +74,7 @@ test("the native OpenCTI provider is source-locked to the Estance fork", async (
   }
   for (const expected of [
     "https://github.com/Estance-Labs/opencti.git",
-    "e5d780f11378d584d97261603d10157b62b36978",
+    "df63a5107602a41aa8259e1d566532e36218c2a0",
     "corrobore-provider-test.ts",
     "yarn get-connectors-manifest",
     "yarn check-ts",

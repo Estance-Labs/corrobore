@@ -4,12 +4,17 @@ Status: in progress for issue #54. This matrix is a release gate, not a claim
 that the distribution is certified before its exact-image workflow is green.
 
 The supported target is OpenCTI `7.260722.0` from the Estance fork at commit
-`e5d780f11378d584d97261603d10157b62b36978` (based on upstream commit
+`df63a5107602a41aa8259e1d566532e36218c2a0` (based on upstream commit
 `e41adc1c3fd98a849602db33dbe550f689fe6d83`), Corrobore `0.2.2` or newer,
 the certified `small` profile, and the conditional `medium` single-node
 profile. Elasticsearch and OpenSearch
 are absent from the shipped Compose model and `ELASTICSEARCH__*` variables are
 rejected by the native provider.
+
+The pinned provider retries Corrobore write-backpressure responses only for
+canonical mutations carrying an idempotency key. Retries reuse the exact
+payload and remain bounded by `CORROBORE__TIMEOUT_MS`; other POST failures stay
+fail-closed.
 
 ## Required matrix
 
