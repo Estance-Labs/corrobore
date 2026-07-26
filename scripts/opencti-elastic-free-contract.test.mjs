@@ -76,10 +76,15 @@ test("the native OpenCTI provider is source-locked to the Estance fork", async (
     "https://github.com/Estance-Labs/opencti.git",
     "e5d780f11378d584d97261603d10157b62b36978",
     "corrobore-provider-test.ts",
+    "yarn get-connectors-manifest",
     "yarn check-ts",
   ]) {
     assert.ok(workflow.includes(expected), `source verification should include ${expected}`);
   }
+  assert.ok(
+    workflow.indexOf("yarn get-connectors-manifest") < workflow.indexOf("yarn check-ts"),
+    "source verification should generate the OpenCTI manifest before type-checking",
+  );
 });
 
 test("OpenCTI runtime secrets include the mandatory encryption key", async () => {
