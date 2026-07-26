@@ -41,7 +41,7 @@ docker run --rm --name corrobore \
   -v "$PWD/.corrobore-secrets/http-token:/run/secrets/corrobore-http-token:ro" \
   -v "$PWD/.corrobore-tls/server.crt:/run/secrets/tls.crt:ro" \
   -v "$PWD/.corrobore-tls/server.key:/run/secrets/tls.key:ro" \
-  ghcr.io/noetance-labs/corrobore:latest
+  ghcr.io/estance-labs/corrobore:latest
 ```
 
 Verify the server is up:

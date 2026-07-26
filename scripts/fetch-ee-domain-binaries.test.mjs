@@ -121,7 +121,7 @@ test('fetchDomainProviders installs local archives and writes runtime manifest',
     const result = await fetchDomainProviders({
       version: tag,
       platform,
-      owner: 'Noetance-Labs',
+      owner: 'Estance-Labs',
       downloadMode: 'local',
       localArchiveDir: archivesDir,
       outputDir,
@@ -179,7 +179,7 @@ test('fetchDomainProviders fails closed on checksum mismatch', async () => {
         fetchDomainProviders({
           version: 'v2.0.0',
           platform: 'linux-x64',
-          owner: 'Noetance-Labs',
+          owner: 'Estance-Labs',
           downloadMode: 'local',
           localArchiveDir: archivesDir,
           outputDir,

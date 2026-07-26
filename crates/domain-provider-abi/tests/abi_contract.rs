@@ -81,7 +81,7 @@ fn abi_v1_function_table_is_prefix_versioned_and_complete() {
 fn provider_metadata_contract_declares_identity_capabilities_and_limits() {
     let metadata: ProviderMetadata = serde_json::from_value(json!({
         "schema_version": "1",
-        "provider_id": "com.noetance.corrobore.domain.cti",
+        "provider_id": "fr.estance.corrobore.domain.cti",
         "provider_version": "0.1.0",
         "domain": "cti",
         "thread_safe": true,

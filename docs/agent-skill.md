@@ -20,43 +20,43 @@ Consult each client documentation for discovery rules and naming constraints.
 
 Generic operating manual for using Corrobore as bounded, external structured memory.
 
-[Download SKILL.md](https://raw.githubusercontent.com/Noetance-Labs/corrobore/main/docs/skills/corrobore/SKILL.md)
+[Download SKILL.md](https://raw.githubusercontent.com/Estance-Labs/corrobore/main/docs/skills/corrobore/SKILL.md)
 
 **OpenCTI Harvester Agent**
 
 End-to-end extraction prompt tuned for grounded CTI ingestion and deterministic STIX 2.1 export.
 
-[Download AGENT.md](https://raw.githubusercontent.com/Noetance-Labs/corrobore/main/docs/skills/corrobore/AGENT.md)
+[Download AGENT.md](https://raw.githubusercontent.com/Estance-Labs/corrobore/main/docs/skills/corrobore/AGENT.md)
 
 **Single Agent: Corrobore Working Memory**
 
 Minimal operational prompt for one agent that must use Corrobore as durable working memory.
 
-[Download SINGLE-AGENT-WORKING-MEMORY.md](https://raw.githubusercontent.com/Noetance-Labs/corrobore/main/docs/skills/corrobore/prompts/SINGLE-AGENT-WORKING-MEMORY.md)
+[Download SINGLE-AGENT-WORKING-MEMORY.md](https://raw.githubusercontent.com/Estance-Labs/corrobore/main/docs/skills/corrobore/prompts/SINGLE-AGENT-WORKING-MEMORY.md)
 
 **Single Agent: FIMI Investigation**
 
 Investigation prompt focused on narratives, claims, amplification, coordination, and uncertainty handling for FIMI.
 
-[Download SINGLE-AGENT-FIMI-INVESTIGATION.md](https://raw.githubusercontent.com/Noetance-Labs/corrobore/main/docs/skills/corrobore/prompts/SINGLE-AGENT-FIMI-INVESTIGATION.md)
+[Download SINGLE-AGENT-FIMI-INVESTIGATION.md](https://raw.githubusercontent.com/Estance-Labs/corrobore/main/docs/skills/corrobore/prompts/SINGLE-AGENT-FIMI-INVESTIGATION.md)
 
 **Single Agent: CTI Investigation**
 
 Investigation prompt focused on threat entities, relationships, attribution discipline, and evidence-backed graph updates.
 
-[Download SINGLE-AGENT-CTI-INVESTIGATION.md](https://raw.githubusercontent.com/Noetance-Labs/corrobore/main/docs/skills/corrobore/prompts/SINGLE-AGENT-CTI-INVESTIGATION.md)
+[Download SINGLE-AGENT-CTI-INVESTIGATION.md](https://raw.githubusercontent.com/Estance-Labs/corrobore/main/docs/skills/corrobore/prompts/SINGLE-AGENT-CTI-INVESTIGATION.md)
 
 **Single Agent: STIX Bundle From Unstructured Data**
 
 Extraction prompt for converting unstructured reports into one validated STIX 2.1 bundle with strict provenance constraints.
 
-[Download SINGLE-AGENT-STIX-BUNDLE-FROM-UNSTRUCTURED.md](https://raw.githubusercontent.com/Noetance-Labs/corrobore/main/docs/skills/corrobore/prompts/SINGLE-AGENT-STIX-BUNDLE-FROM-UNSTRUCTURED.md)
+[Download SINGLE-AGENT-STIX-BUNDLE-FROM-UNSTRUCTURED.md](https://raw.githubusercontent.com/Estance-Labs/corrobore/main/docs/skills/corrobore/prompts/SINGLE-AGENT-STIX-BUNDLE-FROM-UNSTRUCTURED.md)
 
 **Agentic Flow: Evidence-First Validation**
 
 Multi-step verification flow with independent validators, epistemic arbitration, graph repair, and deterministic export.
 
-[Download AGENTIC-FLOW-EVIDENCE-FIRST-VALIDATION.md](https://raw.githubusercontent.com/Noetance-Labs/corrobore/main/docs/skills/corrobore/prompts/AGENTIC-FLOW-EVIDENCE-FIRST-VALIDATION.md)
+[Download AGENTIC-FLOW-EVIDENCE-FIRST-VALIDATION.md](https://raw.githubusercontent.com/Estance-Labs/corrobore/main/docs/skills/corrobore/prompts/AGENTIC-FLOW-EVIDENCE-FIRST-VALIDATION.md)
 
 
 ## Recommended orchestration pattern

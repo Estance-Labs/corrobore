@@ -30,7 +30,7 @@ version = "0.2.2"
 edition = "2024"
 license = "MIT"
 publish = false
-repository = "https://github.com/Noetance-Labs/corrobore"
+repository = "https://github.com/Estance-Labs/corrobore"
 homepage = "https://docs.corrobore.org/"
 documentation = "https://docs.corrobore.org/"
 

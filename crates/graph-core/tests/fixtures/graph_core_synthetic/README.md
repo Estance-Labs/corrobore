@@ -1,6 +1,6 @@
 # Graph-core synthetic functional dataset
 
-Dataset cible : **graph-core** pour `Noetance-Labs/corrobore`.
+Dataset cible : **graph-core** pour `Estance-Labs/corrobore`.
 
 Ce pack sert à valider fonctionnellement la livraison du graph-core sans figer l’implémentation interne. Les fixtures doivent être exécutées via l’API publique de `graph_core`, pas via les modules privés ni la structure de stockage.
 

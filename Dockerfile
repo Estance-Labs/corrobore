@@ -39,7 +39,7 @@ LABEL org.opencontainers.image.title="corrobore" \
       org.opencontainers.image.description="Corrobore standalone graph server" \
       org.opencontainers.image.version="${CORROBORE_BUILD_VERSION}" \
       org.opencontainers.image.revision="${CORROBORE_BUILD_REVISION}" \
-      org.opencontainers.image.source="https://github.com/Noetance-Labs/corrobore"
+      org.opencontainers.image.source="https://github.com/Estance-Labs/corrobore"
 
 WORKDIR /app
 

@@ -24,7 +24,7 @@ We are committed to a respectful, inclusive, and technically constructive commun
 
 Maintainers may edit or remove contributions, restrict participation, or ban participants when behavior conflicts with this policy. Enforcement decisions should be proportionate, documented privately, and avoid conflicts of interest where practical.
 
-Report conduct concerns privately through the repository's [private vulnerability reporting form](https://github.com/Noetance-Labs/corrobore/security/advisories/new). Prefix the report title with `Code of Conduct`. Do not include sensitive conduct reports in public issues or discussions.
+Report conduct concerns privately through the repository's [private vulnerability reporting form](https://github.com/Estance-Labs/corrobore/security/advisories/new). Prefix the report title with `Code of Conduct`. Do not include sensitive conduct reports in public issues or discussions.
 
 Maintainers will acknowledge reports as soon as practical, preserve confidentiality to the extent possible, and communicate the outcome to the reporter. Good-faith reports must not result in retaliation.
 

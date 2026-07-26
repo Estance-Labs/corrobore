@@ -637,7 +637,7 @@ Invalid selections return `INVALID_TEMPORAL_BOUNDARY`; invalid budgets return
 ## Explorer frontend split
 
 The browser explorer is maintained in a dedicated repository:
-`Noetance-Labs/corrobore-web`.
+`Estance-Labs/corrobore-web`.
 
 This repository documents and validates the HTTP backend contract only. The
 frontend consumes these backend routes:

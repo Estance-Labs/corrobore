@@ -3,16 +3,16 @@
 Status: complete.
 
 This matrix is the final automated acceptance gate for
-[Epic #13](https://github.com/Noetance-Labs/corrobore/issues/13). It validates
+[Epic #13](https://github.com/Estance-Labs/corrobore/issues/13). It validates
 the independently merged standalone-server slices as one product, using the
 real unified executable and the actual production container image.
 
 ## Completion record
 
-[Pull request #35](https://github.com/Noetance-Labs/corrobore/pull/35) merged
+[Pull request #35](https://github.com/Estance-Labs/corrobore/pull/35) merged
 the final acceptance matrix on July 24, 2026. The implementation is
 accepted on `main` at commit
-[`9b69830`](https://github.com/Noetance-Labs/corrobore/commit/9b698301fc2520ece21f785c1c75f725ac5d76ae).
+[`9b69830`](https://github.com/Estance-Labs/corrobore/commit/9b698301fc2520ece21f785c1c75f725ac5d76ae).
 Every required GitHub check passed, including the shared native/container
 acceptance job against the release executable and production Dockerfile image.
 
@@ -22,15 +22,15 @@ containing this completion record merges.
 
 | Issue | Delivery | Merged PR |
 | --- | --- | --- |
-| [#16](https://github.com/Noetance-Labs/corrobore/issues/16) | Public engine boundary | [#25](https://github.com/Noetance-Labs/corrobore/pull/25) |
-| [#17](https://github.com/Noetance-Labs/corrobore/issues/17) | Unified CLI and layered configuration | [#26](https://github.com/Noetance-Labs/corrobore/pull/26) |
-| [#18](https://github.com/Noetance-Labs/corrobore/issues/18) | Exclusive persistent-directory ownership | [#27](https://github.com/Noetance-Labs/corrobore/pull/27) |
-| [#19](https://github.com/Noetance-Labs/corrobore/issues/19) | Lifecycle and graceful shutdown | [#28](https://github.com/Noetance-Labs/corrobore/pull/28) |
-| [#20](https://github.com/Noetance-Labs/corrobore/issues/20) | Operational endpoints and correlation | [#29](https://github.com/Noetance-Labs/corrobore/pull/29) |
-| [#21](https://github.com/Noetance-Labs/corrobore/issues/21) | TLS and authentication policy | [#32](https://github.com/Noetance-Labs/corrobore/pull/32) |
-| [#22](https://github.com/Noetance-Labs/corrobore/issues/22) | Native and container distributions | [#33](https://github.com/Noetance-Labs/corrobore/pull/33) |
-| [#23](https://github.com/Noetance-Labs/corrobore/issues/23) | Deployment and operations documentation | [#34](https://github.com/Noetance-Labs/corrobore/pull/34) |
-| [#24](https://github.com/Noetance-Labs/corrobore/issues/24) | Standalone deployment acceptance matrix | [#35](https://github.com/Noetance-Labs/corrobore/pull/35) |
+| [#16](https://github.com/Estance-Labs/corrobore/issues/16) | Public engine boundary | [#25](https://github.com/Estance-Labs/corrobore/pull/25) |
+| [#17](https://github.com/Estance-Labs/corrobore/issues/17) | Unified CLI and layered configuration | [#26](https://github.com/Estance-Labs/corrobore/pull/26) |
+| [#18](https://github.com/Estance-Labs/corrobore/issues/18) | Exclusive persistent-directory ownership | [#27](https://github.com/Estance-Labs/corrobore/pull/27) |
+| [#19](https://github.com/Estance-Labs/corrobore/issues/19) | Lifecycle and graceful shutdown | [#28](https://github.com/Estance-Labs/corrobore/pull/28) |
+| [#20](https://github.com/Estance-Labs/corrobore/issues/20) | Operational endpoints and correlation | [#29](https://github.com/Estance-Labs/corrobore/pull/29) |
+| [#21](https://github.com/Estance-Labs/corrobore/issues/21) | TLS and authentication policy | [#32](https://github.com/Estance-Labs/corrobore/pull/32) |
+| [#22](https://github.com/Estance-Labs/corrobore/issues/22) | Native and container distributions | [#33](https://github.com/Estance-Labs/corrobore/pull/33) |
+| [#23](https://github.com/Estance-Labs/corrobore/issues/23) | Deployment and operations documentation | [#34](https://github.com/Estance-Labs/corrobore/pull/34) |
+| [#24](https://github.com/Estance-Labs/corrobore/issues/24) | Standalone deployment acceptance matrix | [#35](https://github.com/Estance-Labs/corrobore/pull/35) |
 
 ## Scope
 

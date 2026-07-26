@@ -30,7 +30,7 @@ static int32_t provider_metadata(
 {
     (void)host_context_json;
     return write_json(
-        "{\"schema_version\":\"1\",\"provider_id\":\"com.noetance.corrobore.domain.cti.fixture\",\"provider_version\":\"1.0.0-test\",\"domain\":\"cti\",\"thread_safe\":true,\"max_concurrency\":1,\"max_request_bytes\":1048576,\"max_response_bytes\":1048576,\"capabilities\":[{\"name\":\"node.validate\",\"version\":\"1\"}]}",
+        "{\"schema_version\":\"1\",\"provider_id\":\"fr.estance.corrobore.domain.cti.fixture\",\"provider_version\":\"1.0.0-test\",\"domain\":\"cti\",\"thread_safe\":true,\"max_concurrency\":1,\"max_request_bytes\":1048576,\"max_response_bytes\":1048576,\"capabilities\":[{\"name\":\"node.validate\",\"version\":\"1\"}]}",
         output_json);
 }
 

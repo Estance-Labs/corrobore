@@ -610,7 +610,7 @@ mod tests {
         let status = registry
             .status(DomainName::Cti)
             .expect("cti provider status should exist");
-        assert_eq!(status.provider_id, "com.noetance.corrobore.domain.cti");
+        assert_eq!(status.provider_id, "fr.estance.corrobore.domain.cti");
         assert_eq!(status.provider_version, "0.1.0-test");
         assert!(status.ready);
         assert!(status.has_capability("node.validate", "1"));
@@ -739,7 +739,7 @@ mod tests {
     fn registry_contract_rejects_wrong_domain_and_missing_capability_metadata() {
         let metadata = ProviderMetadata {
             schema_version: SCHEMA_V1.to_owned(),
-            provider_id: "com.noetance.corrobore.domain.fimi".to_owned(),
+            provider_id: "fr.estance.corrobore.domain.fimi".to_owned(),
             provider_version: "1.0.0".to_owned(),
             domain: DomainName::Fimi,
             thread_safe: true,
@@ -862,7 +862,7 @@ fn output(value: &str, out: *mut Buffer) -> i32 {{
     0
 }}
 unsafe extern "C" fn metadata(_: Slice, out: *mut Buffer) -> i32 {{
-    output(r#"{{"schema_version":"1","provider_id":"com.noetance.corrobore.domain.cti","provider_version":"0.1.0-test","domain":"cti","thread_safe":true,"max_concurrency":4,"max_request_bytes":1048576,"max_response_bytes":1048576,"capabilities":[{{"name":"node.validate","version":"1"}}]}}"#, out)
+    output(r#"{{"schema_version":"1","provider_id":"fr.estance.corrobore.domain.cti","provider_version":"0.1.0-test","domain":"cti","thread_safe":true,"max_concurrency":4,"max_request_bytes":1048576,"max_response_bytes":1048576,"capabilities":[{{"name":"node.validate","version":"1"}}]}}"#, out)
 }}
 unsafe extern "C" fn create(_: Slice, out: *mut *mut c_void) -> i32 {{
     if out.is_null() {{ return 1; }}

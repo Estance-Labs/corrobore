@@ -1,7 +1,7 @@
 site_name: Corrobore
 site_description: A Rust-native, Cypher-compatible structured working memory for intelligence agents.
 site_url: https://docs.corrobore.org/
-repo_url: https://github.com/Noetance-Labs/corrobore
+repo_url: https://github.com/Estance-Labs/corrobore
 edit_uri: edit/main/docs/
 
 copyright: "Copyright &copy; 2026 AreDee-Bangs &mdash; Licensed under MIT"

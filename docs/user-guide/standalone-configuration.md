@@ -16,6 +16,14 @@ corrobore server validate-config --config /etc/corrobore/corrobore.toml
 | `corrobore server validate-config` | Yes | Resolves and validates configuration without opening storage, creating runtime directories, or binding a port. |
 | `corrobore server status` | Yes | Probes readiness and version compatibility through the configured HTTP or HTTPS endpoint with the configured authentication policy. |
 | `corrobore server version` | No | Prints package version, build target, and compile-time source revision. |
+| `corrobore server snapshot` | Offline storage | Creates a coherent local snapshot while holding exclusive ownership of the persistent storage root. |
+| `corrobore server validate-snapshot` | Snapshot | Validates a local snapshot manifest, components, checksums, and optional encryption-key identity. |
+| `corrobore server export-snapshot-s3` | Snapshot and S3 credentials | Uploads a validated snapshot to an S3-compatible object store. |
+| `corrobore server restore` | Snapshot and empty target | Restores a validated snapshot into a new empty persistent storage root. |
+| `corrobore server migrate` | Offline storage | Runs or resumes the supported previous-version storage migration. |
+| `corrobore server rollback` | Offline storage | Rolls back the compatible manifest boundary after a completed migration. |
+| `corrobore server rebuild-indexes` | Offline storage | Rebuilds derived indexes from canonical data. |
+| `corrobore server cancel-rebuild` | Offline storage | Cancels an incomplete derived-index rebuild at its durable boundary. |
 
 `validate-config --print-effective` prints only non-secret effective settings.
 `status` exits `8` when the endpoint is unavailable and `9` when the remote
@@ -77,6 +85,27 @@ same overrides.
 
 Run `corrobore server start --help` or
 `corrobore server validate-config --help` for the generated CLI help.
+
+### Offline storage command options
+
+Offline storage commands require exclusive ownership of the persistent data
+directory. The [database operations guide](database-operations.md) provides
+complete procedures and validation steps.
+
+| Option | Commands | Purpose |
+| --- | --- | --- |
+| `--storage-dir` | `snapshot`, `migrate`, `rollback`, `rebuild-indexes`, `cancel-rebuild` | Select the offline persistent storage root. |
+| `--destination` | `snapshot` | Select the new local snapshot directory. |
+| `--encryption-key-id` | `snapshot`, `validate-snapshot`, `restore` | Record or verify the external key-provider identity without storing key material. |
+| `--retention-hook` | `snapshot` | Invoke an optional provider lifecycle or retention hook. |
+| `--snapshot` | `validate-snapshot`, `export-snapshot-s3`, `restore` | Select the local snapshot artifact directory. |
+| `--endpoint` | `export-snapshot-s3` | Set the S3 or MinIO endpoint. |
+| `--bucket` | `export-snapshot-s3` | Set the destination bucket. |
+| `--prefix` | `export-snapshot-s3` | Set the destination object prefix. |
+| `--region` | `export-snapshot-s3` | Set the AWS signing region; the default is `us-east-1`. |
+| `--target` | `restore` | Select the new empty restoration target. |
+| `--from` | `migrate` | Set the source storage version; the current supported value is `V0`. |
+| `--to` | `migrate` | Set the target storage version; the current supported value is `V1`. |
 
 ## TOML reference
 
@@ -152,6 +181,9 @@ remain environment-only:
 | `CORROBORE_HTTP_LICENSED_MODULES` | unset | Legacy compatibility fallback when no signed license is configured. |
 | `CORROBORE_DOMAIN_PROVIDER_DIR` | unset | Trusted root containing optional native domain providers. |
 | `CORROBORE_DOMAIN_PROVIDER_MANIFEST_FILE` | unset | Manifest pinning provider paths, hashes, policy, and capabilities. |
+| `CORROBORE_S3_ACCESS_KEY` | unset | Access-key identifier required by `export-snapshot-s3`. |
+| `CORROBORE_S3_SECRET_KEY` | unset | Secret access key required by `export-snapshot-s3`; inject it through the process environment. |
+| `CORROBORE_S3_SESSION_TOKEN` | unset | Optional temporary-credential session token used by `export-snapshot-s3`. |
 | `CORROBORE_BUILD_REVISION` | `unknown` at compile time | Build-time source revision embedded by release automation; it is not a runtime override. |
 
 The complete HTTP-specific behavior for licensing and domain providers remains
