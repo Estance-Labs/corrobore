@@ -56,7 +56,7 @@ http-body-util = "0.1"
 nom = "8"
 lopdf = "0.44"
 proptest = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 rustls = "0.23"
 serde = { version = "1", features = ["derive"] }
 # graph-storage relies on byte-stable JSON codec output (records are checksummed

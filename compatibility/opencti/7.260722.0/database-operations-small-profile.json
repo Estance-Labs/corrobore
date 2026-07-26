@@ -1,0 +1,27 @@
+{
+  "engine": "corrobore-canonical-wal-v1",
+  "environment": {
+    "architecture": "aarch64",
+    "build_profile": "release",
+    "operating_system": "macos"
+  },
+  "operations": {
+    "migration_ms": 481,
+    "migration_parity_verified": true,
+    "rebuild_ms": 107,
+    "restore_ms": 187,
+    "restored_records": 1000,
+    "rollback_boundary": "V1 canonical format compatible with V0 manifest",
+    "rollback_ms": 16,
+    "snapshot_bytes": 3811302,
+    "snapshot_ms": 274
+  },
+  "profile": {
+    "id": "small",
+    "measured_records": 1000
+  },
+  "reproduction": {
+    "command": "cargo run --release -p corrobore-http-server --example small_profile_database_operations --locked"
+  },
+  "schema_version": 1
+}

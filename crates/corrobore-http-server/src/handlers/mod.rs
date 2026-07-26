@@ -19,6 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 pub mod cypher;
+pub mod database_operations;
 pub mod domain_provider_status;
 pub mod domain_validate;
 pub mod explorer;

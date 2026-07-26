@@ -12,7 +12,7 @@ use thiserror::Error;
 /// Process-lifetime ownership handle for one persistent storage directory.
 ///
 #[derive(Debug)]
-pub(crate) struct DataDirectoryOwnership {
+pub struct DataDirectoryOwnership {
     root_path: PathBuf,
     lock_path: PathBuf,
     lock_file: File,
@@ -20,9 +20,12 @@ pub(crate) struct DataDirectoryOwnership {
 }
 
 #[derive(Debug, Error)]
-pub(crate) enum DataDirectoryOwnershipError {
+/// Exclusive persistent-directory ownership failures.
+pub enum DataDirectoryOwnershipError {
+    /// Another live process already holds the directory lock.
     #[error("storage directory is already owned by another process{owner}")]
     Conflict { owner: String },
+    /// The ownership file or operating-system lock could not be used.
     #[error("storage ownership mechanism failed: {reason}")]
     Unavailable { reason: String },
 }
@@ -30,7 +33,7 @@ pub(crate) enum DataDirectoryOwnershipError {
 impl DataDirectoryOwnership {
     /// Acquire exclusive ownership for `root_path`.
     ///
-    pub(crate) fn acquire(root_path: &Path) -> Result<Self, DataDirectoryOwnershipError> {
+    pub fn acquire(root_path: &Path) -> Result<Self, DataDirectoryOwnershipError> {
         let parent =
             root_path
                 .parent()
@@ -117,15 +120,18 @@ impl DataDirectoryOwnership {
         })
     }
 
-    pub(crate) fn root_path(&self) -> &Path {
+    /// Return the exclusively owned persistent root.
+    pub fn root_path(&self) -> &Path {
         &self.root_path
     }
 
-    pub(crate) fn lock_path(&self) -> &Path {
+    /// Return the sibling lock-file path.
+    pub fn lock_path(&self) -> &Path {
         &self.lock_path
     }
 
-    pub(crate) fn recovered_stale_owner(&self) -> bool {
+    /// Report whether stale owner metadata was replaced after acquiring the lock.
+    pub fn recovered_stale_owner(&self) -> bool {
         self.recovered_stale_owner
     }
 }

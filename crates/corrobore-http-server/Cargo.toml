@@ -40,6 +40,7 @@ domain-provider-abi = { path = "../domain-provider-abi" }
 ed25519-dalek = { version = "2.2", features = ["pkcs8"] }
 graph-core = { path = "../graph-core" }
 graph-storage = { path = "../graph-storage" }
+hmac = { workspace = true }
 libloading = "0.8"
 opencti-adapter = { path = "../opencti-adapter" }
 opencti-file-search = { path = "../opencti-file-search" }

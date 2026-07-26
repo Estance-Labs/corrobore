@@ -440,7 +440,83 @@ components:
         quarantined_commands: {type: integer, minimum: 0}
         parity_verified_commands: {type: integer, minimum: 0}
 
+    CreateSnapshotCommand:
+      type: object
+      required: [destination]
+      properties:
+        destination: {type: string, description: New server-local artifact directory}
+        encryption_key_id: {type: string, description: External KMS or provider key identity; never key material}
+        retention_hook: {type: string, description: Provider lifecycle policy reference}
+    SnapshotReport:
+      type: object
+      required: [manifest_version, readiness, graph_id, canonical_generation, wal_boundary, file_count, total_bytes, snapshot_root]
+      properties:
+        manifest_version: {type: integer, const: 1}
+        readiness: {type: string, enum: [ready, rebuilding, offline_required, failed, cancelled]}
+        graph_id: {type: string}
+        canonical_generation: {type: integer, minimum: 1}
+        wal_boundary: {type: integer, minimum: 1}
+        file_count: {type: integer, minimum: 1}
+        total_bytes: {type: integer, minimum: 1}
+        snapshot_root: {type: string}
+    DatabaseOperationMetrics:
+      type: object
+      properties:
+        snapshots_completed: {type: integer, minimum: 0}
+        snapshot_failures: {type: integer, minimum: 0}
+        snapshot_bytes: {type: integer, minimum: 0}
+        snapshot_duration_ms: {type: integer, minimum: 0}
+        rebuilds_completed: {type: integer, minimum: 0}
+        rebuild_failures: {type: integer, minimum: 0}
+        rebuild_duration_ms: {type: integer, minimum: 0}
+        rebuild_records_scanned: {type: integer, minimum: 0}
+
 paths:
+  /v1/admin/storage/snapshots:
+    post:
+      operationId: createDatabaseSnapshot
+      summary: Create a coherent snapshot under the canonical write barrier
+      tags: [Database Operations]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateSnapshotCommand'}
+      responses:
+        '200':
+          description: Snapshot validated and ready for local or S3/MinIO export
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: true}
+                  result: {$ref: '#/components/schemas/SnapshotReport'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /v1/admin/storage/indexes/rebuild:
+    post:
+      operationId: rebuildDatabaseIndexes
+      summary: Rebuild all derived indexes from canonical data
+      tags: [Database Operations]
+      responses:
+        '200': {description: Rebuild resumed or completed with explicit readiness}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /v1/admin/storage/operations:
+    get:
+      operationId: getDatabaseOperationStatus
+      summary: Inspect snapshot and rebuild progress counters
+      tags: [Database Operations]
+      responses:
+        '200':
+          description: Bounded database operation status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: true}
+                  result: {$ref: '#/components/schemas/DatabaseOperationMetrics'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
   /health:
     get:
       operationId: getHealth
@@ -1460,6 +1536,7 @@ paths:
 
 tags:
   - {name: Operations, description: Public health and observability}
+  - {name: Database Operations, description: Administrative snapshot and derived-index operations}
   - {name: Cypher, description: Graph reads and mutations}
   - {name: Seeds, description: Semantic working-set entry points}
   - {name: STIX, description: "Import, validation, and export"}

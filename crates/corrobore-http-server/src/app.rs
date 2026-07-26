@@ -46,8 +46,9 @@ use graph_storage::{
     CanonicalAdjacencyProjection, CanonicalEngineStore, CanonicalProjectionRequest,
     CanonicalPropertyFilter, CanonicalPropertyOperator, CanonicalStoreOptions,
     DurableTransactionId, FileBackedGraphStore, GraphId, GraphStorageError,
-    GraphStoreRecoveryReport, RecordFormat, StorageManifest, StorageTimestamp, StorageVersion,
-    create_storage_root, open_storage_root, read_storage_manifest,
+    GraphStoreRecoveryReport, OperationReadiness, RecordFormat, StorageManifest, StorageTimestamp,
+    StorageVersion, create_storage_root, derived_index_rebuild_status, open_storage_root,
+    read_storage_manifest, rebuild_derived_indexes,
 };
 use opencti_adapter::{BulkLimits, ReconciliationLimits, WriteLimits};
 use thiserror::Error;
@@ -70,6 +71,7 @@ use crate::{
     explorer_timeline::ExplorerTimelineStore,
     handlers::{
         cypher::{execute_cypher, execute_read_cypher, execute_write_cypher},
+        database_operations::{create_snapshot, database_operation_status, rebuild_indexes},
         domain_provider_status::admin_domain_provider_status,
         domain_validate::validate_domain,
         explorer::{explorer_graph, explorer_sessions, explorer_timeline},
@@ -158,6 +160,7 @@ pub struct AppState {
     pub opencti_routing: Arc<Mutex<OpenCtiReadRoutingRuntime>>,
     pub opencti_write: Arc<Mutex<OpenCtiWriteRuntime>>,
     pub opencti_reconciliation: Arc<Mutex<OpenCtiReconciliationRuntime>>,
+    pub database_operations: Arc<Mutex<crate::database_operations::DatabaseOperationMetrics>>,
     pub opencti_write_semaphore: Arc<tokio::sync::Semaphore>,
     pub(crate) domain_providers: Option<Arc<crate::enterprise::registry::DomainProviderRegistry>>,
     pub started_at: Instant,
@@ -309,6 +312,7 @@ impl AppState {
             opencti_routing: Arc::new(Mutex::new(opencti_routing)),
             opencti_write,
             opencti_reconciliation,
+            database_operations: Arc::new(Mutex::new(Default::default())),
             opencti_write_semaphore,
             domain_providers,
             started_at: Instant::now(),
@@ -566,9 +570,16 @@ fn initialize_persistent_runtime_store(
 
     let root = open_storage_root(root_path.clone())
         .map_err(|error| classify_storage_open_error(&root_path, error))?;
-    let canonical =
+    let mut canonical =
         CanonicalEngineStore::open_with_strict_recovery(root, store_options, strict_recovery)
             .map_err(|error| classify_storage_open_error(&root_path, error))?;
+    if derived_index_rebuild_status(&root_path)
+        .map_err(|error| classify_storage_open_error(&root_path, error))?
+        .is_some_and(|status| status.readiness == OperationReadiness::Rebuilding)
+    {
+        rebuild_derived_indexes(&mut canonical, None)
+            .map_err(|error| classify_storage_open_error(&root_path, error))?;
+    }
     let store = canonical
         .file_backed_store()
         .map_err(|error| classify_storage_open_error(&root_path, error))?;
@@ -991,6 +1002,12 @@ pub fn build_router(state: AppState) -> Router {
     let web_dir = state.config.web_dir.clone();
     let router = Router::new()
         .route("/v1/admin/license/status", get(admin_license_status))
+        .route("/v1/admin/storage/snapshots", post(create_snapshot))
+        .route("/v1/admin/storage/indexes/rebuild", post(rebuild_indexes))
+        .route(
+            "/v1/admin/storage/operations",
+            get(database_operation_status),
+        )
         .route(
             "/v1/admin/domain-providers/status",
             get(admin_domain_provider_status),

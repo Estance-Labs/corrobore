@@ -31,22 +31,25 @@ use opencti_search::{
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::{
     AtomicPersistentMutationAdjacencyRecord, AtomicPersistentMutationBatch,
     AtomicPersistentMutationNodeRecord, AtomicPersistentMutationOutcome,
     AtomicPersistentMutationRelationshipRecord, AtomicPersistentRecoveryPath,
     AtomicPersistentRuntimeState, DurableTransactionId, EncodedRecord, FileBackedGraphPager,
-    GraphCatalog, GraphStorageError, GraphStorageResult, JsonLinesRecordCodec, MutationCrashStage,
-    NodeReadIndexDocument, NodeReadIndexValue, PersistedAdjacencyEntry, PersistedRecordEnvelope,
-    PersistedRecordKind, RecordCodec, RecordFormat, StorageRef, StorageRoot, StorageSegment,
-    StorageVersion, apply_atomic_persistent_mutation_batch, create_file_backed_graph_pager,
-    create_file_backed_graph_store, create_node_record_envelope,
-    create_relationship_record_envelope, read_incoming_adjacency_by_node_id,
-    read_incoming_adjacency_log_for_catalog_rebuild, read_outgoing_adjacency_by_node_id,
-    read_outgoing_adjacency_log_for_catalog_rebuild,
-    recover_atomic_persistent_runtime_state_with_report, resolve_identifier_index_entries,
-    resolve_node_ids_by_label, resolve_property_index_entries, resolve_property_presence_entries,
+    GraphCatalog, GraphCatalogIndexes, GraphStorageError, GraphStorageResult, JsonLinesRecordCodec,
+    LabelIndexNodeMetadata, MutationCrashStage, NodeReadIndexDocument, NodeReadIndexValue,
+    PersistedAdjacencyEntry, PersistedRecordEnvelope, PersistedRecordKind, RecordCodec,
+    RecordFormat, RelationshipTypeIndexRelationshipMetadata, StorageRef, StorageRoot,
+    StorageSegment, StorageVersion, apply_atomic_persistent_mutation_batch,
+    create_file_backed_graph_pager, create_file_backed_graph_store, create_node_record_envelope,
+    create_relationship_record_envelope, index_relationship_type, persist_graph_catalog_metadata,
+    read_incoming_adjacency_by_node_id, read_incoming_adjacency_log_for_catalog_rebuild,
+    read_outgoing_adjacency_by_node_id, read_outgoing_adjacency_log_for_catalog_rebuild,
+    recover_atomic_persistent_runtime_state_with_report, replace_node_read_indexes,
+    replace_relationship_access_index, resolve_identifier_index_entries, resolve_node_ids_by_label,
+    resolve_property_index_entries, resolve_property_presence_entries,
     resolve_relationship_ids_by_type,
 };
 
@@ -735,6 +738,131 @@ impl CanonicalEngineStore {
         self.file_content_index()?
             .rebuild_from_store(&metadata)
             .map_err(file_content_error)
+    }
+
+    /// Reconstruct every compact canonical lookup from current canonical
+    /// payloads and atomically publish the resulting catalog metadata.
+    pub fn rebuild_compact_indexes(&mut self) -> GraphStorageResult<u64> {
+        let graph = self.load_projection(CanonicalProjectionRequest::all())?;
+        let mut nodes = graph.current_node_records().map_err(graph_error)?;
+        let mut relationships = graph.current_relationship_records().map_err(graph_error)?;
+        nodes.sort_by(|left, right| left.id().as_str().cmp(right.id().as_str()));
+        relationships.sort_by(|left, right| left.id().as_str().cmp(right.id().as_str()));
+
+        // Adjacency is derived solely from current canonical relationships. A
+        // content-addressed transaction makes retry idempotent while allowing a
+        // later canonical generation to produce a fresh rebuild transaction.
+        if !nodes.is_empty() {
+            let mut digest = Sha256::new();
+            for node in &nodes {
+                digest.update(node.id().as_str().as_bytes());
+                digest.update(node.version_id().as_str().as_bytes());
+            }
+            for relationship in &relationships {
+                digest.update(relationship.id().as_str().as_bytes());
+                digest.update(relationship.version_id().as_str().as_bytes());
+            }
+            let transaction_id = DurableTransactionId::new(format!(
+                "tx--derived-adjacency-rebuild-{:x}",
+                digest.finalize()
+            ))
+            .map_err(|error| GraphStorageError::OperationFailed {
+                operation: "rebuild_compact_indexes",
+                message: error.to_string(),
+            })?;
+            let adjacency_records = |direction| {
+                nodes
+                    .iter()
+                    .map(|node| AtomicPersistentMutationAdjacencyRecord {
+                        owner_node_id: node.id().clone(),
+                        direction,
+                        entries: relationships
+                            .iter()
+                            .filter(|relationship| {
+                                relationship.status() != RecordStatus::Tombstoned
+                                    && match direction {
+                                        AdjacencyDirection::Outgoing => {
+                                            relationship.source() == node.id()
+                                        }
+                                        AdjacencyDirection::Incoming => {
+                                            relationship.target() == node.id()
+                                        }
+                                    }
+                            })
+                            .map(|relationship| adjacency_entry(relationship, direction))
+                            .collect(),
+                    })
+                    .collect()
+            };
+            let batch = AtomicPersistentMutationBatch {
+                transaction_id,
+                node_records: Vec::new(),
+                relationship_records: Vec::new(),
+                outgoing_adjacency: adjacency_records(AdjacencyDirection::Outgoing),
+                incoming_adjacency: adjacency_records(AdjacencyDirection::Incoming),
+                audit_events: vec!["derived adjacency rebuilt from canonical graph".to_owned()],
+            };
+            apply_atomic_persistent_mutation_batch(&self.root, &mut self.state, batch, None)?;
+        }
+        let mut rebuilt = self.state.catalog.clone();
+        rebuilt.metadata_indexes = GraphCatalogIndexes::default();
+
+        for node in &nodes {
+            let latest = rebuilt
+                .latest_node_records
+                .get(node.id())
+                .cloned()
+                .ok_or_else(|| GraphStorageError::OperationFailed {
+                    operation: "rebuild_compact_indexes",
+                    message: format!(
+                        "canonical node {:?} is absent from latest catalog",
+                        node.id()
+                    ),
+                })?;
+            let labels = node.labels().to_vec();
+            replace_node_read_indexes(
+                &mut rebuilt,
+                &labels,
+                &node_read_index_document(node)?,
+                LabelIndexNodeMetadata {
+                    node_id: node.id().clone(),
+                    latest_storage_ref: Some(latest.storage_ref.clone()),
+                    graph_record_version: latest.graph_record_version.clone(),
+                },
+            )?;
+        }
+        for relationship in &relationships {
+            let latest = rebuilt
+                .latest_relationship_records
+                .get(relationship.id())
+                .cloned()
+                .ok_or_else(|| GraphStorageError::OperationFailed {
+                    operation: "rebuild_compact_indexes",
+                    message: format!(
+                        "canonical relationship {:?} is absent from latest catalog",
+                        relationship.id()
+                    ),
+                })?;
+            index_relationship_type(
+                &mut rebuilt,
+                relationship.rel_type(),
+                RelationshipTypeIndexRelationshipMetadata {
+                    relationship_id: relationship.id().clone(),
+                    latest_storage_ref: Some(latest.storage_ref.clone()),
+                    graph_record_version: latest.graph_record_version.clone(),
+                },
+            )?;
+            replace_relationship_access_index(
+                &mut rebuilt,
+                relationship.id(),
+                relationship.status() != RecordStatus::Tombstoned,
+                &access_document(relationship.property("opencti.access"))?,
+            );
+        }
+        persist_graph_catalog_metadata(&self.root, &rebuilt)?;
+        self.state.catalog = rebuilt;
+        self.refresh_index_stats();
+        Ok((nodes.len() + relationships.len()) as u64)
     }
 
     fn file_content_store(&self) -> GraphStorageResult<FileJobStore> {
