@@ -18,13 +18,17 @@ and writes through embedded Rust and HTTP interfaces.
 
 ## Current baseline
 
-- Workspace version: `0.2.2`.
+- Workspace version: `0.3.0`.
 - Public API contract: `docs/api/openapi.yaml`.
 - Runtime behavior documentation: `docs/user-guide/http-server.md`.
 - Release notes: `docs/release-notes/`.
 
 ### Released capability snapshot
 
+- Versioned, domain-neutral `remember`, `relate`, `recall`, `update`, `forget`,
+  `consolidate`, and `trace` operations for embedded and HTTP clients.
+- A unified `corrobore` standalone server with layered configuration, strict
+  persistence ownership, graceful shutdown, TLS policy, and release archives.
 - Authenticated HTTP runtime with explicit read and write Cypher boundaries.
 - Durable session lifecycle with status transitions and structured JSONL logs.
 - Operational observability through distinct liveness/readiness, `/version`,
@@ -32,6 +36,10 @@ and writes through embedded Rust and HTTP interfaces.
 - Deterministic STIX import, validation, and export surfaces.
 - Incremental TAXII 2.1 ingestion with persisted cursors.
 - Bounded seed-search and working-set retrieval primitives for agent loops.
+- An Elastic-free OpenCTI single-node distribution with native Corrobore read,
+  write, search, aggregation, file-content, migration, and recovery contracts.
+- Coherent snapshot, validation, restore, S3/MinIO export, and derived-index
+  rebuild operations for the canonical store.
 
 ## Quick start (Docker Compose)
 

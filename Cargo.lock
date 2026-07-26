@@ -619,7 +619,7 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
 name = "corrobore-engine"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "base64",
  "chrono",
@@ -640,7 +640,7 @@ dependencies = [
 
 [[package]]
 name = "corrobore-http-server"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "axum",
  "axum-server",
@@ -682,7 +682,7 @@ dependencies = [
 
 [[package]]
 name = "corrobore-ingest"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "axum",
  "clap",
@@ -873,7 +873,7 @@ dependencies = [
 
 [[package]]
 name = "cypher-executor"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "criterion",
  "cypher-parser",
@@ -888,7 +888,7 @@ dependencies = [
 
 [[package]]
 name = "cypher-parser"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "criterion",
  "nom 8.0.0",
@@ -899,7 +899,7 @@ dependencies = [
 
 [[package]]
 name = "cypher-planner"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "cypher-parser",
  "thiserror 2.0.18",
@@ -1081,7 +1081,7 @@ dependencies = [
 
 [[package]]
 name = "domain-common"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "graph-core",
  "serde",
@@ -1090,7 +1090,7 @@ dependencies = [
 
 [[package]]
 name = "domain-provider-abi"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1191,7 +1191,7 @@ dependencies = [
 
 [[package]]
 name = "export-fimi"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "graph-core",
  "serde",
@@ -1200,7 +1200,7 @@ dependencies = [
 
 [[package]]
 name = "export-stix"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "graph-core",
  "serde",
@@ -1307,7 +1307,7 @@ checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
 
 [[package]]
 name = "function-registry"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "thiserror 2.0.18",
 ]
@@ -1455,7 +1455,7 @@ dependencies = [
 
 [[package]]
 name = "graph-core"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1464,7 +1464,7 @@ dependencies = [
 
 [[package]]
 name = "graph-storage"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "criterion",
  "getrandom 0.3.4",
@@ -2307,7 +2307,7 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
 name = "opencti-access"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2317,7 +2317,7 @@ dependencies = [
 
 [[package]]
 name = "opencti-adapter"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "graph-core",
@@ -2330,7 +2330,7 @@ dependencies = [
 
 [[package]]
 name = "opencti-file-search"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "calamine",
  "csv",
@@ -2348,7 +2348,7 @@ dependencies = [
 
 [[package]]
 name = "opencti-search"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "base64",
  "graph-core",
@@ -3097,7 +3097,7 @@ dependencies = [
 
 [[package]]
 name = "shared-runtime"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "cypher-executor",
  "graph-core",
@@ -3200,7 +3200,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "storage-api"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "graph-core",
  "serde",
