@@ -102,8 +102,11 @@ test("OpenCTI runtime secrets include the mandatory encryption key", async () =>
   assert.ok(workflow.includes("secrets/opencti-encryption-key"));
   assert.ok(workflow.includes("chmod 0700 packaging/opencti-elastic-free/secrets"));
   assert.ok(workflow.includes("chmod 0444 packaging/opencti-elastic-free/secrets/*"));
+  assert.ok(workflow.includes("basicConstraints=critical,CA:FALSE"));
+  assert.ok(workflow.includes("extendedKeyUsage=serverAuth"));
   assert.ok(operations.includes("directory with mode `0700`"));
   assert.ok(operations.includes("read-only mode `0444`"));
+  assert.ok(operations.includes("basicConstraints=critical,CA:FALSE"));
 });
 
 test("migration and rollback cover every reversible operating mode", async () => {

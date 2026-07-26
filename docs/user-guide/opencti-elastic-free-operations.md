@@ -22,6 +22,14 @@ without it:
 mkdir -p packaging/opencti-elastic-free/secrets
 chmod 0700 packaging/opencti-elastic-free/secrets
 openssl rand -base64 -out packaging/opencti-elastic-free/secrets/opencti-encryption-key 32
+openssl req -x509 -newkey rsa:2048 -sha256 -nodes \
+  -keyout packaging/opencti-elastic-free/secrets/tls.key \
+  -out packaging/opencti-elastic-free/secrets/tls.crt -days 365 \
+  -subj /CN=corrobore \
+  -addext basicConstraints=critical,CA:FALSE \
+  -addext keyUsage=critical,digitalSignature,keyEncipherment \
+  -addext extendedKeyUsage=serverAuth \
+  -addext subjectAltName=DNS:corrobore
 chmod 0444 packaging/opencti-elastic-free/secrets/*
 ```
 
