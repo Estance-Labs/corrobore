@@ -748,6 +748,174 @@ async fn opencti_sync_http_contract_commits_and_reports_checkpoint_status() {
 }
 
 #[tokio::test]
+async fn opencti_reconciliation_http_contract_dry_runs_repairs_and_reports_status() {
+    let storage_root = unique_store_dir("opencti-reconciliation-http-root");
+    let app = test_app_with_store_dir_and_extra_env(
+        unique_store_dir("opencti-reconciliation-http-sessions"),
+        HashMap::from([
+            ("CORROBORE_STORAGE_MODE".to_owned(), "persistent".to_owned()),
+            (
+                "CORROBORE_STORAGE_DIR".to_owned(),
+                storage_root.display().to_string(),
+            ),
+        ]),
+    );
+    let command = |command_id: &str, mode: &str| {
+        json!({
+            "command_id": command_id,
+            "mode": mode,
+            "scope": {
+                "scope": "records",
+                "record_ids": ["indicator--http-reconciliation"]
+            },
+            "reference_records": [{
+                "id": "indicator--http-reconciliation",
+                "type": "indicator",
+                "name": "Reference survivor"
+            }],
+            "allow_extra_deletion": false
+        })
+    };
+
+    let dry_run = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/opencti/reconciliation")
+                .header(header::AUTHORIZATION, "Bearer token-123")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    command("reconcile--dry-run", "dry_run").to_string(),
+                ))
+                .expect("dry-run request should build"),
+        )
+        .await
+        .expect("dry-run should respond");
+    assert_eq!(dry_run.status(), StatusCode::OK);
+    let payload: Value = serde_json::from_slice(
+        &to_bytes(dry_run.into_body(), usize::MAX)
+            .await
+            .expect("dry-run response should be readable"),
+    )
+    .expect("dry-run response should be json");
+    assert_eq!(payload["result"]["mutated"], false);
+    assert!(
+        payload["result"]["differences"]
+            .as_array()
+            .expect("differences should be an array")
+            .iter()
+            .any(
+                |difference| difference["record_id"] == "indicator--http-reconciliation"
+                    && difference["kind"] == "missing"
+                    && difference["action"] == "planned_create"
+            )
+    );
+
+    let repair = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/opencti/reconciliation")
+                .header(header::AUTHORIZATION, "Bearer token-123")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    command("reconcile--repair", "repair").to_string(),
+                ))
+                .expect("repair request should build"),
+        )
+        .await
+        .expect("repair should respond");
+    assert_eq!(repair.status(), StatusCode::OK);
+    let payload: Value = serde_json::from_slice(
+        &to_bytes(repair.into_body(), usize::MAX)
+            .await
+            .expect("repair response should be readable"),
+    )
+    .expect("repair response should be json");
+    assert_eq!(payload["result"]["mutated"], true);
+    assert_eq!(payload["result"]["parity_verified"], true);
+
+    let status = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/opencti/reconciliation/status")
+                .header(header::AUTHORIZATION, "Bearer token-123")
+                .body(Body::empty())
+                .expect("status request should build"),
+        )
+        .await
+        .expect("status should respond");
+    assert_eq!(status.status(), StatusCode::OK);
+    let payload: Value = serde_json::from_slice(
+        &to_bytes(status.into_body(), usize::MAX)
+            .await
+            .expect("status response should be readable"),
+    )
+    .expect("status response should be json");
+    assert_eq!(payload["result"]["retained_reports"], 2);
+    assert_eq!(payload["result"]["parity_verified_commands"], 1);
+    assert_eq!(
+        payload["reports"]
+            .as_array()
+            .expect("reports should be an array")
+            .len(),
+        2
+    );
+
+    let metrics = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/metrics")
+                .body(Body::empty())
+                .expect("metrics request should build"),
+        )
+        .await
+        .expect("metrics should respond");
+    let metrics = String::from_utf8(
+        to_bytes(metrics.into_body(), usize::MAX)
+            .await
+            .expect("metrics body should be readable")
+            .to_vec(),
+    )
+    .expect("metrics should be UTF-8");
+    assert!(metrics.contains("corrobore_opencti_reconciliation_reports 2"));
+    assert!(metrics.contains("corrobore_opencti_reconciliation_parity_verified 1"));
+
+    let _ = fs::remove_dir_all(storage_root);
+}
+
+#[tokio::test]
+async fn opencti_reconciliation_requires_persistent_storage() {
+    let response = test_app()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/opencti/reconciliation")
+                .header(header::AUTHORIZATION, "Bearer token-123")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "command_id": "reconcile--ephemeral",
+                        "mode": "dry_run",
+                        "scope": {"scope": "full", "max_records": 10},
+                        "reference_records": [],
+                        "allow_extra_deletion": false
+                    })
+                    .to_string(),
+                ))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should respond");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
 async fn opencti_shadow_read_returns_reference_and_persists_correlated_parity_report() {
     async fn reference_provider(
         Json(request): Json<corrobore_engine::KnowledgeDataRequest>,

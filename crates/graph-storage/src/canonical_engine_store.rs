@@ -653,6 +653,18 @@ impl CanonicalEngineStore {
             .map_err(full_text_error)
     }
 
+    /// Inspect whether the access-aware full-text projection is current without
+    /// triggering its lazy rebuild. Reconciliation uses this read-only signal to
+    /// report stale derived state before deciding whether repair is authorized.
+    pub fn full_text_readiness(&self) -> GraphStorageResult<FullTextSearchReadiness> {
+        Ok(self.full_text_index()?.inspect().readiness)
+    }
+
+    /// Report whether the derived full-text projection is ready for queries.
+    pub fn full_text_projection_is_ready(&self) -> GraphStorageResult<bool> {
+        Ok(self.full_text_readiness()? == FullTextSearchReadiness::Ready)
+    }
+
     /// Persist one completed extraction artifact and atomically publish the
     /// resulting file-content search generation.
     pub fn publish_file_content(

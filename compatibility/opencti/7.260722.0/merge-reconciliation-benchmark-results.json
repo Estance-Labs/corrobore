@@ -1,0 +1,52 @@
+{
+  "engine": "corrobore-canonical-wal-v1",
+  "environment": {
+    "architecture": "aarch64",
+    "build_profile": "release",
+    "operating_system": "macos"
+  },
+  "merge": {
+    "deduplicated_relationships": 3002,
+    "durable_commit_seconds": 0.223176708,
+    "end_to_end_seconds": 0.323191,
+    "planning_seconds": 0.100014292,
+    "redirected_relationships": 998,
+    "throughput_scanned_records_per_second": 15470.727835861766,
+    "wal_fsync_required": true
+  },
+  "performance_gate": {
+    "merge_passed": true,
+    "minimum_merge_scanned_records_per_second": 10000.0,
+    "minimum_repair_records_per_second": 1500.0,
+    "passed": true,
+    "repair_passed": true
+  },
+  "profile": {
+    "concurrency": 1,
+    "id": "small",
+    "measured_objects": 1000,
+    "merge_sources": 1,
+    "repair_records": 1997,
+    "supernode_relationships": 4000,
+    "target_objects": 100000,
+    "target_relationships": 500000
+  },
+  "recorded_at_unix_seconds": 1785025848,
+  "reference_context": {
+    "comparison": "context_only_bulk_ingestion_is_not_the_merge_repair_workload",
+    "reference_engine": "opensearch-3.7.0",
+    "reference_profile": "small",
+    "reference_throughput_records_per_second": 42048.865
+  },
+  "repair": {
+    "end_to_end_seconds": 0.950935708,
+    "parity_verified": true,
+    "projection_rebuilt": true,
+    "throughput_records_per_second": 2100.0368197341895,
+    "wal_fsync_required": true
+  },
+  "reproduction": {
+    "command": "cargo run --release -p corrobore-http-server --example small_profile_merge_reconciliation_benchmark --locked"
+  },
+  "schema_version": 1
+}

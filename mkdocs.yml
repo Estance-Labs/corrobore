@@ -101,6 +101,7 @@ nav:
     - OpenCTI Shadow Reads: developer-guide/opencti-shadow-reads.md
     - OpenCTI Progressive Read Routing: developer-guide/opencti-progressive-read-routing.md
     - OpenCTI Transactional Writes: developer-guide/opencti-transactional-writes.md
+    - OpenCTI Merge and Reconciliation: developer-guide/opencti-merge-reconciliation.md
     - Standalone Acceptance Matrix: acceptance/standalone-server.md
     - Release Notes Process: developer-guide/release-notes-process.md
   - Release Notes:

@@ -159,3 +159,66 @@ fn recovery_exposes_only_transactions_that_crossed_the_applied_marker() {
         fs::remove_dir_all(root.path()).unwrap();
     }
 }
+
+#[test]
+fn committed_but_unapplied_transaction_rejects_changed_payload_then_resumes_original() {
+    let root = root("resume-fingerprint");
+    let mut store =
+        CanonicalEngineStore::open(root.clone(), CanonicalStoreOptions::default()).unwrap();
+    let (previous, current) = transition();
+    let transaction_id = DurableTransactionId::new("tx--resume-fingerprint").unwrap();
+    store
+        .commit_transition_with_audit(
+            &previous,
+            &current,
+            transaction_id.clone(),
+            vec!["original receipt".to_owned()],
+            Some(MutationCrashStage::AfterWalIntent),
+        )
+        .unwrap_err();
+    drop(store);
+
+    let mut reopened =
+        CanonicalEngineStore::open(root.clone(), CanonicalStoreOptions::default()).unwrap();
+    let mut changed = current.clone();
+    let changed_id = changed.list_nodes().unwrap()[0].id().clone();
+    changed
+        .replace_node(
+            &changed_id,
+            NodeInput::new(vec!["DifferentPayload".to_owned()]),
+        )
+        .unwrap();
+    let conflict = reopened
+        .commit_transition_with_audit(
+            &previous,
+            &changed,
+            transaction_id.clone(),
+            vec!["changed receipt".to_owned()],
+            None,
+        )
+        .unwrap_err();
+    assert!(conflict.to_string().contains("different mutation payload"));
+
+    reopened
+        .commit_transition_with_audit(
+            &previous,
+            &current,
+            transaction_id.clone(),
+            vec!["original receipt".to_owned()],
+            None,
+        )
+        .unwrap();
+    drop(reopened);
+    let mut recovered =
+        CanonicalEngineStore::open(root.clone(), CanonicalStoreOptions::default()).unwrap();
+    assert_eq!(
+        recovered
+            .load_projection(CanonicalProjectionRequest::all_nodes())
+            .unwrap()
+            .list_nodes()
+            .unwrap()
+            .len(),
+        1
+    );
+    fs::remove_dir_all(root.path()).unwrap();
+}

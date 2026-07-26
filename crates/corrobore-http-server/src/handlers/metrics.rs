@@ -412,6 +412,27 @@ corrobore_opencti_write_reconciliation_quarantined {}\n",
         write_status.pending_reconciliation,
         write_status.quarantined_reconciliation,
     ));
+    let reconciliation_status = state
+        .opencti_reconciliation
+        .lock()
+        .map(|runtime| runtime.status())
+        .unwrap_or_default();
+    body.push_str(
+        "# HELP corrobore_opencti_reconciliation_reports Bounded retained reconciliation reports.\n\
+# TYPE corrobore_opencti_reconciliation_reports gauge\n\
+# HELP corrobore_opencti_reconciliation_quarantined Commands requiring operator policy.\n\
+# TYPE corrobore_opencti_reconciliation_quarantined gauge\n\
+# HELP corrobore_opencti_reconciliation_parity_verified Commands with verified post-repair parity.\n\
+# TYPE corrobore_opencti_reconciliation_parity_verified gauge\n",
+    );
+    body.push_str(&format!(
+        "corrobore_opencti_reconciliation_reports {}\n\
+corrobore_opencti_reconciliation_quarantined {}\n\
+corrobore_opencti_reconciliation_parity_verified {}\n",
+        reconciliation_status.retained_reports,
+        reconciliation_status.quarantined_commands,
+        reconciliation_status.parity_verified_commands,
+    ));
 
     ([(header::CONTENT_TYPE, PROMETHEUS_CONTENT_TYPE)], body)
 }

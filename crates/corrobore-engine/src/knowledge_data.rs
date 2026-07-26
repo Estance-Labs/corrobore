@@ -668,6 +668,9 @@ pub struct MergeRequest {
     pub target_id: String,
     /// Records reconciled into the survivor.
     pub source_ids: Vec<String>,
+    /// Optional optimistic revision preconditions keyed by canonical record ID.
+    #[serde(default)]
+    pub expected_revisions: BTreeMap<String, u64>,
 }
 
 /// Portable snapshot input.
@@ -1154,6 +1157,25 @@ pub struct BulkResult {
     pub results: Vec<Value>,
 }
 
+/// Atomic merge response.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MergeResult {
+    /// Canonical record that survived.
+    pub target_id: String,
+    /// New survivor revision.
+    pub target_revision: u64,
+    /// Canonical duplicate IDs tombstoned by the merge.
+    pub deleted_source_ids: Vec<String>,
+    /// Relationships whose endpoints were moved to the survivor.
+    pub redirected_relationship_ids: Vec<String>,
+    /// Objects whose embedded references were moved to the survivor.
+    pub redirected_reference_ids: Vec<String>,
+    /// Duplicate edges tombstoned after deterministic rewiring.
+    pub deduplicated_relationship_ids: Vec<String>,
+    /// Payload-free count of deterministic target-wins conflicts.
+    pub conflict_count: u64,
+}
+
 /// Snapshot response.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotResult {
@@ -1194,6 +1216,8 @@ pub enum KnowledgeDataResponse {
     Write(WriteResult),
     /// Bulk write.
     Bulk(BulkResult),
+    /// Atomic survivor merge.
+    Merge(MergeResult),
     /// Snapshot.
     Snapshot(SnapshotResult),
     /// Generic acknowledgement.
@@ -1616,6 +1640,9 @@ impl KnowledgeDataEngine for CorroboreKnowledgeDataProvider<'_> {
             KnowledgeDataOperation::Bulk(request) => self
                 .engine
                 .execute_knowledge_data_mutation(&KnowledgeDataOperation::Bulk(request), context),
+            KnowledgeDataOperation::Merge(request) => self
+                .engine
+                .execute_knowledge_data_mutation(&KnowledgeDataOperation::Merge(request), context),
             unsupported => {
                 let operation = unsupported.kind();
                 let _ = context;
@@ -1669,7 +1696,8 @@ fn validate_operation_before_projection(
         KnowledgeDataOperation::Create(_)
         | KnowledgeDataOperation::Update(_)
         | KnowledgeDataOperation::Delete(_)
-        | KnowledgeDataOperation::Bulk(_) => Ok(()),
+        | KnowledgeDataOperation::Bulk(_)
+        | KnowledgeDataOperation::Merge(_) => Ok(()),
         KnowledgeDataOperation::GetById(request) if request.id.trim().is_empty() => {
             Err(KnowledgeDataError::new(
                 KnowledgeDataErrorCode::InvalidRequest,
@@ -1979,9 +2007,7 @@ fn capability_status(operation: OperationKind) -> ProviderCapabilityStatus {
         | OperationKind::Update
         | OperationKind::Delete
         | OperationKind::Bulk => ProviderCapabilityStatus::Supported,
-        OperationKind::Merge => {
-            unsupported_status("merge and reconciliation are delivered by issue #51")
-        }
+        OperationKind::Merge => ProviderCapabilityStatus::Supported,
         OperationKind::RebuildIndexes => {
             unsupported_status("index maintenance is delivered by issue #52")
         }
@@ -2034,6 +2060,7 @@ fn validate_request(
             | KnowledgeDataOperation::Update(_)
             | KnowledgeDataOperation::Delete(_)
             | KnowledgeDataOperation::Bulk(_)
+            | KnowledgeDataOperation::Merge(_)
     ) && request
         .context
         .idempotency_key
@@ -2045,6 +2072,33 @@ fn validate_request(
             "transactional mutation requires an idempotency_key",
             false,
         ));
+    }
+    if let KnowledgeDataOperation::Merge(merge) = &request.operation {
+        if merge.target_id.trim().is_empty()
+            || merge.source_ids.is_empty()
+            || merge
+                .source_ids
+                .iter()
+                .any(|source| source.trim().is_empty())
+            || merge
+                .source_ids
+                .iter()
+                .any(|source| source == &merge.target_id)
+        {
+            return Err(KnowledgeDataError::new(
+                KnowledgeDataErrorCode::InvalidRequest,
+                "merge requires a target and distinct non-empty source_ids",
+                false,
+            ));
+        }
+        let unique = merge.source_ids.iter().collect::<BTreeSet<_>>();
+        if unique.len() != merge.source_ids.len() {
+            return Err(KnowledgeDataError::new(
+                KnowledgeDataErrorCode::InvalidRequest,
+                "merge source_ids must be unique",
+                false,
+            ));
+        }
     }
     for (field, value) in [
         ("request_id", request.context.request_id.as_str()),

@@ -49,8 +49,7 @@ use graph_storage::{
     GraphStoreRecoveryReport, RecordFormat, StorageManifest, StorageTimestamp, StorageVersion,
     create_storage_root, open_storage_root, read_storage_manifest,
 };
-use opencti_adapter::BulkLimits;
-use opencti_adapter::WriteLimits;
+use opencti_adapter::{BulkLimits, ReconciliationLimits, WriteLimits};
 use thiserror::Error;
 use tower_governor::{
     GovernorLayer, governor::GovernorConfigBuilder, key_extractor::GlobalKeyExtractor,
@@ -79,6 +78,7 @@ use crate::{
         import::{import_stix_bundle, import_stix_bundle_file},
         license::{admin_license_status, license_status},
         metrics::metrics,
+        opencti_reconciliation::{execute_opencti_reconciliation, opencti_reconciliation_status},
         opencti_routing::{
             execute_opencti_routed_read, opencti_routing_decisions, opencti_routing_rollback,
         },
@@ -90,6 +90,7 @@ use crate::{
         session::{session_health, session_logs, start_session, stop_session},
         stix_validate::validate_stix,
     },
+    opencti_reconciliation::OpenCtiReconciliationRuntime,
     opencti_shadow::OpenCtiShadowRuntime,
     opencti_sync::OpenCtiSyncRuntime,
     opencti_write::OpenCtiWriteRuntime,
@@ -139,6 +140,8 @@ pub enum AppStateInitError {
     OpenCtiRoutingStateFailed { reason: String },
     #[error("failed to restore OpenCTI transactional-write state: {reason}")]
     OpenCtiWriteStateFailed { reason: String },
+    #[error("failed to restore OpenCTI reconciliation state: {reason}")]
+    OpenCtiReconciliationStateFailed { reason: String },
 }
 
 #[derive(Clone)]
@@ -154,6 +157,7 @@ pub struct AppState {
     pub opencti_shadow: Arc<Mutex<OpenCtiShadowRuntime>>,
     pub opencti_routing: Arc<Mutex<OpenCtiReadRoutingRuntime>>,
     pub opencti_write: Arc<Mutex<OpenCtiWriteRuntime>>,
+    pub opencti_reconciliation: Arc<Mutex<OpenCtiReconciliationRuntime>>,
     pub opencti_write_semaphore: Arc<tokio::sync::Semaphore>,
     pub(crate) domain_providers: Option<Arc<crate::enterprise::registry::DomainProviderRegistry>>,
     pub started_at: Instant,
@@ -181,6 +185,26 @@ impl AppState {
                 config.opencti_sync_max_replay_identities,
             )
             .map_err(|reason| AppStateInitError::OpenCtiWriteStateFailed { reason })?,
+        ));
+        let reconciliation_state_path = match &runtime_store {
+            RuntimeStoreProvider::Persistent(runtime) => Some(
+                runtime
+                    .root_path
+                    .join("runtime")
+                    .join("opencti-reconciliation-state.json"),
+            ),
+            RuntimeStoreProvider::Ephemeral => None,
+        };
+        let opencti_reconciliation = Arc::new(Mutex::new(
+            OpenCtiReconciliationRuntime::open(
+                reconciliation_state_path,
+                ReconciliationLimits {
+                    max_records: config.opencti_sync_max_replay_identities,
+                    max_payload_bytes: config.import_max_body_bytes,
+                },
+                config.opencti_sync_max_replay_identities,
+            )
+            .map_err(|reason| AppStateInitError::OpenCtiReconciliationStateFailed { reason })?,
         ));
         let engine = initialize_engine(
             &runtime_store,
@@ -284,6 +308,7 @@ impl AppState {
             opencti_shadow: Arc::new(Mutex::new(opencti_shadow)),
             opencti_routing: Arc::new(Mutex::new(opencti_routing)),
             opencti_write,
+            opencti_reconciliation,
             opencti_write_semaphore,
             domain_providers,
             started_at: Instant::now(),
@@ -911,6 +936,14 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/opencti/reads", post(execute_opencti_routed_read))
         .route("/v1/opencti/writes", post(execute_opencti_write))
         .route("/v1/opencti/writes/status", get(opencti_write_status))
+        .route(
+            "/v1/opencti/reconciliation",
+            post(execute_opencti_reconciliation),
+        )
+        .route(
+            "/v1/opencti/reconciliation/status",
+            get(opencti_reconciliation_status),
+        )
         .route(
             "/v1/opencti/routing/decisions",
             get(opencti_routing_decisions),

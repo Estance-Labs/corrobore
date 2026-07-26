@@ -355,8 +355,8 @@ values are exported on `/metrics`.
 
 ## `POST /v1/opencti/writes`
 
-Executes a create, update, delete, relationship/access-policy mutation, or
-ordered bulk through the versioned Knowledge Data Engine contract. During the
+Executes a create, update, delete, relationship/access-policy mutation, merge,
+or ordered bulk through the versioned Knowledge Data Engine contract. During the
 migration period the configured Elasticsearch/OpenSearch endpoint remains
 authoritative: it is called first, the exact request is mirrored into
 Corrobore, and its response envelope is returned unchanged.
@@ -376,6 +376,21 @@ WAL-bound audit receipts. The response contains hashes, correlation/source
 offsets, revisions and outcomes only; it excludes record content, tokens and
 original idempotency keys. Unresolved reconciliation records are never evicted
 to admit new work.
+
+## `POST /v1/opencti/reconciliation`
+
+Compares a bounded reference snapshot with persistent canonical data. `dry_run`
+returns and persists the exact missing, extra, property, relationship,
+permission, and stale-index plan without mutation. `repair` applies safe
+targeted changes in one WAL transaction, rebuilds required projections, and
+verifies parity. Unsafe category conflicts and unapproved deletions are
+quarantined. See [OpenCTI merge and targeted reconciliation](../developer-guide/opencti-merge-reconciliation.md).
+
+## `GET /v1/opencti/reconciliation/status`
+
+Returns bounded payload-free reports plus retained, quarantined, and
+parity-verified command counts. Reports survive restart; quarantined reports are
+retained until operator action.
 
 ## `POST /v1/opencti/shadow/reads`
 
