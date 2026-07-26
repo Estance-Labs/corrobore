@@ -1,0 +1,49 @@
+{
+  "contract_version": "v1",
+  "description": "Domain-free operation fixtures shared by embedded and standalone adapter tests.",
+  "operations": [
+    {
+      "operation": "remember",
+      "mutation": true,
+      "required": ["identity_key", "kind", "schema_version", "content", "provenance"]
+    },
+    {
+      "operation": "relate",
+      "mutation": true,
+      "required": ["source_id", "target_id", "kind", "provenance", "lifecycle"]
+    },
+    {
+      "operation": "recall",
+      "mutation": false,
+      "required": ["objective", "limits"],
+      "bounded_by": ["max_items", "max_depth", "max_payload_bytes", "max_cost", "timeout_ms", "supernode_threshold"]
+    },
+    {
+      "operation": "update",
+      "mutation": true,
+      "required": ["target", "patch"]
+    },
+    {
+      "operation": "forget",
+      "mutation": true,
+      "required": ["memory_id", "mode", "reason"]
+    },
+    {
+      "operation": "consolidate",
+      "mutation": "apply_only",
+      "required": ["mode", "memory_ids", "reason", "preserve_disagreements"]
+    },
+    {
+      "operation": "trace",
+      "mutation": false,
+      "required": ["target"]
+    }
+  ],
+  "invariants": [
+    "trusted context is not part of an operation payload",
+    "mutations require idempotency and return a durability-gated receipt",
+    "workspace-hidden targets use the same not-found surface",
+    "consolidation retains originals and disagreements",
+    "application forgetting is distinct from regulatory erasure"
+  ]
+}

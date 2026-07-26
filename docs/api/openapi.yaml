@@ -487,7 +487,219 @@ components:
         rebuild_duration_ms: {type: integer, minimum: 0}
         rebuild_records_scanned: {type: integer, minimum: 0}
 
+    MemoryContractVersion:
+      type: string
+      const: v1
+    MemoryProvenanceReference:
+      type: object
+      additionalProperties: false
+      required: [source_id]
+      properties:
+        source_id: {type: string, minLength: 1}
+        locator: {type: [string, 'null']}
+        observed_at: {type: [string, 'null'], format: date-time}
+    MemoryContent:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [format, value]
+          properties:
+            format: {type: string, const: text}
+            value: {type: string, minLength: 1}
+        - type: object
+          additionalProperties: false
+          required: [format, value]
+          properties:
+            format: {type: string, const: properties}
+            value: {type: object}
+        - type: object
+          additionalProperties: false
+          required: [format, value]
+          properties:
+            format: {type: string, const: text_and_properties}
+            value:
+              type: object
+              additionalProperties: false
+              required: [text, properties]
+              properties:
+                text: {type: string, minLength: 1}
+                properties: {type: object}
+    MemoryLimits:
+      type: object
+      additionalProperties: false
+      required: [max_items, max_depth, max_payload_bytes, max_cost, timeout_ms, supernode_threshold]
+      properties:
+        max_items: {type: integer, minimum: 1, maximum: 10000}
+        max_depth: {type: integer, minimum: 1, maximum: 16}
+        max_payload_bytes: {type: integer, minimum: 1, maximum: 16777216}
+        max_cost: {type: integer, minimum: 1, maximum: 1000000}
+        timeout_ms: {type: integer, minimum: 1, maximum: 60000}
+        supernode_threshold: {type: integer, minimum: 1}
+    RecallOutcome:
+      type: string
+      enum: [supernode_blocked, cost_budget_exhausted, payload_budget_exhausted, timeout, semantic_provider_unavailable, partial_page_in, cancelled, overloaded]
+      description: Stable bounded outcome emitted instead of unbounded expansion or fallback.
+    MemoryTarget:
+      type: object
+      additionalProperties: false
+      required: [kind, id]
+      properties:
+        kind: {type: string, enum: [memory, relationship, recall, mutation]}
+        id: {type: string, minLength: 1}
+    MemoryOperationRequest:
+      type: object
+      additionalProperties: false
+      required: [contract_version, operation, input]
+      properties:
+        contract_version: {$ref: '#/components/schemas/MemoryContractVersion'}
+        idempotency_key:
+          type: [string, 'null']
+          minLength: 1
+          maxLength: 256
+          description: Required for remember, relate, update, forget, and approved consolidation apply.
+        operation:
+          type: string
+          enum: [remember, relate, recall, update, forget, consolidate, trace]
+        input:
+          oneOf:
+            - $ref: '#/components/schemas/RememberMemoryInput'
+            - $ref: '#/components/schemas/RelateMemoryInput'
+            - $ref: '#/components/schemas/RecallMemoryInput'
+            - $ref: '#/components/schemas/UpdateMemoryInput'
+            - $ref: '#/components/schemas/ForgetMemoryInput'
+            - $ref: '#/components/schemas/ConsolidateMemoryInput'
+            - $ref: '#/components/schemas/TraceMemoryInput'
+      description: Trusted workspace, actor, agent, session, permissions, request, and correlation fields are not accepted in this payload.
+    RememberMemoryInput:
+      type: object
+      additionalProperties: false
+      required: [kind, schema_version, content, provenance, tags]
+      properties:
+        identity_key: {type: [string, 'null']}
+        kind: {type: string, minLength: 1}
+        schema_version: {type: string, minLength: 1}
+        content: {$ref: '#/components/schemas/MemoryContent'}
+        provenance: {type: array, items: {$ref: '#/components/schemas/MemoryProvenanceReference'}}
+        confidence: {type: [number, 'null'], minimum: 0, maximum: 1}
+        valid_from: {type: [string, 'null'], format: date-time}
+        valid_until: {type: [string, 'null'], format: date-time}
+        expires_at: {type: [string, 'null'], format: date-time}
+        tags: {type: array, items: {type: string}}
+    RelateMemoryInput:
+      type: object
+      additionalProperties: false
+      required: [source_id, target_id, kind, properties, provenance, lifecycle]
+      properties:
+        identity_key: {type: [string, 'null']}
+        source_id: {type: string, minLength: 1}
+        target_id: {type: string, minLength: 1}
+        kind: {type: string, minLength: 1}
+        properties: {}
+        provenance: {type: array, items: {$ref: '#/components/schemas/MemoryProvenanceReference'}}
+        confidence: {type: [number, 'null'], minimum: 0, maximum: 1}
+        valid_from: {type: [string, 'null'], format: date-time}
+        valid_until: {type: [string, 'null'], format: date-time}
+        expires_at: {type: [string, 'null'], format: date-time}
+        lifecycle: {type: string, enum: [active, expired, superseded, tombstoned]}
+    RecallMemoryInput:
+      type: object
+      additionalProperties: false
+      required: [objective, seed_ids, limits]
+      properties:
+        objective: {type: string, minLength: 1}
+        seed_ids: {type: array, items: {type: string}}
+        limits: {$ref: '#/components/schemas/MemoryLimits'}
+        page_token: {type: [string, 'null']}
+    UpdateMemoryInput:
+      type: object
+      additionalProperties: false
+      required: [target, patch]
+      properties:
+        target: {$ref: '#/components/schemas/MemoryTarget'}
+        expected_version: {type: [integer, 'null'], minimum: 1}
+        patch:
+          type: object
+          additionalProperties: false
+          properties:
+            content: {$ref: '#/components/schemas/MemoryContent'}
+            confidence: {type: number, minimum: 0, maximum: 1}
+            add_provenance: {type: array, items: {$ref: '#/components/schemas/MemoryProvenanceReference'}}
+            lifecycle: {type: string, enum: [active, expired, superseded, tombstoned]}
+            expires_at: {type: string, format: date-time}
+            add_tags: {type: array, items: {type: string}}
+    ForgetMemoryInput:
+      type: object
+      additionalProperties: false
+      required: [memory_id, mode, reason]
+      properties:
+        memory_id: {type: string, minLength: 1}
+        mode: {type: string, enum: [expire, tombstone, application_delete]}
+        expires_at: {type: [string, 'null'], format: date-time}
+        reason: {type: string, minLength: 1}
+    ConsolidateMemoryInput:
+      type: object
+      additionalProperties: false
+      required: [mode, memory_ids, reason, preserve_disagreements]
+      properties:
+        mode:
+          oneOf:
+            - type: object
+              required: [mode]
+              properties: {mode: {type: string, const: propose}}
+            - type: object
+              required: [mode, proposal_id, approval_policy]
+              properties:
+                mode: {type: string, const: apply_approved}
+                proposal_id: {type: string}
+                approval_policy: {type: string}
+        memory_ids: {type: array, minItems: 2, maxItems: 100, items: {type: string}}
+        canonical_id: {type: [string, 'null']}
+        reason: {type: string, minLength: 1}
+        preserve_disagreements: {type: boolean}
+    TraceMemoryInput:
+      type: object
+      additionalProperties: false
+      required: [target]
+      properties:
+        target: {$ref: '#/components/schemas/MemoryTarget'}
+    MemoryOperationResponse:
+      type: object
+      required: [contract_version, result]
+      properties:
+        contract_version: {$ref: '#/components/schemas/MemoryContractVersion'}
+        result:
+          type: object
+          required: [operation, result]
+          properties:
+            operation: {type: string, enum: [remember, relate, recall, update, update_relationship, forget, consolidate, trace]}
+            result:
+              description: Typed record, relationship, recall, consolidation, trace, or durability-gated mutation receipt result.
+
 paths:
+  /v1/memory/operations:
+    post:
+      operationId: executeMemoryOperation
+      summary: Execute one versioned domain-neutral high-level memory operation
+      description: The server injects trusted workspace, actor, agent, session, permissions, request, and correlation context after authentication. Operation payloads cannot override that boundary.
+      tags: [Memory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/MemoryOperationRequest'}
+      responses:
+        '200':
+          description: Typed operation response; mutation receipts are returned only after the configured durability gate.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MemoryOperationResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {description: Independently configured capability denied or policy approval required}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {description: Version or idempotency conflict}
+        '422': {description: Invalid explicit recall budget}
+        '503': {description: Durability gate, semantic provider, or overload unavailable}
   /v1/admin/storage/snapshots:
     post:
       operationId: createDatabaseSnapshot
@@ -1156,6 +1368,29 @@ paths:
                   audits: {type: array, items: {type: object}}
         '401': {$ref: '#/components/responses/Unauthorized'}
 
+  /v1/opencti/files:
+    post:
+      operationId: executeOpenCtiFileCommand
+      summary: Enqueue immutable file extraction or delete file-content projections
+      tags: [OpenCTI]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [operation]
+              properties:
+                operation: {type: string, enum: [enqueue, delete]}
+                descriptor: {type: object}
+                file_ids: {type: array, minItems: 1, items: {type: string}}
+      responses:
+        '200': {description: File-content projections deleted}
+        '202': {description: Extraction work accepted or deduplicated}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '503': {description: Persistent file-content storage unavailable}
+
   /v1/admin/opencti/projection/drain:
     post:
       operationId: drainOpenCtiReferenceProjection
@@ -1617,6 +1852,7 @@ paths:
 
 tags:
   - {name: Operations, description: Public health and observability}
+  - {name: Memory, description: Versioned domain-neutral high-level memory operations}
   - {name: Database Operations, description: Administrative snapshot and derived-index operations}
   - {name: Cypher, description: Graph reads and mutations}
   - {name: Seeds, description: Semantic working-set entry points}

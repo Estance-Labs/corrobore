@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Changes on `main` that have not yet been tagged in a release.
 
+- Added a versioned, domain-neutral high-level memory service with seven typed
+  operations, trusted context, idempotent durability-gated receipts, bounded
+  explainable recall, non-destructive consolidation, and a matching standalone
+  HTTP adapter.
+
 ## Releases
 
 - **v0.2.2** — see [docs/release-notes/v0.2.2.md](docs/release-notes/v0.2.2.md).

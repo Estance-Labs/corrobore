@@ -46,6 +46,11 @@ Application errors use the JSON envelope above. Transport middleware can reject 
 | `CORROBORE_HTTP_AUTH_TOKEN_FILE` | unset | Protected file containing the bearer token; mutually exclusive with `CORROBORE_HTTP_AUTH_TOKEN`. |
 | `CORROBORE_HTTP_ADMIN_AUTH_TOKEN` | unset | Optional dedicated Bearer token for admin-only endpoints (for example `/v1/admin/license/status`). |
 | `CORROBORE_HTTP_ADMIN_AUTH_TOKEN_FILE` | unset | Protected file containing the admin bearer token; mutually exclusive with `CORROBORE_HTTP_ADMIN_AUTH_TOKEN`. |
+| `CORROBORE_MEMORY_WORKSPACE_ID` | `workspace--standalone-default` | Trusted workspace for high-level memory operations; clients cannot override it in JSON. |
+| `CORROBORE_MEMORY_ACTOR_ID` | `actor--standalone-client` | Trusted authenticated actor attribution for high-level memory mutations and traces. |
+| `CORROBORE_MEMORY_AGENT_ID` | unset | Optional trusted agent attribution for high-level memory operations. |
+| `CORROBORE_MEMORY_SESSION_ID` | `session--standalone-api` | Trusted session attribution for high-level memory operations. |
+| `CORROBORE_MEMORY_PERMISSIONS` | `read,write,trace,forget,consolidate` | Independently enabled high-level capabilities; omit a capability to deny it after bearer authentication. |
 | `CORROBORE_HTTP_HOST` | `127.0.0.1` | Bind host. Set `0.0.0.0` deliberately for containers or remote access. |
 | `CORROBORE_HTTP_PORT` | `8080` | Bind port. |
 | `CORROBORE_HTTP_SESSION_STORE_DIR` | `.corrobore-runtime` | Durable session-state directory. |
@@ -248,6 +253,17 @@ Domain-scoped profiles (`cti`, `fimi`, `crisis`) are enterprise-gated:
 - Runtime license gate: profile requests return `LICENSE_MODULE_MISSING` if `CORROBORE_HTTP_LICENSED_MODULES` does not contain the requested module.
 - Provider gate: profile requests return `DOMAIN_PROVIDER_NOT_READY` unless the matching provider is loaded and healthy.
 
+## `POST /v1/memory/operations`
+
+Executes the versioned, domain-neutral `remember`, `relate`, `recall`, `update`,
+`forget`, `consolidate`, or `trace` contract. The request JSON is exactly the
+serialized embedded `MemoryRequest`; workspace, actor, agent, session,
+permissions, request identity, and correlation identity come from trusted
+server configuration and middleware and are rejected if supplied in the
+payload. Mutations require `idempotency_key` and return a durability-gated
+receipt. See [High-level Memory Operations](memory-operations.md) for complete
+semantics, limits, examples, errors, and compatibility rules.
+
 ## `POST /v1/domains/{domain}/validate`
 
 Invokes `node.validate/1` through the common provider registry for `cti`, `fimi`, or `crisis` after build, license, readiness, and capability gates.
@@ -402,6 +418,15 @@ Original idempotency keys and tokens are excluded. During projection lag,
 Operators use the admin-token routes below after an outage or rollback trigger.
 See [OpenCTI transactional writes](../developer-guide/opencti-transactional-writes.md)
 for the complete rollback runbook.
+
+## `POST /v1/opencti/files`
+
+In persistent mode, accepts an `enqueue` command carrying an immutable file
+descriptor or a `delete` command carrying one or more file IDs. Enqueue returns
+202 with a stable extraction job ID (or a duplicate acknowledgement); deletion
+removes file-content projections synchronously. The route never returns file
+content or authorization metadata and returns `OPENCTI_FILE_STORAGE_REQUIRED`
+when canonical persistent storage is unavailable.
 
 ## `POST /v1/admin/opencti/projection/drain`
 
