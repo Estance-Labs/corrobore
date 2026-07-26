@@ -27,6 +27,7 @@ pub mod export;
 pub mod health;
 pub mod import;
 pub mod license;
+pub mod memory;
 pub mod metrics;
 pub mod opencti_files;
 pub mod opencti_reconciliation;

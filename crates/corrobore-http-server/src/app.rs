@@ -79,6 +79,7 @@ use crate::{
         health::health,
         import::{import_stix_bundle, import_stix_bundle_file},
         license::{admin_license_status, license_status},
+        memory::execute_memory_operation,
         metrics::metrics,
         opencti_files::execute_opencti_file_command,
         opencti_reconciliation::{execute_opencti_reconciliation, opencti_reconciliation_status},
@@ -450,6 +451,26 @@ impl EnginePersistence for PersistentEnginePersistence {
             authorization_denials: stats.authorization_denials,
             full_text_page: None,
         }))
+    }
+
+    fn prepare_memory_operation(
+        &mut self,
+        _operation: &corrobore_engine::MemoryOperation,
+        context: &corrobore_engine::MemoryServiceContext,
+    ) -> Result<Option<graph_core::Graph>, String> {
+        let request = CanonicalProjectionRequest::all_nodes()
+            .with_relationships(None)
+            .with_property_filters([CanonicalPropertyFilter {
+                field: "corrobore.memory.workspace".to_owned(),
+                operator: CanonicalPropertyOperator::Equal,
+                value: Some(serde_json::Value::String(context.workspace_id.clone())),
+            }]);
+        self.store
+            .lock()
+            .map_err(|_| "canonical graph store lock is poisoned".to_owned())?
+            .load_projection(request)
+            .map(Some)
+            .map_err(|error| error.to_string())
     }
 
     fn persist_graph_transition(
@@ -956,6 +977,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/stix/validate", post(validate_stix))
         .route("/v1/license/status", get(license_status))
         .route("/v1/seed/search", post(seed_search))
+        .route("/v1/memory/operations", post(execute_memory_operation))
         .route("/v1/sessions/start", post(start_session))
         .route("/v1/sessions/{session_id}/stop", post(stop_session))
         .route("/v1/sessions/{session_id}/health", get(session_health))

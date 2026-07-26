@@ -22,6 +22,7 @@ use std::{collections::HashMap, env, fmt, fs, net::IpAddr};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::{DateTime, Utc};
+use corrobore_engine::MemoryPermissions;
 use ed25519_dalek::pkcs8::DecodePublicKey;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
@@ -56,6 +57,16 @@ pub struct ServerConfig {
     pub admin_auth_token: Option<String>,
     pub admin_auth_token_source: Option<SecretSource>,
     pub operational_endpoint_policy: OperationalEndpointPolicy,
+    /// Trusted workspace assigned to high-level memory API requests.
+    pub memory_workspace_id: String,
+    /// Trusted actor assigned after standalone bearer authentication.
+    pub memory_actor_id: String,
+    /// Optional trusted agent assigned by standalone deployment policy.
+    pub memory_agent_id: Option<String>,
+    /// Trusted session assigned to high-level memory API requests.
+    pub memory_session_id: String,
+    /// Independently configured high-level memory capabilities.
+    pub memory_permissions: MemoryPermissions,
     pub session_store_dir: String,
     pub log_dir: String,
     pub request_timeout_ms: u64,
@@ -137,6 +148,11 @@ impl fmt::Debug for ServerConfig {
                 "operational_endpoint_policy",
                 &self.operational_endpoint_policy.as_str(),
             )
+            .field("memory_workspace_id", &self.memory_workspace_id)
+            .field("memory_actor_id", &self.memory_actor_id)
+            .field("memory_agent_id", &self.memory_agent_id)
+            .field("memory_session_id", &self.memory_session_id)
+            .field("memory_permissions", &self.memory_permissions)
             .field("session_store_dir", &self.session_store_dir)
             .field("log_dir", &self.log_dir)
             .field("request_timeout_ms", &self.request_timeout_ms)
@@ -414,6 +430,26 @@ impl ServerConfig {
             "server.admin_auth_token_file",
         )?;
         let operational_endpoint_policy = parse_operational_endpoint_policy(vars)?;
+        let memory_workspace_id = trusted_memory_id(
+            vars,
+            "CORROBORE_MEMORY_WORKSPACE_ID",
+            "workspace--standalone-default",
+        )?;
+        let memory_actor_id = trusted_memory_id(
+            vars,
+            "CORROBORE_MEMORY_ACTOR_ID",
+            "actor--standalone-client",
+        )?;
+        let memory_agent_id = vars
+            .get("CORROBORE_MEMORY_AGENT_ID")
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        let memory_session_id = trusted_memory_id(
+            vars,
+            "CORROBORE_MEMORY_SESSION_ID",
+            "session--standalone-api",
+        )?;
+        let memory_permissions = parse_memory_permissions(vars)?;
 
         let session_store_dir = vars
             .get("CORROBORE_HTTP_SESSION_STORE_DIR")
@@ -700,6 +736,11 @@ impl ServerConfig {
             admin_auth_token,
             admin_auth_token_source,
             operational_endpoint_policy,
+            memory_workspace_id,
+            memory_actor_id,
+            memory_agent_id,
+            memory_session_id,
+            memory_permissions,
             session_store_dir,
             log_dir,
             request_timeout_ms,
@@ -819,6 +860,53 @@ impl ServerConfig {
             }),
         }
     }
+}
+
+fn trusted_memory_id(
+    vars: &HashMap<String, String>,
+    name: &'static str,
+    default: &str,
+) -> Result<String, ConfigError> {
+    let value = vars
+        .get(name)
+        .map_or(default, String::as_str)
+        .trim()
+        .to_owned();
+    if value.is_empty() || value.len() > 256 {
+        return Err(ConfigError::InvalidEnv { name, value });
+    }
+    Ok(value)
+}
+
+fn parse_memory_permissions(
+    vars: &HashMap<String, String>,
+) -> Result<MemoryPermissions, ConfigError> {
+    let raw = vars
+        .get("CORROBORE_MEMORY_PERMISSIONS")
+        .map_or("read,write,trace,forget,consolidate", String::as_str);
+    let values = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    if values.iter().any(|value| {
+        !matches!(
+            *value,
+            "read" | "write" | "trace" | "forget" | "consolidate"
+        )
+    }) {
+        return Err(ConfigError::InvalidEnv {
+            name: "CORROBORE_MEMORY_PERMISSIONS",
+            value: raw.to_owned(),
+        });
+    }
+    Ok(MemoryPermissions {
+        read: values.contains(&"read"),
+        write: values.contains(&"write"),
+        trace: values.contains(&"trace"),
+        forget: values.contains(&"forget"),
+        consolidate: values.contains(&"consolidate"),
+    })
 }
 
 struct LicenseBundle {
