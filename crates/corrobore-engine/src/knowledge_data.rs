@@ -287,6 +287,8 @@ pub enum ReadFilterOperator {
     NotEqual,
     /// Property presence, independent of its value.
     Exists,
+    /// Property absence, independent of its value.
+    NotExists,
     /// Exact typed membership in a non-empty value set.
     In,
     /// Typed exclusion from a non-empty value set.
@@ -299,6 +301,8 @@ pub enum ReadFilterOperator {
     LessThan,
     /// Inclusive upper-bound comparison.
     LessThanOrEqual,
+    /// Match a string with `*` and `?` glob wildcards.
+    Wildcard,
 }
 
 /// One provider-neutral scalar property predicate.
@@ -326,6 +330,13 @@ pub enum ReadPredicate {
     And(Vec<ReadPredicate>),
     /// At least one child predicate must match.
     Or(Vec<ReadPredicate>),
+    /// Evaluate the child predicate against one item of a nested JSON field.
+    Nested {
+        /// JSON object or array field on the current subject.
+        path: String,
+        /// Predicate whose fields are relative to one nested item.
+        predicate: Box<ReadPredicate>,
+    },
 }
 
 /// Stable ordering direction.
@@ -366,6 +377,9 @@ pub struct ListRequest {
     /// Return the access-filtered total matching the stable snapshot.
     #[serde(default)]
     pub include_total_count: bool,
+    /// Include graph relationships in the candidate record projection.
+    #[serde(default)]
+    pub include_relationships: bool,
 }
 
 impl Default for ListRequest {
@@ -377,6 +391,7 @@ impl Default for ListRequest {
             order_by: Vec::new(),
             limit: 100,
             include_total_count: false,
+            include_relationships: false,
         }
     }
 }
@@ -423,6 +438,12 @@ pub struct CountRequest {
     /// Conjunctive scalar predicates.
     #[serde(default)]
     pub filters: Vec<ReadFilter>,
+    /// Structural predicate evaluated in addition to legacy filters.
+    #[serde(default)]
+    pub predicate: Option<ReadPredicate>,
+    /// Include graph relationships in the candidate record projection.
+    #[serde(default)]
+    pub include_relationships: bool,
 }
 
 /// Calendar interval supported by deterministic date histograms.
@@ -518,6 +539,9 @@ pub struct AggregationPlan {
     pub aggregation: Aggregation,
     /// Hard bound for access-filtered fallback candidates.
     pub candidate_limit: u32,
+    /// Include graph relationships in the candidate record projection.
+    #[serde(default)]
+    pub include_relationships: bool,
 }
 
 impl Default for AggregationPlan {
@@ -527,6 +551,7 @@ impl Default for AggregationPlan {
             predicate: None,
             aggregation: Aggregation::Count,
             candidate_limit: 10_000,
+            include_relationships: false,
         }
     }
 }
@@ -2408,6 +2433,7 @@ impl CorroboreKnowledgeDataProvider<'_> {
         let query = ListRequest {
             kinds: request.kinds,
             filters: request.filters,
+            predicate: request.predicate,
             order_by: Vec::new(),
             limit: 10_000,
             ..ListRequest::default()
@@ -2807,7 +2833,7 @@ fn validate_list_request(request: &ListRequest) -> Result<(), KnowledgeDataError
 
 fn validate_read_filter(filter: &ReadFilter) -> Result<(), KnowledgeDataError> {
     let value_is_valid = match filter.operator {
-        ReadFilterOperator::Exists => filter.value.is_none(),
+        ReadFilterOperator::Exists | ReadFilterOperator::NotExists => filter.value.is_none(),
         ReadFilterOperator::In | ReadFilterOperator::NotIn => filter
             .value
             .as_ref()
@@ -2852,6 +2878,16 @@ fn validate_read_predicate(
                 validate_read_predicate(child, depth + 1, nodes)?;
             }
             Ok(())
+        }
+        ReadPredicate::Nested { path, predicate } => {
+            if path.trim().is_empty() {
+                return Err(KnowledgeDataError::new(
+                    KnowledgeDataErrorCode::InvalidRequest,
+                    "nested predicate paths must not be blank",
+                    false,
+                ));
+            }
+            validate_read_predicate(predicate, depth + 1, nodes)
         }
     }
 }
@@ -2995,8 +3031,13 @@ fn node_to_record(node: Node) -> Result<KnowledgeRecord, KnowledgeDataError> {
         _ => serde_json::to_value(&node).map_err(serialization_error)?,
     };
     let kind = body
-        .get("type")
+        .get("entity_type")
         .and_then(Value::as_str)
+        .or_else(|| body.get("type").and_then(Value::as_str))
+        .or_else(|| match node.property("opencti.field.entity_type") {
+            Some(PropertyValue::String(value)) => Some(value.as_str()),
+            _ => None,
+        })
         .or_else(|| match node.property("opencti.field.type") {
             Some(PropertyValue::String(value)) => Some(value.as_str()),
             _ => None,
@@ -3040,8 +3081,9 @@ fn relationship_to_record(
     let revision = relationship.version();
     let body = relationship_to_value(relationship)?;
     let kind = body
-        .get("type")
+        .get("entity_type")
         .and_then(Value::as_str)
+        .or_else(|| body.get("type").and_then(Value::as_str))
         .unwrap_or("relationship")
         .to_owned();
     Ok(KnowledgeRecord {
@@ -3301,6 +3343,8 @@ fn subject_matches_predicate(subject: &AggregationSubject<'_>, predicate: &ReadP
         ReadPredicate::Or(children) => children
             .iter()
             .any(|child| subject_matches_predicate(subject, child)),
+        ReadPredicate::Nested { path, predicate } => aggregation_subject_field(subject, path)
+            .is_some_and(|value| nested_value_matches_predicate(value, predicate)),
     }
 }
 
@@ -3420,6 +3464,34 @@ fn record_matches_predicate(record: &KnowledgeRecord, predicate: &ReadPredicate)
         ReadPredicate::Or(children) => children
             .iter()
             .any(|child| record_matches_predicate(record, child)),
+        ReadPredicate::Nested { path, predicate } => record_field(record, path)
+            .is_some_and(|value| nested_value_matches_predicate(value, predicate)),
+    }
+}
+
+fn nested_value_matches_predicate(value: &Value, predicate: &ReadPredicate) -> bool {
+    match value {
+        Value::Array(values) => values
+            .iter()
+            .any(|value| nested_subject_matches_predicate(value, predicate)),
+        Value::Null => false,
+        value => nested_subject_matches_predicate(value, predicate),
+    }
+}
+
+fn nested_subject_matches_predicate(value: &Value, predicate: &ReadPredicate) -> bool {
+    match predicate {
+        ReadPredicate::Condition(filter) => {
+            value_matches_filter(nested_json_field(value, &filter.field), filter)
+        }
+        ReadPredicate::And(children) => children
+            .iter()
+            .all(|child| nested_subject_matches_predicate(value, child)),
+        ReadPredicate::Or(children) => children
+            .iter()
+            .any(|child| nested_subject_matches_predicate(value, child)),
+        ReadPredicate::Nested { path, predicate } => nested_json_field(value, path)
+            .is_some_and(|nested| nested_value_matches_predicate(nested, predicate)),
     }
 }
 
@@ -3442,6 +3514,7 @@ fn record_matches_filter(record: &KnowledgeRecord, filter: &ReadFilter) -> bool 
 fn value_matches_filter(actual: Option<&Value>, filter: &ReadFilter) -> bool {
     match filter.operator {
         ReadFilterOperator::Exists => actual.is_some(),
+        ReadFilterOperator::NotExists => actual.is_none(),
         ReadFilterOperator::Equal => {
             actual
                 .zip(filter.value.as_ref())
@@ -3477,6 +3550,21 @@ fn value_matches_filter(actual: Option<&Value>, filter: &ReadFilter) -> bool {
                     actual => expected.iter().all(|value| value != actual),
                 })
         }),
+        ReadFilterOperator::Wildcard => actual.is_some_and(|actual| {
+            filter
+                .value
+                .as_ref()
+                .and_then(Value::as_str)
+                .is_some_and(|pattern| match actual {
+                    Value::Array(values) => values.iter().any(|value| {
+                        value
+                            .as_str()
+                            .is_some_and(|candidate| wildcard_matches(pattern, candidate))
+                    }),
+                    Value::String(candidate) => wildcard_matches(pattern, candidate),
+                    _ => false,
+                })
+        }),
         operator => actual
             .zip(filter.value.as_ref())
             .and_then(|(actual, expected)| compare_values(actual, expected))
@@ -3488,10 +3576,42 @@ fn value_matches_filter(actual: Option<&Value>, filter: &ReadFilter) -> bool {
                 ReadFilterOperator::Equal
                 | ReadFilterOperator::NotEqual
                 | ReadFilterOperator::Exists
+                | ReadFilterOperator::NotExists
                 | ReadFilterOperator::In
-                | ReadFilterOperator::NotIn => false,
+                | ReadFilterOperator::NotIn
+                | ReadFilterOperator::Wildcard => false,
             }),
     }
+}
+
+fn wildcard_matches(pattern: &str, candidate: &str) -> bool {
+    let pattern = pattern.chars().collect::<Vec<_>>();
+    let candidate = candidate.chars().collect::<Vec<_>>();
+    let (mut pattern_index, mut candidate_index) = (0, 0);
+    let (mut star_index, mut star_candidate_index) = (None, 0);
+    while candidate_index < candidate.len() {
+        if pattern_index < pattern.len()
+            && (pattern[pattern_index] == '?'
+                || pattern[pattern_index] == candidate[candidate_index])
+        {
+            pattern_index += 1;
+            candidate_index += 1;
+        } else if pattern_index < pattern.len() && pattern[pattern_index] == '*' {
+            star_index = Some(pattern_index);
+            pattern_index += 1;
+            star_candidate_index = candidate_index;
+        } else if let Some(star) = star_index {
+            pattern_index = star + 1;
+            star_candidate_index += 1;
+            candidate_index = star_candidate_index;
+        } else {
+            return false;
+        }
+    }
+    while pattern_index < pattern.len() && pattern[pattern_index] == '*' {
+        pattern_index += 1;
+    }
+    pattern_index == pattern.len()
 }
 
 fn record_field<'a>(record: &'a KnowledgeRecord, field: &str) -> Option<&'a Value> {

@@ -1,0 +1,43 @@
+# syntax=docker/dockerfile:1.7
+
+ARG OPENCTI_COMMIT=e5d780f11378d584d97261603d10157b62b36978
+
+FROM node:22-alpine3.23 AS source
+ARG OPENCTI_COMMIT
+RUN apk add --no-cache git
+WORKDIR /src
+RUN git clone --filter=blob:none https://github.com/Estance-Labs/opencti.git . \
+    && git checkout --detach "${OPENCTI_COMMIT}" \
+    && test "$(git rev-parse HEAD)" = "${OPENCTI_COMMIT}"
+
+FROM node:22-alpine3.23 AS builder
+RUN apk add --no-cache make g++ python3 python3-dev libmagic \
+    && rm -f /usr/lib/python*/EXTERNALLY-MANAGED \
+    && python3 -m ensurepip \
+    && npm install -g corepack
+COPY --from=source /src/opencti-platform/.yarnrc.yml /opt/opencti/
+WORKDIR /opt/opencti/opencti-graphql
+COPY --from=source /src/opencti-platform/opencti-graphql/package.json /src/opencti-platform/opencti-graphql/yarn.lock ./
+COPY --from=source /src/opencti-platform/opencti-graphql/patch ./patch/
+RUN yarn install --immutable
+COPY --from=source /src/opencti-platform/opencti-graphql/ ./
+RUN yarn vitest run tests/01-unit/database/corrobore-provider-test.ts \
+    && yarn get-connectors-manifest \
+    && yarn check-ts \
+    && yarn build:prod
+
+FROM docker.io/opencti/platform@sha256:636bbb791c512cfa4c55be3d934622c2996db7edc841e3391c9428752009a7ee AS runtime
+WORKDIR /opt/opencti
+COPY --from=builder /opt/opencti/opencti-graphql/build/ ./build/
+COPY --from=builder /opt/opencti/opencti-graphql/config/ ./config/
+COPY --from=builder /opt/opencti/opencti-graphql/src/python/runtime/ ./src/python/runtime/
+COPY packaging/opencti-elastic-free/opencti-entrypoint.sh /usr/local/bin/opencti-corrobore-entrypoint
+RUN chmod 0555 /usr/local/bin/opencti-corrobore-entrypoint
+ENV NODE_ENV=production PYTHONUNBUFFERED=1 NODE_OPTIONS=--max_old_space_size=12288 DATABASE_ENGINE=corrobore
+RUN install -m 0777 -d /opt/opencti/logs /opt/opencti/telemetry /opt/opencti/.support
+EXPOSE 8080
+VOLUME ["/opt/opencti/logs", "/opt/opencti/telemetry", "/opt/opencti/.support"]
+HEALTHCHECK --interval=15s --timeout=5s --start-period=90s --retries=10 \
+  CMD ["node", "-e", "const k=require('node:fs').readFileSync('/run/secrets/opencti-health-key','utf8').trim();fetch('http://127.0.0.1:8080/health?health_access_key='+encodeURIComponent(k)).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+ENTRYPOINT ["/usr/local/bin/opencti-corrobore-entrypoint"]
+CMD ["node", "build/back.js"]

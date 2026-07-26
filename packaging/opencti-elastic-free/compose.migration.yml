@@ -1,0 +1,18 @@
+services:
+  corrobore:
+    environment:
+      CORROBORE_OPENCTI_ELASTIC_FREE: ${CORROBORE_OPENCTI_ELASTIC_FREE:-false}
+      CORROBORE_OPENCTI_SHADOW_REFERENCE_ENDPOINT: ${CORROBORE_OPENCTI_SHADOW_REFERENCE_ENDPOINT:?set CORROBORE_OPENCTI_SHADOW_REFERENCE_ENDPOINT}
+      CORROBORE_OPENCTI_SHADOW_REFERENCE_VERSION: ${CORROBORE_OPENCTI_SHADOW_REFERENCE_VERSION:?set CORROBORE_OPENCTI_SHADOW_REFERENCE_VERSION}
+      CORROBORE_OPENCTI_SHADOW_REFERENCE_AUTH_TOKEN_FILE: /run/secrets/opencti-reference-token
+      CORROBORE_OPENCTI_READ_ROUTING_POLICY_FILE: /migration/read-routing.json
+    secrets:
+      - source: opencti_reference_token
+        target: opencti-reference-token
+        uid: "65532"
+        gid: "65532"
+        mode: 0400
+
+secrets:
+  opencti_reference_token:
+    file: ${OPENCTI_REFERENCE_AUTH_TOKEN_FILE:?set OPENCTI_REFERENCE_AUTH_TOKEN_FILE}

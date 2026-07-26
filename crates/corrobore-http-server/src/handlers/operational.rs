@@ -52,6 +52,7 @@ struct VersionResponse {
     commit: &'static str,
     build_target: String,
     storage_compatibility: StorageCompatibility,
+    opencti_mode: &'static str,
 }
 
 /// Report only whether the HTTP event loop can serve a response.
@@ -109,6 +110,11 @@ pub async fn version(State(state): State<AppState>) -> Response {
             supported_record_formats: ["JsonLinesV1"],
             active_storage_version: durability.storage_version,
             active_record_format: durability.record_format,
+        },
+        opencti_mode: if state.config.opencti_elastic_free {
+            "elastic_free"
+        } else {
+            "reversible_reference"
         },
     })
     .into_response()

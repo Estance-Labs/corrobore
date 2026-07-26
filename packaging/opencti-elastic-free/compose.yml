@@ -1,0 +1,312 @@
+name: opencti-corrobore
+
+x-service-policy: &service-policy
+  restart: unless-stopped
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  corrobore:
+    <<: *service-policy
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: ghcr.io/estance-labs/corrobore:${CORROBORE_VERSION:-0.2.2}
+    environment:
+      CORROBORE_STORAGE_MAX_HOT_NODES: ${CORROBORE_STORAGE_MAX_HOT_NODES:-16384}
+      CORROBORE_STORAGE_MAX_HOT_RELATIONSHIPS: ${CORROBORE_STORAGE_MAX_HOT_RELATIONSHIPS:-32768}
+      CORROBORE_STORAGE_MAX_WARM_ADJACENCY_ENTRIES: ${CORROBORE_STORAGE_MAX_WARM_ADJACENCY_ENTRIES:-65536}
+      CORROBORE_OPENCTI_ELASTIC_FREE: ${CORROBORE_OPENCTI_ELASTIC_FREE:-true}
+      CORROBORE_OPENCTI_READ_ROUTING_POLICY_FILE: ${CORROBORE_OPENCTI_READ_ROUTING_POLICY_FILE:-/etc/corrobore/opencti-read-routing.json}
+      CORROBORE_OPENCTI_RATE_LIMIT_PER_SECOND: ${CORROBORE_OPENCTI_RATE_LIMIT_PER_SECOND:-250}
+      CORROBORE_OPENCTI_RATE_LIMIT_BURST: ${CORROBORE_OPENCTI_RATE_LIMIT_BURST:-10000}
+    secrets:
+      - source: corrobore_auth_token
+        target: corrobore-http-token
+        uid: "65532"
+        gid: "65532"
+        mode: 0400
+      - source: corrobore_tls_certificate
+        target: tls.crt
+        uid: "65532"
+        gid: "65532"
+        mode: 0444
+      - source: corrobore_tls_private_key
+        target: tls.key
+        uid: "65532"
+        gid: "65532"
+        mode: 0400
+    volumes:
+      - corrobore-data:/data
+      - opencti-files:/opencti-files:ro
+      - ${CORROBORE_MIGRATION_STATE_DIR:-./state}:/migration:ro
+      - ./config/read-routing.elastic-free.json:/etc/corrobore/opencti-read-routing.json:ro
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/corrobore", "server", "status", "--config", "/etc/corrobore/corrobore.toml", "--probe-host", "corrobore"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    mem_limit: ${CORROBORE_MEMORY_LIMIT:-2g}
+    cpus: ${CORROBORE_CPU_LIMIT:-2.0}
+    deploy:
+      resources:
+        limits:
+          memory: ${CORROBORE_MEMORY_LIMIT:-2g}
+          cpus: ${CORROBORE_CPU_LIMIT:-2.0}
+
+  file-worker:
+    <<: *service-policy
+    build:
+      context: ../..
+      dockerfile: packaging/opencti-elastic-free/Dockerfile.file-worker
+      args:
+        CORROBORE_VERSION: ${CORROBORE_VERSION:-0.2.2}
+    image: ghcr.io/estance-labs/corrobore-opencti-file-worker:${CORROBORE_VERSION:-0.2.2}
+    depends_on:
+      corrobore:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      opencti:
+        condition: service_healthy
+    environment:
+      CORROBORE_FILE_METADATA_DIR: /data/graph/file-content/metadata
+      CORROBORE_FILE_BLOB_ROOT: /opencti-files
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: opencti
+      MINIO_BUCKET: opencti-bucket
+    secrets:
+      - source: minio_secret_key
+        target: minio-secret-key
+        uid: "65532"
+        gid: "65532"
+        mode: 0400
+    volumes:
+      - corrobore-data:/data
+      - opencti-files:/opencti-files
+    read_only: true
+    tmpfs: ["/tmp:size=64m,nosuid,nodev"]
+    cap_drop: ["ALL"]
+    pids_limit: 64
+    mem_limit: ${FILE_WORKER_MEMORY_LIMIT:-512m}
+    cpus: ${FILE_WORKER_CPU_LIMIT:-1.0}
+    deploy:
+      resources:
+        limits:
+          memory: ${FILE_WORKER_MEMORY_LIMIT:-512m}
+          cpus: ${FILE_WORKER_CPU_LIMIT:-1.0}
+          pids: 64
+
+  redis:
+    <<: *service-policy
+    image: redis:8.2.1-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "allkeys-lru"]
+    volumes: ["redis-data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    mem_limit: ${REDIS_MEMORY_LIMIT:-512m}
+    deploy:
+      resources:
+        limits:
+          memory: ${REDIS_MEMORY_LIMIT:-512m}
+
+  rabbitmq:
+    <<: *service-policy
+    image: rabbitmq:4.1.4-management-alpine
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        export RABBITMQ_DEFAULT_PASS="$$(cat /run/secrets/rabbitmq-password)";
+        exec /usr/local/bin/docker-entrypoint.sh rabbitmq-server
+    environment:
+      RABBITMQ_DEFAULT_USER: opencti
+    secrets:
+      - source: rabbitmq_password
+        target: rabbitmq-password
+        mode: 0400
+    volumes: ["rabbitmq-data:/var/lib/rabbitmq"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    mem_limit: ${RABBITMQ_MEMORY_LIMIT:-1g}
+    deploy:
+      resources:
+        limits:
+          memory: ${RABBITMQ_MEMORY_LIMIT:-1g}
+
+  minio:
+    <<: *service-policy
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: opencti
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio-secret-key
+    secrets:
+      - source: minio_secret_key
+        target: minio-secret-key
+        mode: 0400
+    volumes: ["minio-data:/data"]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    mem_limit: ${MINIO_MEMORY_LIMIT:-1g}
+    deploy:
+      resources:
+        limits:
+          memory: ${MINIO_MEMORY_LIMIT:-1g}
+
+  opencti:
+    <<: *service-policy
+    build:
+      context: ../..
+      dockerfile: packaging/opencti-elastic-free/Dockerfile.opencti
+      args:
+        OPENCTI_COMMIT: e5d780f11378d584d97261603d10157b62b36978
+    image: ghcr.io/estance-labs/opencti-corrobore:${OPENCTI_VERSION:-7.260722.0}
+    depends_on:
+      corrobore:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports: ["127.0.0.1:${OPENCTI_PORT:-8081}:8080"]
+    environment:
+      DATABASE_ENGINE: corrobore
+      CORROBORE__URL: https://corrobore:8080
+      CORROBORE__AUTH_TOKEN_FILE: /run/secrets/corrobore-http-token
+      CORROBORE__TIMEOUT_MS: ${OPENCTI_CORROBORE_TIMEOUT_MS:-60000}
+      NODE_OPTIONS: --max_old_space_size=${OPENCTI_NODE_MAX_OLD_SPACE_MB:-3072}
+      NODE_EXTRA_CA_CERTS: /run/secrets/corrobore-tls.crt
+      APP__PORT: "8080"
+      APP__BASE_URL: ${OPENCTI_BASE_URL:-http://localhost:8081}
+      APP__ADMIN__EMAIL: ${OPENCTI_ADMIN_EMAIL:-admin@example.invalid}
+      REDIS__HOSTNAME: redis
+      REDIS__PORT: "6379"
+      RABBITMQ__HOSTNAME: rabbitmq
+      RABBITMQ__PORT: "5672"
+      RABBITMQ__USERNAME: opencti
+      MINIO__ENDPOINT: minio
+      MINIO__PORT: "9000"
+      MINIO__USE_SSL: "false"
+      MINIO__ACCESS_KEY: opencti
+    secrets:
+      - source: opencti_admin_password
+        target: opencti-admin-password
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: opencti_admin_token
+        target: opencti-admin-token
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: opencti_health_key
+        target: opencti-health-key
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: opencti_encryption_key
+        target: opencti-encryption-key
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: corrobore_auth_token
+        target: corrobore-http-token
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: rabbitmq_password
+        target: rabbitmq-password
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: minio_secret_key
+        target: minio-secret-key
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: corrobore_tls_certificate
+        target: corrobore-tls.crt
+        uid: "1000"
+        gid: "1000"
+        mode: 0444
+    volumes:
+      - opencti-data:/opt/opencti/.support
+      - opencti-files:/opt/opencti/files
+    healthcheck:
+      test: ["CMD", "node", "-e", "const k=require('node:fs').readFileSync('/run/secrets/opencti-health-key','utf8').trim();fetch('http://127.0.0.1:8080/health?health_access_key='+encodeURIComponent(k)).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+    mem_limit: ${OPENCTI_MEMORY_LIMIT:-4g}
+    cpus: ${OPENCTI_CPU_LIMIT:-2.0}
+    deploy:
+      resources:
+        limits:
+          memory: ${OPENCTI_MEMORY_LIMIT:-4g}
+          cpus: ${OPENCTI_CPU_LIMIT:-2.0}
+
+  worker:
+    <<: *service-policy
+    image: opencti/worker:${OPENCTI_VERSION:-7.260722.0}
+    depends_on:
+      opencti:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - export OPENCTI_TOKEN="$$(cat /run/secrets/opencti-admin-token)"; exec python3 /opt/opencti-worker/worker.py
+    environment:
+      OPENCTI_URL: http://opencti:8080
+      OPENCTI_SSL_VERIFY: "false"
+      WORKER_LOG_LEVEL: info
+    secrets:
+      - source: opencti_admin_token
+        target: opencti-admin-token
+        mode: 0400
+    mem_limit: ${OPENCTI_WORKER_MEMORY_LIMIT:-1g}
+    cpus: ${OPENCTI_WORKER_CPU_LIMIT:-1.0}
+    deploy:
+      resources:
+        limits:
+          memory: ${OPENCTI_WORKER_MEMORY_LIMIT:-1g}
+          cpus: ${OPENCTI_WORKER_CPU_LIMIT:-1.0}
+
+secrets:
+  opencti_admin_password:
+    file: "${OPENCTI_ADMIN_PASSWORD_FILE:?set OPENCTI_ADMIN_PASSWORD_FILE}"
+  opencti_admin_token:
+    file: "${OPENCTI_ADMIN_TOKEN_FILE:?set OPENCTI_ADMIN_TOKEN_FILE}"
+  opencti_health_key:
+    file: "${OPENCTI_HEALTH_KEY_FILE:?set OPENCTI_HEALTH_KEY_FILE}"
+  opencti_encryption_key:
+    file: "${OPENCTI_ENCRYPTION_KEY_FILE:?set OPENCTI_ENCRYPTION_KEY_FILE}"
+  corrobore_auth_token:
+    file: "${CORROBORE_AUTH_TOKEN_FILE:?set CORROBORE_AUTH_TOKEN_FILE}"
+  rabbitmq_password:
+    file: "${RABBITMQ_PASSWORD_FILE:?set RABBITMQ_PASSWORD_FILE}"
+  minio_secret_key:
+    file: "${MINIO_ROOT_PASSWORD_FILE:?set MINIO_ROOT_PASSWORD_FILE}"
+  corrobore_tls_certificate:
+    file: "${CORROBORE_TLS_CERTIFICATE_FILE:?set CORROBORE_TLS_CERTIFICATE_FILE}"
+  corrobore_tls_private_key:
+    file: "${CORROBORE_TLS_PRIVATE_KEY_FILE:?set CORROBORE_TLS_PRIVATE_KEY_FILE}"
+
+volumes:
+  corrobore-data:
+  opencti-data:
+  opencti-files:
+  redis-data:
+  rabbitmq-data:
+  minio-data:

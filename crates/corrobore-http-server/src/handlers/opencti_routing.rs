@@ -10,8 +10,8 @@ use axum::{
     extract::{Query, State},
 };
 use corrobore_engine::{
-    ConsistencyLevel, KnowledgeDataRequest, KnowledgeDataResponseEnvelope, ProviderDescriptor,
-    ProviderExecution, ProviderTarget, ReadRoutingAuditEvent, ReadRoutingGates,
+    ConsistencyLevel, KnowledgeDataOperation, KnowledgeDataRequest, KnowledgeDataResponseEnvelope,
+    ProviderDescriptor, ProviderExecution, ProviderTarget, ReadRoutingAuditEvent, ReadRoutingGates,
     ReadRoutingMetadata, RoutingSignal, ShadowComparisonGate, ShadowRequestMetadata,
     compare_shadow_read,
 };
@@ -63,6 +63,26 @@ pub async fn execute_opencti_routed_read(
     State(state): State<AppState>,
     Json(payload): Json<OpenCtiRoutedReadRequest>,
 ) -> Result<Json<KnowledgeDataResponseEnvelope>, ApiError> {
+    if matches!(
+        &payload.request.operation,
+        KnowledgeDataOperation::Initialize(_) | KnowledgeDataOperation::Health(_)
+    ) {
+        let execution = tokio::time::timeout(
+            Duration::from_millis(state.config.opencti_shadow.timeout_ms),
+            provider_future(&state, ProviderTarget::Corrobore, payload.request, None)?,
+        )
+        .await
+        .map_err(|_| {
+            ApiError::timeout(
+                "OPENCTI_PROVIDER_NEGOTIATION_TIMEOUT",
+                "Corrobore provider negotiation exceeded the configured deadline",
+            )
+        })?
+        .map_err(|reason| {
+            ApiError::service_unavailable("OPENCTI_PROVIDER_NEGOTIATION_FAILED", reason)
+        })?;
+        return Ok(Json(execution.envelope));
+    }
     let primary_projection_lag = state
         .opencti_write
         .lock()
@@ -107,11 +127,17 @@ pub async fn execute_opencti_routed_read(
             Some(state.config.opencti_shadow.release.as_str()),
             100,
         );
-    let gates = gates_from_runtime(
+    let mut gates = gates_from_runtime(
         &sync,
         &recent_reports,
         state.config.opencti_shadow.reference_endpoint.is_some(),
     );
+    if state.config.opencti_elastic_free {
+        // A fresh Elastic-free instance has no reference synchronization phase.
+        // Security/parity/corruption signals still fail closed in the router.
+        gates.synchronization_ready = true;
+        gates.reference_fresh = false;
+    }
     let decision = state
         .opencti_routing
         .lock()

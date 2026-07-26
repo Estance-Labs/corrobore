@@ -80,6 +80,7 @@ use crate::{
         import::{import_stix_bundle, import_stix_bundle_file},
         license::{admin_license_status, license_status},
         metrics::metrics,
+        opencti_files::execute_opencti_file_command,
         opencti_reconciliation::{execute_opencti_reconciliation, opencti_reconciliation_status},
         opencti_routing::{
             execute_opencti_routed_read, opencti_routing_decisions, opencti_routing_rollback,
@@ -305,6 +306,11 @@ impl AppState {
             .transpose()
             .map_err(|reason| AppStateInitError::OpenCtiRoutingStateFailed { reason })?
             .unwrap_or_else(default_read_routing_policy);
+        if config.opencti_elastic_free && routing_policy.mode != ReadRoutingMode::PrimaryReads {
+            return Err(AppStateInitError::OpenCtiRoutingStateFailed {
+                reason: "Elastic-free mode requires a primary_reads routing policy".to_owned(),
+            });
+        }
         let opencti_routing = OpenCtiReadRoutingRuntime::open(
             routing_state_path,
             routing_policy,
@@ -686,22 +692,26 @@ fn canonical_projection_for_knowledge_data(
             &request.kinds,
             &request.filters,
             request.predicate.as_ref(),
+            request.include_relationships,
         )),
         KnowledgeDataOperation::Paginate(request) => Some(canonical_record_projection(
             &request.query.kinds,
             &request.query.filters,
             request.query.predicate.as_ref(),
+            request.query.include_relationships,
         )),
         KnowledgeDataOperation::Count(request) => Some(canonical_record_projection(
             &request.kinds,
             &request.filters,
-            None,
+            request.predicate.as_ref(),
+            request.include_relationships,
         )),
         KnowledgeDataOperation::Aggregate(request) => {
             let mut projection = canonical_record_projection(
                 &request.plan.kinds,
                 &[],
                 request.plan.predicate.as_ref(),
+                request.plan.include_relationships,
             );
             if request.plan.kinds.is_empty()
                 || request
@@ -746,15 +756,19 @@ fn canonical_record_projection(
     kinds: &[String],
     filters: &[ReadFilter],
     predicate: Option<&ReadPredicate>,
+    include_relationships: bool,
 ) -> CanonicalProjectionRequest {
-    let request = if kinds.len() == 1 {
+    let mut request = if kinds.len() == 1 {
         CanonicalProjectionRequest::for_label(opencti_type_label(&kinds[0]))
     } else {
         CanonicalProjectionRequest::all_nodes()
     };
+    if include_relationships {
+        request = request.with_relationships(None);
+    }
     let mut pushdown = filters
         .iter()
-        .map(canonical_property_filter)
+        .filter_map(canonical_property_filter)
         .collect::<Vec<_>>();
     if let Some(predicate) = predicate {
         collect_conjunctive_pushdown(predicate, &mut pushdown);
@@ -767,7 +781,11 @@ fn collect_conjunctive_pushdown(
     filters: &mut Vec<CanonicalPropertyFilter>,
 ) {
     match predicate {
-        ReadPredicate::Condition(filter) => filters.push(canonical_property_filter(filter)),
+        ReadPredicate::Condition(filter) => {
+            if let Some(filter) = canonical_property_filter(filter) {
+                filters.push(filter);
+            }
+        }
         ReadPredicate::And(children) => {
             for child in children {
                 if !matches!(child, ReadPredicate::Or(_)) {
@@ -777,7 +795,7 @@ fn collect_conjunctive_pushdown(
         }
         // An OR branch cannot be intersected with the other compact indexes
         // without changing semantics. It remains in the bounded exact evaluator.
-        ReadPredicate::Or(_) => {}
+        ReadPredicate::Or(_) | ReadPredicate::Nested { .. } => {}
     }
 }
 
@@ -803,8 +821,8 @@ fn canonical_graph_projection(
     })
 }
 
-fn canonical_property_filter(filter: &ReadFilter) -> CanonicalPropertyFilter {
-    CanonicalPropertyFilter {
+fn canonical_property_filter(filter: &ReadFilter) -> Option<CanonicalPropertyFilter> {
+    Some(CanonicalPropertyFilter {
         field: match filter.field.as_str() {
             "id" => "opencti.canonical_id".to_owned(),
             field if field.starts_with("opencti.") => field.to_owned(),
@@ -814,15 +832,17 @@ fn canonical_property_filter(filter: &ReadFilter) -> CanonicalPropertyFilter {
             ReadFilterOperator::Equal => CanonicalPropertyOperator::Equal,
             ReadFilterOperator::NotEqual => CanonicalPropertyOperator::NotEqual,
             ReadFilterOperator::Exists => CanonicalPropertyOperator::Exists,
+            ReadFilterOperator::NotExists => CanonicalPropertyOperator::NotExists,
             ReadFilterOperator::In => CanonicalPropertyOperator::In,
             ReadFilterOperator::NotIn => CanonicalPropertyOperator::NotIn,
             ReadFilterOperator::GreaterThan => CanonicalPropertyOperator::GreaterThan,
             ReadFilterOperator::GreaterThanOrEqual => CanonicalPropertyOperator::GreaterThanOrEqual,
             ReadFilterOperator::LessThan => CanonicalPropertyOperator::LessThan,
             ReadFilterOperator::LessThanOrEqual => CanonicalPropertyOperator::LessThanOrEqual,
+            ReadFilterOperator::Wildcard => return None,
         },
         value: filter.value.clone(),
-    }
+    })
 }
 
 fn opencti_type_label(kind: &str) -> String {
@@ -957,6 +977,9 @@ pub fn build_router(state: AppState) -> Router {
     let import_routes = Router::new()
         .route("/v1/import/stix", post(import_stix_bundle))
         .route("/v1/import/stix/file", post(import_stix_bundle_file))
+        .layer(DefaultBodyLimit::max(state.config.import_max_body_bytes));
+
+    let opencti_routes = Router::new()
         .route("/v1/opencti/sync/batches", post(apply_opencti_sync_batch))
         .route("/v1/opencti/sync/status", get(opencti_sync_status))
         .route(
@@ -966,6 +989,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/opencti/shadow/reports", get(opencti_shadow_reports))
         .route("/v1/opencti/reads", post(execute_opencti_routed_read))
         .route("/v1/opencti/writes", post(execute_opencti_write))
+        .route("/v1/opencti/files", post(execute_opencti_file_command))
         .route("/v1/opencti/writes/status", get(opencti_write_status))
         .route(
             "/v1/opencti/reconciliation",
@@ -988,7 +1012,7 @@ pub fn build_router(state: AppState) -> Router {
     // 2.3: a global token-bucket rate limiter guards all protected routes.
     let governor_config = Arc::new(
         GovernorConfigBuilder::default()
-            .per_second(state.config.rate_limit_per_second)
+            .period(rate_limit_period(state.config.rate_limit_per_second))
             .burst_size(state.config.rate_limit_burst)
             .key_extractor(GlobalKeyExtractor)
             .finish()
@@ -1002,6 +1026,27 @@ pub fn build_router(state: AppState) -> Router {
             require_bearer_auth,
         ))
         .layer(GovernorLayer::new(governor_config));
+
+    // OpenCTI bootstrapping generates a bounded burst of authenticated provider
+    // calls. Isolate that traffic so raising its allowance does not weaken the
+    // global limit protecting Corrobore's other APIs.
+    let opencti_governor_config = Arc::new(
+        GovernorConfigBuilder::default()
+            .period(rate_limit_period(
+                state.config.opencti_rate_limit_per_second,
+            ))
+            .burst_size(state.config.opencti_rate_limit_burst)
+            .key_extractor(GlobalKeyExtractor)
+            .finish()
+            .expect("OpenCTI rate limiter configuration must be valid"),
+    );
+    let opencti_routes = opencti_routes
+        .layer(DefaultBodyLimit::max(state.config.import_max_body_bytes))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_bearer_auth,
+        ))
+        .layer(GovernorLayer::new(opencti_governor_config));
 
     let operational = Router::new()
         .route("/health", get(health))
@@ -1049,6 +1094,7 @@ pub fn build_router(state: AppState) -> Router {
             post(transition_opencti_write_authority),
         )
         .merge(protected)
+        .merge(opencti_routes)
         .merge(operational)
         .with_state(state.clone());
 
@@ -1059,6 +1105,10 @@ pub fn build_router(state: AppState) -> Router {
         ))
         .layer(http_trace)
         .layer(middleware::from_fn(correlate_request))
+}
+
+fn rate_limit_period(requests_per_second: u64) -> Duration {
+    Duration::from_nanos(1_000_000_000_u64.div_ceil(requests_per_second))
 }
 
 async fn lifecycle_request_gate(
@@ -1197,6 +1247,7 @@ mod tests {
                 value: Some(json!("2026-01-01T00:00:00.000Z")),
             }],
             None,
+            false,
         );
         assert_eq!(
             filtered.node_label.as_deref(),
@@ -1231,13 +1282,21 @@ mod tests {
                 }),
             ]),
         ]);
-        let structural =
-            super::canonical_record_projection(&["indicator".to_owned()], &[], Some(&predicate));
+        let structural = super::canonical_record_projection(
+            &["indicator".to_owned()],
+            &[],
+            Some(&predicate),
+            false,
+        );
         assert_eq!(structural.property_filters.len(), 1);
         assert_eq!(
             structural.property_filters[0].operator,
             CanonicalPropertyOperator::In
         );
+
+        let relationships =
+            super::canonical_record_projection(&["uses".to_owned()], &[], None, true);
+        assert!(relationships.include_relationships);
 
         let aggregation = canonical_projection_for_knowledge_data(
             &KnowledgeDataOperation::Aggregate(AggregateRequest {

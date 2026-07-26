@@ -3424,6 +3424,43 @@ async fn rate_limit_contract_returns_429_when_burst_exceeded() {
     assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
 }
 
+#[tokio::test]
+async fn rate_limit_contract_replenishes_at_the_configured_requests_per_second() {
+    let extra_env = HashMap::from([
+        (
+            "CORROBORE_HTTP_RATE_LIMIT_PER_SECOND".to_owned(),
+            "100".to_owned(),
+        ),
+        ("CORROBORE_HTTP_RATE_LIMIT_BURST".to_owned(), "1".to_owned()),
+    ]);
+    let app = test_app_with_store_dir_and_extra_env(unique_store_dir("rate-replenish"), extra_env);
+    let build_request = || {
+        Request::builder()
+            .method(Method::POST)
+            .uri("/v1/cypher/read")
+            .header(header::AUTHORIZATION, "Bearer token-123")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({ "query": "MATCH (n) RETURN n LIMIT 1", "mode": "read" }).to_string(),
+            ))
+            .expect("request should build")
+    };
+
+    assert_eq!(
+        app.clone().oneshot(build_request()).await.unwrap().status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        app.clone().oneshot(build_request()).await.unwrap().status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    assert_eq!(
+        app.oneshot(build_request()).await.unwrap().status(),
+        StatusCode::OK
+    );
+}
+
 // Issue #239 (§7 observability): the `/metrics` endpoint completes the
 // observability story by exposing the existing session-expiration health
 // metrics in the Prometheus text exposition format. Intent validated here:

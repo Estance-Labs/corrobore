@@ -72,6 +72,7 @@ nav:
     - Standalone Configuration: user-guide/standalone-configuration.md
     - Standalone Operations: user-guide/standalone-operations.md
     - Database Operations: user-guide/database-operations.md
+    - Elastic-free OpenCTI Operations: user-guide/opencti-elastic-free-operations.md
   - TAXII Ingestion: user-guide/ingestion.md
   - For LLM Agents: for-llms.md
   - Skills:
@@ -104,6 +105,7 @@ nav:
     - OpenCTI Transactional Writes: developer-guide/opencti-transactional-writes.md
     - OpenCTI Merge and Reconciliation: developer-guide/opencti-merge-reconciliation.md
     - Standalone Acceptance Matrix: acceptance/standalone-server.md
+    - Elastic-free OpenCTI Acceptance: acceptance/opencti-elastic-free.md
     - Release Notes Process: developer-guide/release-notes-process.md
   - Release Notes:
     - v0.2.2: release-notes/v0.2.2.md

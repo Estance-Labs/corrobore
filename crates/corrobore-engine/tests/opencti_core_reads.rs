@@ -12,8 +12,8 @@ use corrobore_engine::{
     GraphDirection, GraphReadPolicy, KnowledgeDataErrorCode, KnowledgeDataOperation,
     KnowledgeDataOutcome, KnowledgeDataRequest, KnowledgeDataResponse, ListRequest,
     NeighborsRequest, PaginateRequest, ProviderDescriptor, ProviderExecution, ReadFilter,
-    ReadFilterOperator, ReadOrder, RequestContext, ShadowComparisonGate, SortDirection,
-    SubgraphRequest, TraverseRequest, compare_shadow_read,
+    ReadFilterOperator, ReadOrder, ReadPredicate, RequestContext, ShadowComparisonGate,
+    SortDirection, SubgraphRequest, TraverseRequest, compare_shadow_read,
 };
 use graph_core::{Graph, NodeId};
 use opencti_adapter::{MappedRecord, OpenCtiAdapter};
@@ -289,6 +289,8 @@ fn fundamental_corpus_reads_match_reference_ids_properties_counts_and_ordering()
                 operator: ReadFilterOperator::Exists,
                 value: None,
             }],
+            predicate: None,
+            include_relationships: false,
         }),
         system_access(),
         "core-count",
@@ -393,6 +395,47 @@ fn simple_filters_and_access_context_hide_inaccessible_values() {
     let serialized = serde_json::to_string(&clear_indicators).expect("page serializes");
     assert!(!serialized.contains("Documentation domain indicator"));
     assert!(!serialized.contains("Synthetic Sample"));
+}
+
+#[test]
+fn count_preserves_nested_predicates_and_missing_field_semantics() {
+    let mut engine = engine_with_graph(corpus_graph());
+    let response = execute(
+        &mut engine,
+        KnowledgeDataOperation::Count(CountRequest {
+            filter: Value::Null,
+            kinds: vec!["indicator".to_owned()],
+            filters: Vec::new(),
+            predicate: Some(ReadPredicate::And(vec![
+                ReadPredicate::Condition(ReadFilter {
+                    field: "confidence".to_owned(),
+                    operator: ReadFilterOperator::NotExists,
+                    value: None,
+                }),
+                ReadPredicate::Or(vec![
+                    ReadPredicate::Condition(ReadFilter {
+                        field: "name".to_owned(),
+                        operator: ReadFilterOperator::Equal,
+                        value: Some(json!("Documentation IPv4 indicator")),
+                    }),
+                    ReadPredicate::Condition(ReadFilter {
+                        field: "name".to_owned(),
+                        operator: ReadFilterOperator::Equal,
+                        value: Some(json!("Documentation domain indicator")),
+                    }),
+                ]),
+            ])),
+            include_relationships: false,
+        }),
+        system_access(),
+        "count-nested-missing",
+    );
+    match response.outcome {
+        KnowledgeDataOutcome::Success {
+            response: KnowledgeDataResponse::Count(result),
+        } => assert_eq!(result.count, 2),
+        other => panic!("expected nested count, got {other:?}"),
+    }
 }
 
 #[test]

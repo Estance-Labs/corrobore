@@ -308,6 +308,35 @@ fn valid_toml_starts_a_foreground_server_listener() {
 }
 
 #[test]
+fn status_accepts_a_dns_probe_host_without_overriding_the_bind_address() {
+    let directory = temp_dir("status-probe-host");
+    let config = write_config(
+        &directory,
+        "[server]\nhost = \"127.0.0.1\"\nport = 9\nauth_token = \"status-secret\"\n",
+    );
+
+    let output = run(corrobore().args([
+        "server",
+        "status",
+        "--config",
+        config.to_str().expect("UTF-8 path"),
+        "--probe-host",
+        "corrobore",
+        "--query-timeout-ms",
+        "50",
+    ]));
+
+    assert_eq!(
+        output.status.code(),
+        Some(8),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("server status=unavailable"));
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("expected an IP address"));
+}
+
+#[test]
 fn cli_values_override_environment_and_file_values() {
     let directory = temp_dir("precedence");
     let config = write_config(
@@ -535,6 +564,8 @@ opencti_sync_max_operations = 64
 opencti_sync_max_replay_identities = 128
 rate_limit_per_second = 25
 rate_limit_burst = 75
+opencti_rate_limit_per_second = 250
+opencti_rate_limit_burst = 2000
 
 [interfaces]
 enabled = ["http"]
@@ -575,6 +606,8 @@ enabled = false
         "128",
         "25",
         "75",
+        "250",
+        "2000",
         "60000",
         "http",
     ] {
