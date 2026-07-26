@@ -63,8 +63,8 @@ Application errors use the JSON envelope above. Transport middleware can reject 
 | `CORROBORE_OPENCTI_SHADOW_REFERENCE_AUTH_TOKEN_FILE` | unset | Protected file containing the reference-provider bearer token. |
 | `CORROBORE_OPENCTI_SHADOW_RELEASE` | package version | Bounded Corrobore release label used by parity and latency metrics. |
 | `CORROBORE_OPENCTI_SHADOW_SAMPLE_BASIS_POINTS` | `0` | Deterministic fallback sample rate from `0` through `10000`. |
-| `CORROBORE_OPENCTI_SHADOW_MAX_CONCURRENCY` | `4` | Independent shadow and dual-write concurrency ceiling; excess work receives explicit backpressure. |
-| `CORROBORE_OPENCTI_SHADOW_TIMEOUT_MS` | `2000` | Independent shadow and per-provider dual-write deadline. |
+| `CORROBORE_OPENCTI_SHADOW_MAX_CONCURRENCY` | `4` | Independent shadow and primary-write concurrency ceiling; excess work receives explicit backpressure. |
+| `CORROBORE_OPENCTI_SHADOW_TIMEOUT_MS` | `2000` | Independent shadow, canonical write and reference-projection deadline. |
 | `CORROBORE_OPENCTI_SHADOW_MAX_REPORTS` | `10000` | Bounded durable privacy-safe report retention. |
 | `CORROBORE_OPENCTI_SHADOW_SAMPLING_POLICY_FILE` | unset | JSON rules selecting environment, operation, query class, entity, organization, tenant, cohort, and percentage. |
 | `CORROBORE_OPENCTI_SHADOW_BASELINE_FILE` | unset | JSON list of exact divergence fingerprints with required owner and expiry. |
@@ -307,6 +307,23 @@ Error behavior:
 - `401 AUTH_INVALID`: invalid admin token.
 - `403 ADMIN_AUTH_NOT_CONFIGURED`: server has no `CORROBORE_HTTP_ADMIN_AUTH_TOKEN` configured.
 
+## `POST /v1/admin/storage/snapshots`
+
+Creates a consistent online canonical snapshot through the administrative
+Bearer boundary. See [Database operations](database-operations.md) for request,
+restore, retention, and object-store rules.
+
+## `POST /v1/admin/storage/indexes/rebuild`
+
+Rebuilds selected provider-owned indexes from canonical state through the
+administrative Bearer boundary. Progress and terminal outcome are visible in
+the database-operations status.
+
+## `GET /v1/admin/storage/operations`
+
+Returns bounded status for online snapshot, restore, migration, compaction and
+index-rebuild operations without exposing credentials or record payloads.
+
 ## `POST /v1/import/stix`
 
 Imports a STIX 2.1 bundle through one runtime mutation per object.
@@ -362,10 +379,10 @@ values are exported on `/metrics`.
 ## `POST /v1/opencti/writes`
 
 Executes a create, update, delete, relationship/access-policy mutation, merge,
-or ordered bulk through the versioned Knowledge Data Engine contract. During the
-migration period the configured Elasticsearch/OpenSearch endpoint remains
-authoritative: it is called first, the exact request is mirrored into
-Corrobore, and its response envelope is returned unchanged.
+or ordered bulk through the versioned Knowledge Data Engine contract. Corrobore
+is committed first and its response is authoritative. Elasticsearch/OpenSearch
+is updated afterward through the durable ordered outbox; an outage retains lag
+without losing or rejecting the accepted canonical write.
 
 A non-empty `context.idempotency_key` is mandatory. Persistent Corrobore
 acknowledgement occurs only after WAL intent, canonical records, adjacency,
@@ -377,11 +394,35 @@ for the request example, recovery rules and configured bounds.
 
 ## `GET /v1/opencti/writes/status`
 
-Returns write counters, pending/reconciled/quarantined dual-write records and
-WAL-bound audit receipts. The response contains hashes, correlation/source
-offsets, revisions and outcomes only; it excludes record content, tokens and
-original idempotency keys. Unresolved reconciliation records are never evicted
-to admit new work.
+Returns write counters, authority, outbox depth/lag/retries/quarantine,
+reconstruction count, ordered projection records and WAL-bound audit receipts.
+Original idempotency keys and tokens are excluded. During projection lag,
+`read_your_writes` requests are served from Corrobore.
+
+Operators use the admin-token routes below after an outage or rollback trigger.
+See [OpenCTI transactional writes](../developer-guide/opencti-transactional-writes.md)
+for the complete rollback runbook.
+
+## `POST /v1/admin/opencti/projection/drain`
+
+Retries pending entries in global sequence order and stops at the first
+retryable reference failure. Exact canonical/reference outcomes are required
+before an entry becomes delivered.
+
+## `POST /v1/admin/opencti/reconstruction`
+
+Returns every canonical OpenCTI record losslessly and deterministically with
+the captured outbox high-water sequence for a clean reference rebuild.
+
+## `POST /v1/admin/opencti/authority/suspend`
+
+Immediately and durably suspends new mutations for one declared rollback
+trigger.
+
+## `POST /v1/admin/opencti/authority`
+
+Assigns exclusive write authority only after the required reference-health,
+replay-completion and parity-verification gates pass.
 
 ## `POST /v1/opencti/reconciliation`
 

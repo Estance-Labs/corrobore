@@ -1223,7 +1223,7 @@ async fn opencti_shadow_read_returns_reference_and_persists_correlated_parity_re
 }
 
 #[tokio::test]
-async fn opencti_transactional_writes_are_dual_written_and_partial_failures_are_durable() {
+async fn opencti_transactional_writes_commit_corrobore_before_verified_reference_projection() {
     async fn reference_provider(
         Json(request): Json<corrobore_engine::KnowledgeDataRequest>,
     ) -> Json<corrobore_engine::KnowledgeDataResponseEnvelope> {
@@ -1275,6 +1275,10 @@ async fn opencti_transactional_writes_are_dual_written_and_partial_failures_are_
         unique_store_dir("opencti-write-http-sessions"),
         HashMap::from([
             ("CORROBORE_STORAGE_MODE".to_owned(), "persistent".to_owned()),
+            (
+                "CORROBORE_HTTP_ADMIN_AUTH_TOKEN".to_owned(),
+                "admin-token-123".to_owned(),
+            ),
             (
                 "CORROBORE_STORAGE_DIR".to_owned(),
                 storage_root.display().to_string(),
@@ -1344,6 +1348,89 @@ async fn opencti_transactional_writes_are_dual_written_and_partial_failures_are_
     assert_eq!(payload["outcome"]["status"], "success");
     assert_eq!(payload["outcome"]["response"]["data"]["revision"], 1);
 
+    reference_server.abort();
+    let during_outage = write(
+        "idempotency--http-outage",
+        "correlation--http-outage",
+        json!({
+            "operation": "create",
+            "request": {
+                "record": {"id": "indicator--outage", "type": "indicator", "name": "Outage"}
+            }
+        }),
+    );
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/opencti/writes")
+                .header(header::AUTHORIZATION, "Bearer token-123")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(during_outage.to_string()))
+                .expect("outage transactional write request should build"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("outage transactional write response should be readable");
+    let payload: Value =
+        serde_json::from_slice(&body).expect("outage transactional write response should be JSON");
+    assert_eq!(payload["outcome"]["status"], "success");
+
+    let read_your_write = json!({
+        "request": {
+            "contract_version": {"major": 1, "minor": 0},
+            "context": {
+                "request_id": "request--read-outage",
+                "correlation_id": "correlation--read-outage",
+                "access": {
+                    "subject_id": "identity--writer",
+                    "organization_ids": [],
+                    "marking_ids": [],
+                    "tenant_id": null,
+                    "roles": ["system"],
+                    "attributes": {}
+                },
+                "consistency": "read_your_writes"
+            },
+            "operation": {
+                "operation": "get_by_id",
+                "request": {"id": "indicator--outage"}
+            }
+        },
+        "metadata": {
+            "environment": "test",
+            "entity_type": "indicator",
+            "user_cohort": "contract",
+            "feature_flags": [],
+            "session_id": "session--outage",
+            "index_generation": "generation--outage"
+        }
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/opencti/reads")
+                .header(header::AUTHORIZATION, "Bearer token-123")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(read_your_write.to_string()))
+                .expect("read-your-writes request should build"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("read-your-writes response should be readable");
+    let payload: Value =
+        serde_json::from_slice(&body).expect("read-your-writes response should be JSON");
+    assert_eq!(payload["outcome"]["status"], "success");
+
     let partial = write(
         "idempotency--http-partial",
         "correlation--http-partial",
@@ -1372,6 +1459,7 @@ async fn opencti_transactional_writes_are_dual_written_and_partial_failures_are_
     assert_eq!(response.status(), StatusCode::OK);
 
     let status = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method(Method::GET)
@@ -1387,15 +1475,20 @@ async fn opencti_transactional_writes_are_dual_written_and_partial_failures_are_
         .expect("transactional write status should be readable");
     let payload: Value =
         serde_json::from_slice(&body).expect("transactional write status should be JSON");
-    assert_eq!(payload["result"]["pending_reconciliation"], 1);
-    assert_eq!(payload["result"]["fully_reconciled"], false);
-    assert_eq!(payload["reconciliations"][1]["status"], "pending");
+    assert_eq!(payload["result"]["write_authority"], "corrobore_primary");
+    assert_eq!(payload["result"]["projection_outbox_depth"], 1);
+    assert_eq!(payload["result"]["projection_retries"], 1);
+    assert_eq!(payload["result"]["fully_synchronized"], false);
+    assert_eq!(payload["projections"][0]["status"], "delivered");
+    assert_eq!(payload["projections"][1]["status"], "pending");
+    assert!(payload["projections"][0].get("request").is_none());
+    assert!(payload["projections"][0].get("expected_response").is_none());
     assert_eq!(
         payload["audits"]
             .as_array()
             .expect("audit records should be an array")
             .len(),
-        1
+        2
     );
     assert_eq!(
         payload["audits"][0]["correlation_id"],
@@ -1410,7 +1503,54 @@ async fn opencti_transactional_writes_are_dual_written_and_partial_failures_are_
             .contains("idempotency--http-create")
     );
 
-    reference_server.abort();
+    let reconstruction = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/admin/opencti/reconstruction")
+                .header(header::AUTHORIZATION, "Bearer admin-token-123")
+                .body(Body::empty())
+                .expect("reference reconstruction request should build"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reconstruction.status(), StatusCode::OK);
+    let body = to_bytes(reconstruction.into_body(), usize::MAX)
+        .await
+        .expect("reference reconstruction response should be readable");
+    let payload: Value =
+        serde_json::from_slice(&body).expect("reference reconstruction response should be JSON");
+    assert_eq!(
+        payload["result"]["records"]
+            .as_array()
+            .expect("reconstruction records should be an array")
+            .len(),
+        2
+    );
+
+    let metrics = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/metrics")
+                .body(Body::empty())
+                .expect("primary projection metrics request should build"),
+        )
+        .await
+        .unwrap();
+    let body = to_bytes(metrics.into_body(), usize::MAX)
+        .await
+        .expect("primary projection metrics should be readable");
+    let metrics = String::from_utf8(body.to_vec()).expect("metrics should be UTF-8");
+    assert!(metrics.contains("corrobore_opencti_projection_outbox_depth 1"));
+    assert!(metrics.contains("corrobore_opencti_projection_lag 1"));
+    assert!(metrics.contains("corrobore_opencti_projection_retries_total 1"));
+    assert!(metrics.contains("corrobore_opencti_projection_reconstruction_total 1"));
+    assert!(
+        metrics.contains("corrobore_opencti_write_authority{authority=\"corrobore_primary\"} 1")
+    );
+
     let _ = fs::remove_dir_all(storage_root);
 }
 

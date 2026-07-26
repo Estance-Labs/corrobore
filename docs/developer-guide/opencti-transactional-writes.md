@@ -1,10 +1,11 @@
 # OpenCTI transactional writes
 
-Issue #50 adds reference-compatible create, update, delete, relationship,
-access-policy and ordered bulk mutations to the backend-neutral Knowledge Data
-Engine contract. During migration the configured Elasticsearch/OpenSearch
-provider remains authoritative: `POST /v1/opencti/writes` applies there first,
-mirrors the exact request into Corrobore, and returns the reference envelope.
+Corrobore is the exclusive primary for create, update, delete, relationship,
+access-policy, merge and ordered bulk mutations. `POST /v1/opencti/writes`
+durably prepares a reference-projection intent, commits canonical Corrobore
+state, binds the canonical response to the outbox, and only then acknowledges
+the caller. Elasticsearch/OpenSearch is a derived, reversible projection; its
+availability never decides whether an accepted canonical write succeeds.
 
 Persistent storage is required for Corrobore acknowledgement. Each mutation
 uses a non-empty caller idempotency key. Corrobore hashes that key, derives a
@@ -37,28 +38,67 @@ Saturation returns explicit backpressure. Clients retry with the same
 idempotency key. The complete request shape is illustrated by
 [`opencti-transactional-write.json`](../examples/opencti-transactional-write.json).
 
-## Recovery, reconciliation and audit
+## Ordered reference projection
 
-Recovery ignores WAL transactions that did not reach their applied marker, so
-crashes after intent, payload journals, audit persistence or before a catalog
-checkpoint cannot expose a partial mutation. Canonical data remains the source
-for rebuilding indexes and projections. The full-text projection is durably
-invalidated before mutation; the first subsequent search rebuilds and atomically
-publishes the complete canonical generation before returning results, so stale
-search data is never served and write acknowledgement does not rebuild the
-entire corpus.
+The durable outbox is stored in `runtime/opencti-write-state.json`. Its global
+monotonic sequence is the primary ordering boundary. Create operations also use
+`internal_id` or `id` as their entity ordering key, updates and deletes use the
+target ID, merges use the survivor ID, and bulk operations fall back to their
+transaction sequence. The persisted request replaces the caller idempotency key
+with its SHA-256 identity; projection replay therefore remains idempotent without
+retaining credential-like source material.
 
-If only one dual-write target succeeds, Corrobore stores a bounded
-reconciliation record in `runtime/opencti-write-state.json`. Replaying the same
-request advances it to `reconciled`; three failed attempts quarantine it for
-operator action. Unresolved records are never evicted to admit new work.
+Projection always drains the oldest pending sequence first. A transport error,
+timeout or reference rejection increments retry and lag counters and leaves the
+entry pending. Only an exact match with the canonical response marks it
+`delivered`. A different successful result is quarantined, suspends writes, and
+records `write_divergence` as the rollback trigger. Outbox capacity is bounded;
+when unresolved entries fill it, new writes receive explicit backpressure rather
+than losing an accepted mutation.
+
+During projection lag, a routed request with `consistency: read_your_writes` is
+served directly from Corrobore, regardless of the progressive read-routing
+policy. Eventual reads may still observe the reference's older index generation.
+Search/index visibility on Corrobore follows the canonical generation boundary:
+the first search after a mutation rebuilds and atomically publishes the complete
+generation, never a partial projection.
+
+## Recovery, reconstruction and audit
+
+At startup, every `prepared` outbox intent is compared with its deterministic
+canonical WAL transaction. A readable applied receipt promotes it to `pending`
+with the original canonical response. An intent with no applied WAL event is
+proven abandoned and removed. A committed transaction with an unreadable receipt
+blocks readiness instead of being discarded. This closes the crash window
+between outbox preparation, canonical commit, and outbox activation without a
+distributed transaction.
+
+When upgrading a pre-inversion state file, any unresolved legacy dual-write
+record starts in `writes_suspended` with a `migration_failure` trigger. An
+operator must reconcile that historical partial write and verify parity before
+enabling Corrobore-primary traffic.
+
+`POST /v1/admin/opencti/reconstruction` reads a consistent complete canonical
+projection and losslessly restores every node and relationship from
+`opencti.raw`. It returns deterministic records plus the captured outbox
+high-water sequence. Operators load these records into a clean reference,
+replay sequences above the high-water mark, run the approved parity corpus, and
+only then make the rebuilt reference eligible for reads or rollback.
 
 `GET /v1/opencti/writes/status` returns counters, reconciliation state and
-committed audit receipts. Audit fields are limited to the hashed idempotency
-identity, correlation ID, optional source offset, before/after revisions and
-outcome. Record content, bearer tokens and the original idempotency key are not
-stored there. The same state is exported through the
-`corrobore_opencti_write_*` and reconciliation metrics.
+committed audit receipts, ordered projection entries, outbox depth, lag,
+retries, quarantine, reconstruction count, synchronization state and current
+write authority. Audit fields are limited to the hashed idempotency identity,
+correlation ID, optional source offset, before/after revisions and outcome.
+Bearer tokens and original idempotency keys are never persisted.
+
+`POST /v1/admin/opencti/projection/drain` retries the ordered outbox after a
+reference outage. Prometheus exposes
+`corrobore_opencti_projection_outbox_depth`, `corrobore_opencti_projection_lag`,
+`corrobore_opencti_projection_retries_total`,
+`corrobore_opencti_projection_quarantined`,
+`corrobore_opencti_projection_reconstruction_total`, and the one-hot
+`corrobore_opencti_write_authority{authority=...}` gauge.
 
 Issue #51 extends this endpoint with merge. It atomically preserves the target,
 unions identifiers and access metadata, redirects relationships and embedded
@@ -66,7 +106,32 @@ STIX references, deduplicates equivalent edges without weakening authorization,
 retains source provenance and history, and tombstones duplicates. See
 [OpenCTI merge and targeted reconciliation](opencti-merge-reconciliation.md).
 
-## Performance acceptance
+## Authority rollback runbook
+
+Rollback triggers are `security_divergence`, `corruption`,
+`latency_regression`, `migration_failure`, `write_divergence`, and
+`reference_availability`.
+
+1. Stop unsafe mutations with `POST /v1/admin/opencti/authority/suspend` and
+   the observed trigger. Confirm the authority gauge is `writes_suspended`.
+2. Inspect outbox depth, lag, retries and quarantine. Resolve quarantined
+   divergence; restore reference health; call the drain endpoint until replay is
+   complete.
+3. Reconstruct a clean reference when corruption or migration failure makes
+   incremental replay unsafe. Apply the returned corpus, then replay mutations
+   above its high-water sequence.
+4. Run the parity corpus, including records, relationships, full-text results,
+   access decisions and index generations. Do not proceed on any mismatch.
+5. Assign `reference_primary` with `POST /v1/admin/opencti/authority`, setting
+   `reference_healthy`, `replay_complete`, and `parity_verified` to true. The
+   server rejects the transition if writes were not suspended, projection state
+   remains prepared or pending, or any evidence is false. Verified full parity
+   resolves quarantined divergence as part of the durable transition.
+6. Restore traffic gradually, monitor authority, availability, p95 latency,
+   parity, and quarantine, and keep the canonical store and outbox intact for a
+   reversible return to `corrobore_primary`.
+
+## Performance and soak acceptance
 
 The reproducible small-profile benchmark uses the pinned profile's exact
 5,000-document reference bulk size (1,000 objects and 4,000 relationships) and
@@ -91,5 +156,9 @@ The recorded native run reached 54,823.759 records/s end-to-end and passed the
 33,639.092 records/s parity floor derived from the 42,048.865 records/s
 OpenSearch reference.
 
-Source-of-truth inversion and distributed transactions remain outside issue
-#50.
+`opencti_primary_projection` also runs a primary soak corpus through durable
+commits, repeated simulated reference outages, runtime/store restart, ordered
+replay and exact verification. It asserts canonical record durability, bounded
+latency, retained retry evidence, final parity, and zero original idempotency-key
+leakage in the persisted outbox. Multi-primary and distributed replication are
+deliberately unsupported.

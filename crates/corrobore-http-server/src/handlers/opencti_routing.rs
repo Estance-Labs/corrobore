@@ -10,9 +10,10 @@ use axum::{
     extract::{Query, State},
 };
 use corrobore_engine::{
-    KnowledgeDataRequest, KnowledgeDataResponseEnvelope, ProviderDescriptor, ProviderExecution,
-    ProviderTarget, ReadRoutingAuditEvent, ReadRoutingGates, ReadRoutingMetadata, RoutingSignal,
-    ShadowComparisonGate, ShadowRequestMetadata, compare_shadow_read,
+    ConsistencyLevel, KnowledgeDataRequest, KnowledgeDataResponseEnvelope, ProviderDescriptor,
+    ProviderExecution, ProviderTarget, ReadRoutingAuditEvent, ReadRoutingGates,
+    ReadRoutingMetadata, RoutingSignal, ShadowComparisonGate, ShadowRequestMetadata,
+    compare_shadow_read,
 };
 use serde::{Deserialize, Serialize};
 
@@ -62,6 +63,36 @@ pub async fn execute_opencti_routed_read(
     State(state): State<AppState>,
     Json(payload): Json<OpenCtiRoutedReadRequest>,
 ) -> Result<Json<KnowledgeDataResponseEnvelope>, ApiError> {
+    let primary_projection_lag = state
+        .opencti_write
+        .lock()
+        .map_err(|_| ApiError::internal("STATE_LOCK_FAILED", "write state lock poisoned"))?
+        .status()
+        .projection_lag;
+    if primary_projection_lag > 0
+        && payload.request.context.consistency == ConsistencyLevel::ReadYourWrites
+    {
+        let execution = tokio::time::timeout(
+            Duration::from_millis(state.config.opencti_shadow.timeout_ms),
+            provider_future(
+                &state,
+                ProviderTarget::Corrobore,
+                payload.request.clone(),
+                None,
+            )?,
+        )
+        .await
+        .map_err(|_| {
+            ApiError::timeout(
+                "OPENCTI_READ_YOUR_WRITES_TIMEOUT",
+                "canonical read-your-writes request exceeded the configured deadline",
+            )
+        })?
+        .map_err(|reason| {
+            ApiError::service_unavailable("OPENCTI_READ_YOUR_WRITES_FAILED", reason)
+        })?;
+        return Ok(Json(execution.envelope));
+    }
     let sync = state
         .opencti_sync
         .lock()

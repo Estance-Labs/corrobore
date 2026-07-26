@@ -39,6 +39,7 @@ use opencti_file_search::{FileJobMetrics, FileJobStore};
 
 use crate::app::AppState;
 use crate::durability::collect_durability_snapshot;
+use crate::opencti_write::WriteAuthority;
 
 /// The Prometheus text exposition content type, including the format version.
 const PROMETHEUS_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
@@ -398,19 +399,48 @@ corrobore_opencti_shadow_security_blocking_total{{query_class=\"{query_class}\",
 # HELP corrobore_opencti_write_reconciliation_pending Partial dual writes awaiting replay or quarantine.\n\
 # TYPE corrobore_opencti_write_reconciliation_pending gauge\n\
 # HELP corrobore_opencti_write_reconciliation_quarantined Partial dual writes requiring operator action.\n\
-# TYPE corrobore_opencti_write_reconciliation_quarantined gauge\n",
+# TYPE corrobore_opencti_write_reconciliation_quarantined gauge\n\
+# HELP corrobore_opencti_projection_outbox_depth Accepted canonical writes awaiting verified reference projection.\n\
+# TYPE corrobore_opencti_projection_outbox_depth gauge\n\
+# HELP corrobore_opencti_projection_lag Accepted sequences not yet verified on the reference.\n\
+# TYPE corrobore_opencti_projection_lag gauge\n\
+# HELP corrobore_opencti_projection_retries_total Retryable reference projection failures.\n\
+# TYPE corrobore_opencti_projection_retries_total counter\n\
+# HELP corrobore_opencti_projection_quarantined Divergent reference projections requiring operator action.\n\
+# TYPE corrobore_opencti_projection_quarantined gauge\n\
+# HELP corrobore_opencti_projection_reconstruction_total Lossless reference reconstruction plans generated.\n\
+# TYPE corrobore_opencti_projection_reconstruction_total counter\n\
+# HELP corrobore_opencti_write_authority Exclusive OpenCTI write authority as a one-hot labeled gauge.\n\
+# TYPE corrobore_opencti_write_authority gauge\n",
     );
+    let authority = match write_status.write_authority {
+        WriteAuthority::CorroborePrimary => "corrobore_primary",
+        WriteAuthority::WritesSuspended => "writes_suspended",
+        WriteAuthority::ReferencePrimary => "reference_primary",
+    };
     body.push_str(&format!(
         "corrobore_opencti_write_operations_total{{outcome=\"applied\"}} {}\n\
 corrobore_opencti_write_operations_total{{outcome=\"failed\"}} {}\n\
 corrobore_opencti_write_idempotent_replays_total {}\n\
 corrobore_opencti_write_reconciliation_pending {}\n\
-corrobore_opencti_write_reconciliation_quarantined {}\n",
+corrobore_opencti_write_reconciliation_quarantined {}\n\
+corrobore_opencti_projection_outbox_depth {}\n\
+corrobore_opencti_projection_lag {}\n\
+corrobore_opencti_projection_retries_total {}\n\
+corrobore_opencti_projection_quarantined {}\n\
+corrobore_opencti_projection_reconstruction_total {}\n\
+corrobore_opencti_write_authority{{authority=\"{}\"}} 1\n",
         write_status.applied_operations,
         write_status.failed_operations,
         write_status.idempotent_replays,
         write_status.pending_reconciliation,
         write_status.quarantined_reconciliation,
+        write_status.projection_outbox_depth,
+        write_status.projection_lag,
+        write_status.projection_retries,
+        write_status.projection_quarantined,
+        write_status.reconstruction_runs,
+        authority,
     ));
     let reconciliation_status = state
         .opencti_reconciliation

@@ -86,7 +86,11 @@ use crate::{
         },
         opencti_shadow::{execute_opencti_shadow_read, opencti_shadow_reports},
         opencti_sync::{apply_opencti_sync_batch, opencti_sync_status},
-        opencti_write::{execute_opencti_write, opencti_write_status},
+        opencti_write::{
+            drain_opencti_projection, execute_opencti_write, opencti_write_status,
+            reconstruct_opencti_reference, suspend_opencti_writes,
+            transition_opencti_write_authority,
+        },
         operational::{liveness, readiness, version},
         seed::seed_search,
         session::{session_health, session_logs, start_session, stop_session},
@@ -189,6 +193,22 @@ impl AppState {
             )
             .map_err(|reason| AppStateInitError::OpenCtiWriteStateFailed { reason })?,
         ));
+        if let RuntimeStoreProvider::Persistent(runtime) = &runtime_store {
+            let mut write_runtime =
+                opencti_write
+                    .lock()
+                    .map_err(|_| AppStateInitError::OpenCtiWriteStateFailed {
+                        reason: "OpenCTI write runtime lock is poisoned".to_owned(),
+                    })?;
+            let mut canonical_store = runtime.canonical_store.lock().map_err(|_| {
+                AppStateInitError::OpenCtiWriteStateFailed {
+                    reason: "canonical graph store lock is poisoned".to_owned(),
+                }
+            })?;
+            write_runtime
+                .recover_projection_outbox(&mut canonical_store)
+                .map_err(|reason| AppStateInitError::OpenCtiWriteStateFailed { reason })?;
+        }
         let reconciliation_state_path = match &runtime_store {
             RuntimeStoreProvider::Persistent(runtime) => Some(
                 runtime
@@ -1011,6 +1031,22 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/v1/admin/domain-providers/status",
             get(admin_domain_provider_status),
+        )
+        .route(
+            "/v1/admin/opencti/projection/drain",
+            post(drain_opencti_projection),
+        )
+        .route(
+            "/v1/admin/opencti/reconstruction",
+            post(reconstruct_opencti_reference),
+        )
+        .route(
+            "/v1/admin/opencti/authority/suspend",
+            post(suspend_opencti_writes),
+        )
+        .route(
+            "/v1/admin/opencti/authority",
+            post(transition_opencti_write_authority),
         )
         .merge(protected)
         .merge(operational)
