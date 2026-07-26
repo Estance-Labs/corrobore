@@ -6,7 +6,9 @@
 #![warn(missing_docs)]
 
 mod mapping;
+mod merge;
 mod projection;
+mod reconciliation;
 mod synchronization;
 mod transactional_write;
 
@@ -15,9 +17,18 @@ pub use mapping::{
     MappingError, MappingVersion, OpenCtiAdapter, OpenCtiTimestamps, Provenance, RecordFamily,
     RecordKind, RecordRef, Reference,
 };
+pub use merge::{
+    MergeConflict, MergeError, MergeLimits, OpenCtiMergeExecutor, OpenCtiMergeOutcome,
+    OpenCtiMergeRequest,
+};
 pub use projection::{
     IdentifierProjection, IdentifierTransaction, MergeSource, ProjectionApply, ProjectionError,
     ProjectionRecord,
+};
+pub use reconciliation::{
+    DivergenceKind, OpenCtiReconciler, OpenCtiReconciliationCommand, OpenCtiReconciliationOutcome,
+    ReconciliationDifference, ReconciliationError, ReconciliationLimits, ReconciliationMode,
+    ReconciliationReport, ReconciliationScope, RepairAction,
 };
 pub use synchronization::{
     BulkLimits, DeadLetterRecord, DivergenceStatus, GraphDigest, MutationClass, OpenCtiMutation,

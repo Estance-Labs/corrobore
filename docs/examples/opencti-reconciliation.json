@@ -1,0 +1,21 @@
+{
+  "command_id": "reconcile--tenant-alpha--2026-07-26",
+  "mode": "dry_run",
+  "scope": {
+    "scope": "records",
+    "record_ids": [
+      "indicator--00000000-0000-4000-8000-000000000040"
+    ]
+  },
+  "reference_records": [
+    {
+      "id": "indicator--00000000-0000-4000-8000-000000000040",
+      "type": "indicator",
+      "name": "Documentation IPv4 indicator",
+      "object_marking_refs": [
+        "marking-definition--00000000-0000-4000-8000-000000000001"
+      ]
+    }
+  ],
+  "allow_extra_deletion": false
+}

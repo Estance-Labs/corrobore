@@ -323,6 +323,23 @@ components:
                     type: object
                     description: Ordered create, update, access_policy_update, or delete item.
                 atomic: {type: boolean}
+        - type: object
+          required: [operation, request]
+          properties:
+            operation: {type: string, const: merge}
+            request:
+              type: object
+              required: [target_id, source_ids]
+              properties:
+                target_id: {type: string, minLength: 1}
+                source_ids:
+                  type: array
+                  minItems: 1
+                  uniqueItems: true
+                  items: {type: string, minLength: 1}
+                expected_revisions:
+                  type: object
+                  additionalProperties: {type: integer, minimum: 1}
     OpenCtiWriteRequest:
       type: object
       required: [contract_version, context, operation]
@@ -351,6 +368,77 @@ components:
         failed_operations: {type: integer, minimum: 0}
         idempotent_replays: {type: integer, minimum: 0}
         quarantined_reconciliation: {type: integer, minimum: 0}
+    OpenCtiReconciliationCommand:
+      type: object
+      required: [command_id, mode, scope, reference_records, allow_extra_deletion]
+      properties:
+        command_id: {type: string, minLength: 1}
+        mode: {type: string, enum: [dry_run, repair]}
+        scope:
+          oneOf:
+            - type: object
+              required: [scope, record_ids]
+              properties:
+                scope: {type: string, const: records}
+                record_ids:
+                  type: array
+                  uniqueItems: true
+                  items: {type: string, minLength: 1}
+            - type: object
+              required: [scope, start_inclusive, end_exclusive, max_records]
+              properties:
+                scope: {type: string, const: range}
+                start_inclusive: {type: string, minLength: 1}
+                end_exclusive: {type: string, minLength: 1}
+                max_records: {type: integer, minimum: 1}
+            - type: object
+              required: [scope, partition, partition_count, max_records]
+              properties:
+                scope: {type: string, const: partition}
+                partition: {type: integer, minimum: 0}
+                partition_count: {type: integer, minimum: 1}
+                max_records: {type: integer, minimum: 1}
+            - type: object
+              required: [scope, max_records]
+              properties:
+                scope: {type: string, const: full}
+                max_records: {type: integer, minimum: 1}
+        reference_records:
+          type: array
+          items: {type: object, additionalProperties: true}
+        allow_extra_deletion: {type: boolean}
+    OpenCtiReconciliationDifference:
+      type: object
+      required: [record_id, kind, action, diagnostic]
+      properties:
+        record_id: {type: string}
+        kind:
+          type: string
+          enum: [missing, extra, property_divergent, relationship_divergent, permission_divergent, stale_index]
+        action:
+          type: string
+          enum: [planned_create, planned_replace, planned_delete, planned_projection_rebuild, applied, quarantined]
+        diagnostic: {type: string}
+    OpenCtiReconciliationReport:
+      type: object
+      required: [command_id, mode, mutated, parity_verified, differences, quarantined_record_ids, projection_rebuild_ids]
+      properties:
+        command_id: {type: string}
+        mode: {type: string, enum: [dry_run, repair]}
+        mutated: {type: boolean}
+        parity_verified: {type: boolean}
+        differences:
+          type: array
+          items: {$ref: '#/components/schemas/OpenCtiReconciliationDifference'}
+        quarantined_record_ids: {type: array, items: {type: string}}
+        projection_rebuild_ids: {type: array, items: {type: string}}
+    OpenCtiReconciliationStatus:
+      type: object
+      required: [retained_reports, quarantined_commands, parity_verified_commands]
+      properties:
+        retained_reports: {type: integer, minimum: 0}
+        quarantined_commands: {type: integer, minimum: 0}
+        parity_verified_commands: {type: integer, minimum: 0}
 
 paths:
   /health:
@@ -973,6 +1061,54 @@ paths:
                   result: {$ref: '#/components/schemas/OpenCtiWriteStatus'}
                   reconciliations: {type: array, items: {type: object}}
                   audits: {type: array, items: {type: object}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/opencti/reconciliation:
+    post:
+      operationId: executeOpenCtiReconciliation
+      summary: Dry-run or apply one bounded targeted reconciliation command
+      tags: [Import]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OpenCtiReconciliationCommand'}
+      responses:
+        '200':
+          description: Exact payload-free difference and repair report
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, result]
+                properties:
+                  ok: {type: boolean, const: true}
+                  result: {$ref: '#/components/schemas/OpenCtiReconciliationReport'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '422':
+          description: Invalid, conflicting, unsafe, or over-limit reconciliation command
+        '503':
+          description: Persistent canonical storage is unavailable
+
+  /v1/opencti/reconciliation/status:
+    get:
+      operationId: getOpenCtiReconciliationStatus
+      summary: Inspect bounded repair, parity, and quarantine evidence
+      tags: [Import]
+      responses:
+        '200':
+          description: Oldest-first payload-free retained reconciliation reports
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, result, reports]
+                properties:
+                  ok: {type: boolean, const: true}
+                  result: {$ref: '#/components/schemas/OpenCtiReconciliationStatus'}
+                  reports:
+                    type: array
+                    items: {$ref: '#/components/schemas/OpenCtiReconciliationReport'}
         '401': {$ref: '#/components/responses/Unauthorized'}
 
   /v1/opencti/shadow/reads:

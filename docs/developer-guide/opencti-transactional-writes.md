@@ -60,6 +60,12 @@ outcome. Record content, bearer tokens and the original idempotency key are not
 stored there. The same state is exported through the
 `corrobore_opencti_write_*` and reconciliation metrics.
 
+Issue #51 extends this endpoint with merge. It atomically preserves the target,
+unions identifiers and access metadata, redirects relationships and embedded
+STIX references, deduplicates equivalent edges without weakening authorization,
+retains source provenance and history, and tombstones duplicates. See
+[OpenCTI merge and targeted reconciliation](opencti-merge-reconciliation.md).
+
 ## Performance acceptance
 
 The reproducible small-profile benchmark uses the pinned profile's exact
@@ -85,5 +91,5 @@ The recorded native run reached 54,823.759 records/s end-to-end and passed the
 33,639.092 records/s parity floor derived from the 42,048.865 records/s
 OpenSearch reference.
 
-Merge/deduplication, endpoint-moving relationship updates, source-of-truth
-inversion and distributed transactions remain outside issue #50.
+Source-of-truth inversion and distributed transactions remain outside issue
+#50.

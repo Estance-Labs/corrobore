@@ -2,14 +2,17 @@
 // SPDX-License-Identifier: MIT
 #![allow(clippy::unwrap_used)]
 
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex},
+};
 
 use corrobore_engine::{
     AccessContext, ConsistencyLevel, ContractVersion, CorroboreEngine,
     CorroboreKnowledgeDataProvider, CreateRequest, EnginePersistence, KnowledgeDataEngine,
     KnowledgeDataError, KnowledgeDataErrorCode, KnowledgeDataOperation, KnowledgeDataOutcome,
-    KnowledgeDataRequest, KnowledgeDataResponse, OperationKind, ProviderCapabilityStatus,
-    RequestContext, WriteResult,
+    KnowledgeDataRequest, KnowledgeDataResponse, MergeRequest, OperationKind,
+    ProviderCapabilityStatus, RequestContext, WriteResult,
 };
 use graph_core::Graph;
 use serde_json::json;
@@ -87,6 +90,7 @@ fn provider_declares_and_dispatches_transactional_mutations_through_persistence(
         OperationKind::Update,
         OperationKind::Delete,
         OperationKind::Bulk,
+        OperationKind::Merge,
     ] {
         assert!(matches!(
             provider
@@ -107,6 +111,25 @@ fn provider_declares_and_dispatches_transactional_mutations_through_persistence(
         }
     ));
     assert_eq!(calls.lock().unwrap().as_slice(), ["create:idempotency--1"]);
+
+    let mut merge = request(Some("idempotency--merge"));
+    merge.operation = KnowledgeDataOperation::Merge(MergeRequest {
+        target_id: "indicator--1".to_owned(),
+        source_ids: vec!["indicator--2".to_owned()],
+        expected_revisions: BTreeMap::from([
+            ("indicator--1".to_owned(), 1),
+            ("indicator--2".to_owned(), 1),
+        ]),
+    });
+    let response = provider.execute(merge);
+    assert!(matches!(
+        response.outcome,
+        KnowledgeDataOutcome::Success { .. }
+    ));
+    assert_eq!(
+        calls.lock().unwrap().as_slice(),
+        ["create:idempotency--1", "merge:idempotency--merge"]
+    );
 }
 
 #[test]

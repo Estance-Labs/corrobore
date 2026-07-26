@@ -11,15 +11,16 @@ use std::{
 
 use corrobore_engine::{
     BulkResult, KnowledgeDataError, KnowledgeDataErrorCode, KnowledgeDataOperation,
-    KnowledgeDataResponse, RequestContext, WriteResult,
+    KnowledgeDataResponse, MergeResult, RequestContext, WriteResult,
 };
 use graph_storage::{
     CanonicalEngineStore, CanonicalProjectionRequest, DurableTransactionId,
     read_atomic_persistent_audit_events,
 };
 use opencti_adapter::{
-    OpenCtiWriteBatch, OpenCtiWriteExecutor, OpenCtiWriteOperation, WriteError, WriteLimits,
-    WriteOperationOutcome, WriteOperationStatus,
+    MergeError, MergeLimits, OpenCtiMergeExecutor, OpenCtiMergeRequest, OpenCtiWriteBatch,
+    OpenCtiWriteExecutor, OpenCtiWriteOperation, WriteError, WriteLimits, WriteOperationOutcome,
+    WriteOperationStatus,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -236,6 +237,17 @@ impl OpenCtiWriteRuntime {
             return self.replay_receipt(existing, &idempotency_hash, &fingerprint);
         }
 
+        if let KnowledgeDataOperation::Merge(request) = operation {
+            return self.apply_merge(
+                store,
+                request,
+                context,
+                transaction_id,
+                idempotency_hash,
+                fingerprint,
+            );
+        }
+
         let batch = write_batch(operation, context, transaction_id.value.clone())?;
         let previous = store
             .load_projection(CanonicalProjectionRequest::all())
@@ -275,6 +287,84 @@ impl OpenCtiWriteRuntime {
             )
             .map_err(|error| unavailable(&error.to_string()))?;
         self.record_operation_counts(&planned.operations);
+        self.audits.extend(audits);
+        Ok(response)
+    }
+
+    fn apply_merge(
+        &mut self,
+        store: &mut CanonicalEngineStore,
+        request: &corrobore_engine::MergeRequest,
+        context: &RequestContext,
+        transaction_id: DurableTransactionId,
+        idempotency_hash: String,
+        fingerprint: String,
+    ) -> Result<KnowledgeDataResponse, KnowledgeDataError> {
+        let previous = store
+            .load_projection(CanonicalProjectionRequest::all())
+            .map_err(|error| unavailable(&error.to_string()))?;
+        let merge_request = OpenCtiMergeRequest::new(
+            context.request_id.clone(),
+            request.target_id.clone(),
+            request.source_ids.clone(),
+            request.expected_revisions.clone(),
+        )
+        .map_err(map_merge_error)?;
+        let outcome = OpenCtiMergeExecutor::new(MergeLimits {
+            max_sources: self.limits.max_operations,
+            ..MergeLimits::default()
+        })
+        .apply(&previous, &merge_request)
+        .map_err(map_merge_error)?;
+        let response = KnowledgeDataResponse::Merge(MergeResult {
+            target_id: outcome.target_id.clone(),
+            target_revision: outcome.target_revision,
+            deleted_source_ids: outcome.deleted_source_ids.clone(),
+            redirected_relationship_ids: outcome.redirected_relationship_ids.clone(),
+            redirected_reference_ids: outcome.redirected_reference_ids.clone(),
+            deduplicated_relationship_ids: outcome.deduplicated_relationship_ids.clone(),
+            conflict_count: outcome.conflicts.len() as u64,
+        });
+        let mut audits = vec![OpenCtiWriteAuditRecord {
+            idempotency_key_hash: idempotency_hash.clone(),
+            correlation_id: context.correlation_id.clone(),
+            source_offset: context.access.attributes.get("source_offset").cloned(),
+            before_revision: outcome.target_revision.checked_sub(1),
+            after_revision: Some(outcome.target_revision),
+            outcome: "merged_survivor".to_owned(),
+        }];
+        audits.extend(
+            outcome
+                .deleted_source_ids
+                .iter()
+                .map(|source_id| OpenCtiWriteAuditRecord {
+                    idempotency_key_hash: idempotency_hash.clone(),
+                    correlation_id: context.correlation_id.clone(),
+                    source_offset: context.access.attributes.get("source_offset").cloned(),
+                    before_revision: request.expected_revisions.get(source_id).copied(),
+                    after_revision: None,
+                    outcome: "merged_source_tombstoned".to_owned(),
+                }),
+        );
+        let receipt = PersistedWriteReceipt {
+            schema_version: RECEIPT_SCHEMA_VERSION,
+            idempotency_key_hash: idempotency_hash,
+            operation_fingerprint: fingerprint,
+            response: response.clone(),
+            audits: audits.clone(),
+        };
+        let receipt = serde_json::to_string(&receipt)
+            .map_err(|error| unavailable(&format!("failed to encode merge receipt: {error}")))?;
+        store
+            .commit_transition_with_audit(
+                &previous,
+                &outcome.graph,
+                transaction_id,
+                vec![receipt],
+                None,
+            )
+            .map_err(|error| unavailable(&error.to_string()))?;
+        self.applied_operations = self.applied_operations.saturating_add(1);
         self.audits.extend(audits);
         Ok(response)
     }
@@ -618,6 +708,15 @@ fn map_write_error(error: WriteError) -> KnowledgeDataError {
     match error {
         WriteError::InvalidInput(message) | WriteError::LimitExceeded(message) => invalid(&message),
         WriteError::Graph(message) => unavailable(&message),
+    }
+}
+
+fn map_merge_error(error: MergeError) -> KnowledgeDataError {
+    match error {
+        MergeError::InvalidInput(message) | MergeError::LimitExceeded(message) => invalid(&message),
+        MergeError::Conflict(message) => conflict(&message),
+        MergeError::Graph(message) => unavailable(&message),
+        MergeError::NotImplemented => unavailable("merge implementation is not available"),
     }
 }
 

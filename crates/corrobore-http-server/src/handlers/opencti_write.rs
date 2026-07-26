@@ -47,10 +47,11 @@ pub async fn execute_opencti_write(
             | KnowledgeDataOperation::Update(_)
             | KnowledgeDataOperation::Delete(_)
             | KnowledgeDataOperation::Bulk(_)
+            | KnowledgeDataOperation::Merge(_)
     ) {
         return Err(ApiError::bad_request(
             "INVALID_OPENCTI_WRITE_OPERATION",
-            "OpenCTI write endpoint accepts create, update, delete, or bulk",
+            "OpenCTI write endpoint accepts create, update, delete, bulk, or merge",
         ));
     }
     let idempotency_key = request

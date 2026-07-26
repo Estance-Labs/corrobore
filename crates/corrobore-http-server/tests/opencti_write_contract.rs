@@ -10,15 +10,16 @@ use std::{
 
 use corrobore_engine::{
     AccessContext, BulkRequest, ConsistencyLevel, CreateRequest, DeleteRequest,
-    KnowledgeDataErrorCode, KnowledgeDataOperation, KnowledgeDataResponse, RequestContext,
-    UpdateRequest,
+    KnowledgeDataErrorCode, KnowledgeDataOperation, KnowledgeDataResponse, MergeRequest,
+    RequestContext, UpdateRequest,
 };
 use corrobore_http_server::opencti_write::{
     DualWriteOutcome, OpenCtiWriteRuntime, ReconciliationStatus,
 };
 use graph_storage::{
-    CanonicalEngineStore, CanonicalProjectionRequest, CanonicalStoreOptions, GraphId, RecordFormat,
-    StorageManifest, StorageTimestamp, StorageVersion, create_storage_root,
+    CanonicalEngineStore, CanonicalProjectionRequest, CanonicalStoreOptions, GraphId,
+    PersistedRecordId, RecordFormat, StorageManifest, StorageTimestamp, StorageVersion,
+    create_storage_root,
 };
 use opencti_adapter::WriteLimits;
 use serde_json::json;
@@ -234,5 +235,93 @@ fn partial_dual_write_is_persisted_and_not_reported_reconciled() {
     let reopened = OpenCtiWriteRuntime::open(Some(state_path), WriteLimits::default(), 2).unwrap();
     assert_eq!(reopened.status().pending_reconciliation, 1);
     assert!(!reopened.status().fully_reconciled);
+    fs::remove_dir_all(root.path()).unwrap();
+}
+
+#[test]
+fn merge_receipt_replays_after_restart_without_duplicate_versions_or_relationships() {
+    let root = root();
+    let state_path = root.path().join("runtime/opencti-write-state.json");
+    let mut store =
+        CanonicalEngineStore::open(root.clone(), CanonicalStoreOptions::default()).unwrap();
+    let mut runtime =
+        OpenCtiWriteRuntime::open(Some(state_path.clone()), WriteLimits::default(), 128).unwrap();
+    for (key, operation) in [
+        (
+            "merge-target",
+            KnowledgeDataOperation::Create(CreateRequest {
+                record: json!({"id": "indicator--target", "type": "indicator", "name": "target"}),
+            }),
+        ),
+        (
+            "merge-source",
+            KnowledgeDataOperation::Create(CreateRequest {
+                record: json!({"id": "indicator--source", "type": "indicator", "name": "source"}),
+            }),
+        ),
+        (
+            "merge-malware",
+            KnowledgeDataOperation::Create(CreateRequest {
+                record: json!({"id": "malware--one", "type": "malware", "name": "one"}),
+            }),
+        ),
+        (
+            "merge-relationship",
+            KnowledgeDataOperation::Create(CreateRequest {
+                record: json!({
+                    "id": "relationship--source",
+                    "type": "relationship",
+                    "relationship_type": "indicates",
+                    "source_ref": "indicator--source",
+                    "target_ref": "malware--one"
+                }),
+            }),
+        ),
+    ] {
+        runtime
+            .apply(&mut store, &operation, &context(key))
+            .unwrap();
+    }
+    let merge = KnowledgeDataOperation::Merge(MergeRequest {
+        target_id: "indicator--target".to_owned(),
+        source_ids: vec!["indicator--source".to_owned()],
+        expected_revisions: BTreeMap::from([
+            ("indicator--target".to_owned(), 1),
+            ("indicator--source".to_owned(), 1),
+        ]),
+    });
+    let first = runtime
+        .apply(&mut store, &merge, &context("merge-command"))
+        .unwrap();
+    drop(runtime);
+    drop(store);
+
+    let mut store =
+        CanonicalEngineStore::open(root.clone(), CanonicalStoreOptions::default()).unwrap();
+    let mut runtime =
+        OpenCtiWriteRuntime::open(Some(state_path), WriteLimits::default(), 128).unwrap();
+    let replay = runtime
+        .apply(&mut store, &merge, &context("merge-command"))
+        .unwrap();
+    assert_eq!(replay, first);
+    let graph = store
+        .load_projection(CanonicalProjectionRequest::all())
+        .unwrap();
+    assert_eq!(graph.list_nodes().unwrap().len(), 2);
+    assert_eq!(graph.list_relationships().unwrap().len(), 1);
+    let target = graph
+        .list_nodes()
+        .unwrap()
+        .into_iter()
+        .find(|node| {
+            node.property("opencti.canonical_id")
+                == Some(&graph_core::PropertyValue::String(
+                    "indicator--target".to_owned(),
+                ))
+        })
+        .unwrap();
+    assert!(store.catalog().historical_records.iter().any(|entry| {
+        matches!(&entry.record_id, PersistedRecordId::Node(node_id) if node_id == target.id())
+    }));
     fs::remove_dir_all(root.path()).unwrap();
 }

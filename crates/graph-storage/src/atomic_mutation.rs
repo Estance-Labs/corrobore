@@ -26,13 +26,14 @@ use std::path::{Path, PathBuf};
 use graph_core::{AdjacencyDirection, RelationshipType};
 use opencti_access::AccessMetadata;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::{
     DurableMutationTarget, DurableTransactionId, DurableTransactionReplayStatus, DurableWalEntry,
     DurableWalEntryKind, EncodedRecord, GraphAdjacencyStorage, GraphCatalog, GraphRecordVersion,
     GraphStorageError, GraphStorageResult, LabelIndexNodeMetadata, NodeReadIndexDocument,
     PersistedAdjacencyEntry, PersistedAdjacencyRecord, PersistedRecordEnvelope, PersistedRecordId,
-    RelationshipTypeIndexRelationshipMetadata, StorageRoot, WalSequenceNumber,
+    RecordChecksum, RelationshipTypeIndexRelationshipMetadata, StorageRoot, WalSequenceNumber,
     append_encoded_node_record_envelopes, append_encoded_relationship_record_envelopes,
     classify_transaction_replay_status, index_appended_node_record,
     index_appended_relationship_record, index_relationship_type, index_relationship_types_bulk,
@@ -286,49 +287,67 @@ pub fn apply_atomic_persistent_mutation_batch(
         });
     }
 
-    let (begin_sequence, mutation_sequence, commit_sequence) = next_transaction_sequences(root)?;
-    let wal_entries = vec![
-        DurableWalEntry {
-            transaction_id: batch.transaction_id.clone(),
-            sequence_number: begin_sequence,
-            kind: DurableWalEntryKind::Begin,
-            mutation_targets: Vec::new(),
-            checksum: None,
-        },
-        DurableWalEntry {
-            transaction_id: batch.transaction_id.clone(),
-            sequence_number: mutation_sequence,
-            kind: DurableWalEntryKind::Mutation,
-            mutation_targets: mutation_targets(&batch),
-            checksum: None,
-        },
-        DurableWalEntry {
-            transaction_id: batch.transaction_id.clone(),
-            sequence_number: commit_sequence,
-            kind: DurableWalEntryKind::Commit,
-            mutation_targets: Vec::new(),
-            checksum: None,
-        },
-    ];
-    append_wal_entries(root, &wal_entries)?;
-    if crash_stage == Some(MutationCrashStage::AfterWalIntent) {
-        return Err(GraphStorageError::OperationFailed {
-            operation: "apply_atomic_persistent_mutation_batch",
-            message: "injected crash after durable WAL intent".to_owned(),
-        });
-    }
+    let committed = read_committed_mutation_sequences(root)?;
+    let existing_sequence = committed.get(&batch.transaction_id).copied();
+    let mutation_sequence = if let Some(existing_sequence) = existing_sequence {
+        validate_replayed_mutation_targets(root, &batch)?;
+        existing_sequence
+    } else {
+        let (begin_sequence, mutation_sequence, commit_sequence) =
+            next_transaction_sequences(root)?;
+        let wal_entries = vec![
+            DurableWalEntry {
+                transaction_id: batch.transaction_id.clone(),
+                sequence_number: begin_sequence,
+                kind: DurableWalEntryKind::Begin,
+                mutation_targets: Vec::new(),
+                checksum: None,
+            },
+            DurableWalEntry {
+                transaction_id: batch.transaction_id.clone(),
+                sequence_number: mutation_sequence,
+                kind: DurableWalEntryKind::Mutation,
+                mutation_targets: mutation_targets(&batch),
+                checksum: Some(mutation_batch_checksum(&batch)?),
+            },
+            DurableWalEntry {
+                transaction_id: batch.transaction_id.clone(),
+                sequence_number: commit_sequence,
+                kind: DurableWalEntryKind::Commit,
+                mutation_targets: Vec::new(),
+                checksum: None,
+            },
+        ];
+        append_wal_entries(root, &wal_entries)?;
+        if crash_stage == Some(MutationCrashStage::AfterWalIntent) {
+            return Err(GraphStorageError::OperationFailed {
+                operation: "apply_atomic_persistent_mutation_batch",
+                message: "injected crash after durable WAL intent".to_owned(),
+            });
+        }
+        mutation_sequence
+    };
 
     let mut working_state = state.clone();
-    persist_node_mutations(root, &mut working_state, &batch, mutation_sequence)?;
-    persist_relationship_mutations(root, &mut working_state, &batch, mutation_sequence)?;
-    persist_adjacency_mutations(root, &mut working_state, &batch, mutation_sequence)?;
+    if existing_sequence.is_some()
+        && transaction_payload_is_persisted(root, &batch, mutation_sequence)?
+    {
+        let eligible = HashMap::from([(batch.transaction_id.clone(), mutation_sequence)]);
+        replay_node_mutations(root, &eligible, &mut working_state)?;
+        replay_relationship_mutations(root, &eligible, &mut working_state)?;
+        replay_adjacency_mutations(root, &eligible, &mut working_state)?;
+    } else {
+        persist_node_mutations(root, &mut working_state, &batch, mutation_sequence)?;
+        persist_relationship_mutations(root, &mut working_state, &batch, mutation_sequence)?;
+        persist_adjacency_mutations(root, &mut working_state, &batch, mutation_sequence)?;
+    }
     if crash_stage == Some(MutationCrashStage::AfterPayloadRecords) {
         return Err(GraphStorageError::OperationFailed {
             operation: "apply_atomic_persistent_mutation_batch",
             message: "injected crash after durable payload records".to_owned(),
         });
     }
-    persist_audit_events(root, &batch, mutation_sequence)?;
+    persist_or_validate_audit_events(root, &batch, mutation_sequence)?;
 
     if crash_stage == Some(MutationCrashStage::BeforeAppliedMarker) {
         return Err(GraphStorageError::OperationFailed {
@@ -704,6 +723,192 @@ fn append_wal_entries(root: &StorageRoot, entries: &[DurableWalEntry]) -> GraphS
     )
 }
 
+fn validate_replayed_mutation_targets(
+    root: &StorageRoot,
+    batch: &AtomicPersistentMutationBatch,
+) -> GraphStorageResult<()> {
+    let entries: Vec<DurableWalEntry> = read_json_lines(
+        &transaction_wal_path(root),
+        "apply_atomic_persistent_mutation_batch",
+    )?;
+    let existing = entries
+        .iter()
+        .find(|entry| {
+            entry.transaction_id == batch.transaction_id
+                && entry.kind == DurableWalEntryKind::Mutation
+        })
+        .ok_or_else(|| GraphStorageError::OperationFailed {
+            operation: "apply_atomic_persistent_mutation_batch",
+            message: "committed replay transaction is missing its mutation entry".to_owned(),
+        })?;
+    if existing.mutation_targets != mutation_targets(batch) {
+        return Err(GraphStorageError::OperationFailed {
+            operation: "apply_atomic_persistent_mutation_batch",
+            message: "transaction id was replayed with different mutation targets".to_owned(),
+        });
+    }
+    if existing.checksum.as_ref() != Some(&mutation_batch_checksum(batch)?) {
+        return Err(GraphStorageError::OperationFailed {
+            operation: "apply_atomic_persistent_mutation_batch",
+            message: "transaction id was replayed with a different mutation payload".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn mutation_batch_checksum(
+    batch: &AtomicPersistentMutationBatch,
+) -> GraphStorageResult<RecordChecksum> {
+    fn update(hasher: &mut Sha256, bytes: &[u8]) {
+        hasher.update((bytes.len() as u64).to_be_bytes());
+        hasher.update(bytes);
+    }
+    fn json<T: Serialize>(value: &T) -> GraphStorageResult<Vec<u8>> {
+        serde_json::to_vec(value).map_err(|error| GraphStorageError::OperationFailed {
+            operation: "apply_atomic_persistent_mutation_batch",
+            message: format!("failed to checksum mutation payload: {error}"),
+        })
+    }
+
+    let mut hasher = Sha256::new();
+    update(&mut hasher, batch.transaction_id.value.as_bytes());
+    for node in &batch.node_records {
+        update(&mut hasher, b"node");
+        update(&mut hasher, &node.encoded_record.bytes);
+        update(&mut hasher, &json(&node.labels)?);
+        update(&mut hasher, &json(&node.read_index)?);
+    }
+    for relationship in &batch.relationship_records {
+        update(&mut hasher, b"relationship");
+        update(&mut hasher, &relationship.encoded_record.bytes);
+        update(
+            &mut hasher,
+            relationship.relationship_type.as_str().as_bytes(),
+        );
+        update(&mut hasher, &[u8::from(relationship.active)]);
+        update(&mut hasher, &json(&relationship.access)?);
+    }
+    for adjacency in batch
+        .outgoing_adjacency
+        .iter()
+        .chain(&batch.incoming_adjacency)
+    {
+        update(&mut hasher, b"adjacency");
+        update(&mut hasher, adjacency.owner_node_id.as_str().as_bytes());
+        update(&mut hasher, format!("{:?}", adjacency.direction).as_bytes());
+        update(&mut hasher, &json(&adjacency.entries)?);
+    }
+    for audit in &batch.audit_events {
+        update(&mut hasher, b"audit");
+        update(&mut hasher, audit.as_bytes());
+    }
+    let digest = hasher.finalize();
+    Ok(RecordChecksum {
+        algorithm: "sha256".to_owned(),
+        value: digest.iter().map(|byte| format!("{byte:02x}")).collect(),
+    })
+}
+
+fn transaction_payload_is_persisted(
+    root: &StorageRoot,
+    batch: &AtomicPersistentMutationBatch,
+    mutation_sequence: WalSequenceNumber,
+) -> GraphStorageResult<bool> {
+    let nodes: Vec<NodeMutationLogRecord> = read_json_lines(
+        &node_mutation_log_path(root),
+        "apply_atomic_persistent_mutation_batch",
+    )?;
+    let nodes = nodes
+        .into_iter()
+        .filter(|record| {
+            record.transaction_id == batch.transaction_id
+                && record.mutation_sequence_number == mutation_sequence
+        })
+        .collect::<Vec<_>>();
+    let relationships: Vec<RelationshipMutationLogRecord> = read_json_lines(
+        &relationship_mutation_log_path(root),
+        "apply_atomic_persistent_mutation_batch",
+    )?;
+    let relationships = relationships
+        .into_iter()
+        .filter(|record| {
+            record.transaction_id == batch.transaction_id
+                && record.mutation_sequence_number == mutation_sequence
+        })
+        .collect::<Vec<_>>();
+    let outgoing: Vec<AdjacencyMutationLogRecord> = read_json_lines(
+        &outgoing_adjacency_mutation_log_path(root),
+        "apply_atomic_persistent_mutation_batch",
+    )?;
+    let outgoing = outgoing
+        .into_iter()
+        .filter(|record| {
+            record.transaction_id == batch.transaction_id
+                && record.mutation_sequence_number == mutation_sequence
+        })
+        .collect::<Vec<_>>();
+    let incoming: Vec<AdjacencyMutationLogRecord> = read_json_lines(
+        &incoming_adjacency_mutation_log_path(root),
+        "apply_atomic_persistent_mutation_batch",
+    )?;
+    let incoming = incoming
+        .into_iter()
+        .filter(|record| {
+            record.transaction_id == batch.transaction_id
+                && record.mutation_sequence_number == mutation_sequence
+        })
+        .collect::<Vec<_>>();
+
+    if nodes.is_empty() && relationships.is_empty() && outgoing.is_empty() && incoming.is_empty() {
+        return Ok(false);
+    }
+    let exact = nodes.len() == batch.node_records.len()
+        && nodes
+            .iter()
+            .zip(&batch.node_records)
+            .all(|(actual, expected)| {
+                actual.envelope == expected.envelope
+                    && actual.labels == expected.labels
+                    && actual.read_index == expected.read_index
+            })
+        && relationships.len() == batch.relationship_records.len()
+        && relationships
+            .iter()
+            .zip(&batch.relationship_records)
+            .all(|(actual, expected)| {
+                actual.envelope == expected.envelope
+                    && actual.relationship_type == expected.relationship_type
+                    && actual.active == expected.active
+                    && actual.access == expected.access
+            })
+        && outgoing.len() == batch.outgoing_adjacency.len()
+        && outgoing
+            .iter()
+            .zip(&batch.outgoing_adjacency)
+            .all(|(actual, expected)| {
+                actual.record.owner_node_id == expected.owner_node_id
+                    && actual.record.direction == expected.direction
+                    && actual.record.entries == expected.entries
+            })
+        && incoming.len() == batch.incoming_adjacency.len()
+        && incoming
+            .iter()
+            .zip(&batch.incoming_adjacency)
+            .all(|(actual, expected)| {
+                actual.record.owner_node_id == expected.owner_node_id
+                    && actual.record.direction == expected.direction
+                    && actual.record.entries == expected.entries
+            });
+    if !exact {
+        return Err(GraphStorageError::OperationFailed {
+            operation: "apply_atomic_persistent_mutation_batch",
+            message: "transaction id was replayed with incomplete or different payload records"
+                .to_owned(),
+        });
+    }
+    Ok(true)
+}
+
 fn persist_node_mutations(
     root: &StorageRoot,
     state: &mut AtomicPersistentRuntimeState,
@@ -903,11 +1108,32 @@ fn persist_adjacency_mutations(
     Ok(())
 }
 
-fn persist_audit_events(
+fn persist_or_validate_audit_events(
     root: &StorageRoot,
     batch: &AtomicPersistentMutationBatch,
     mutation_sequence: WalSequenceNumber,
 ) -> GraphStorageResult<()> {
+    let records: Vec<AuditMutationLogRecord> = read_json_lines(
+        &audit_mutation_log_path(root),
+        "apply_atomic_persistent_mutation_batch",
+    )?;
+    let existing = records
+        .into_iter()
+        .filter(|record| {
+            record.transaction_id == batch.transaction_id
+                && record.mutation_sequence_number == mutation_sequence
+        })
+        .map(|record| record.message)
+        .collect::<Vec<_>>();
+    if !existing.is_empty() {
+        if existing == batch.audit_events {
+            return Ok(());
+        }
+        return Err(GraphStorageError::OperationFailed {
+            operation: "apply_atomic_persistent_mutation_batch",
+            message: "transaction id was replayed with different audit events".to_owned(),
+        });
+    }
     append_json_lines_sync(
         &audit_mutation_log_path(root),
         batch
