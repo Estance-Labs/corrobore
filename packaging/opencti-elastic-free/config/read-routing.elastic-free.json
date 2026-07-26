@@ -1,0 +1,11 @@
+{
+  "policy_version": "opencti-7.260722.0-elastic-free-v1",
+  "mode": "primary_reads",
+  "default_percentage_basis_points": 10000,
+  "rules": [],
+  "thresholds": {
+    "max_error_rate_basis_points": 100,
+    "max_latency_p95_ms": 120,
+    "minimum_soak_requests": 1
+  }
+}

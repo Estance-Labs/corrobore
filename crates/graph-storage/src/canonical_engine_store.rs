@@ -98,6 +98,8 @@ pub enum CanonicalPropertyOperator {
     NotEqual,
     /// Property presence.
     Exists,
+    /// Property absence.
+    NotExists,
     /// Exact membership in a non-empty typed set.
     In,
     /// Exclusion from a non-empty typed set.
@@ -1086,6 +1088,16 @@ impl CanonicalEngineStore {
         };
         match filter.operator {
             CanonicalPropertyOperator::Exists => Ok(present()),
+            CanonicalPropertyOperator::NotExists => {
+                let all = self
+                    .state
+                    .catalog
+                    .latest_node_records
+                    .keys()
+                    .cloned()
+                    .collect::<HashSet<_>>();
+                Ok(all.difference(&present()).cloned().collect())
+            }
             CanonicalPropertyOperator::Equal | CanonicalPropertyOperator::NotEqual => {
                 let encoded = encode_filter_value(filter)?;
                 let equal = resolve_property_index_entries(
@@ -2202,6 +2214,7 @@ fn indexed_value_matches_range(
         CanonicalPropertyOperator::Equal => ordering.is_eq(),
         CanonicalPropertyOperator::NotEqual => !ordering.is_eq(),
         CanonicalPropertyOperator::Exists => true,
+        CanonicalPropertyOperator::NotExists => false,
         CanonicalPropertyOperator::In | CanonicalPropertyOperator::NotIn => false,
     })
 }

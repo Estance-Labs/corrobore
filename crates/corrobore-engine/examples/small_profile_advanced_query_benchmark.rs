@@ -155,6 +155,7 @@ fn main() {
             limit: 20,
         },
         candidate_limit: 600_000,
+        include_relationships: true,
     };
     let histogram_plan = AggregationPlan {
         kinds: vec!["indicator".to_owned()],
@@ -166,6 +167,7 @@ fn main() {
             include_empty: false,
         },
         candidate_limit: 600_000,
+        include_relationships: false,
     };
     let terms = measure(&mut engine, terms_plan, 0);
     let histogram = measure(&mut engine, histogram_plan, 1_000);

@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "database_engine": "corrobore",
+  "opencti": {
+    "version": "7.260722.0",
+    "commit": "df63a5107602a41aa8259e1d566532e36218c2a0",
+    "upstream_commit": "e41adc1c3fd98a849602db33dbe550f689fe6d83",
+    "repository": "https://github.com/Estance-Labs/opencti.git",
+    "provider_branch": "rds/corrobore-provider-7.260722.0",
+    "base_image": "docker.io/opencti/platform@sha256:636bbb791c512cfa4c55be3d934622c2996db7edc841e3391c9428752009a7ee"
+  },
+  "corrobore": {
+    "minimum_version": "0.2.2",
+    "knowledge_data_contract": "1.0"
+  },
+  "reference_stack": {
+    "repository": "https://github.com/OpenCTI-Platform/docker.git",
+    "commit": "99a52e27504318303f1adffc278c87c8e150ffc9",
+    "profile": "small",
+    "service_count": 21,
+    "mandatory_configuration": 40,
+    "memory_lower_bound_bytes": 1477616160,
+    "memory_evidence": "compatibility/opencti/7.260722.0/benchmark-results.json#elasticsearch-8.19.18:small"
+  },
+  "certified_profiles": ["small"],
+  "conditional_profiles": [
+    {
+      "id": "medium",
+      "gate": "publish and pass Corrobore measurements at 1,000,000 objects and 5,000,000 relationships"
+    }
+  ],
+  "unsupported": [
+    "distributed Corrobore",
+    "high availability",
+    "large profile"
+  ]
+}

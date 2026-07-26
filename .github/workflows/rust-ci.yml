@@ -55,6 +55,10 @@ jobs:
               - 'scripts/standalone-acceptance-contract.test.mjs'
               - 'scripts/standalone-acceptance.sh'
               - '.github/workflows/standalone-acceptance.yml'
+              - 'scripts/opencti-elastic-free-contract.test.mjs'
+              - 'scripts/opencti-elastic-free-acceptance.sh'
+              - 'scripts/opencti-elastic-free-migrate.sh'
+              - '.github/workflows/opencti-elastic-free.yml'
 
   quality:
     name: Format, lint, and build
@@ -102,6 +106,9 @@ jobs:
 
       - name: Validate standalone acceptance contracts
         run: node --test scripts/standalone-acceptance-contract.test.mjs
+
+      - name: Validate Elastic-free OpenCTI contracts
+        run: node --test scripts/opencti-elastic-free-contract.test.mjs
 
   cargo-deny:
     name: Dependency and license audit

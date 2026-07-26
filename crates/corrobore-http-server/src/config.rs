@@ -69,12 +69,18 @@ pub struct ServerConfig {
     pub opencti_sync_max_operations: usize,
     /// Maximum replay identities and dead-letter diagnostics retained.
     pub opencti_sync_max_replay_identities: usize,
+    /// Final single-node mode with no reference Elasticsearch/OpenSearch provider.
+    pub opencti_elastic_free: bool,
     /// OpenCTI asynchronous shadow-read policy and reference provider.
     pub opencti_shadow: OpenCtiShadowConfig,
     /// Sustained request rate per second for the global rate limiter (2.3).
     pub rate_limit_per_second: u64,
     /// Burst allowance for the global rate limiter (2.3).
     pub rate_limit_burst: u32,
+    /// Sustained request rate reserved for authenticated OpenCTI provider traffic.
+    pub opencti_rate_limit_per_second: u64,
+    /// Burst allowance reserved for authenticated OpenCTI provider traffic.
+    pub opencti_rate_limit_burst: u32,
     /// Optional directory containing the production explorer build.
     pub web_dir: Option<String>,
     /// Licensed enterprise modules enabled for this runtime instance.
@@ -146,9 +152,15 @@ impl fmt::Debug for ServerConfig {
                 "opencti_sync_max_replay_identities",
                 &self.opencti_sync_max_replay_identities,
             )
+            .field("opencti_elastic_free", &self.opencti_elastic_free)
             .field("opencti_shadow", &self.opencti_shadow)
             .field("rate_limit_per_second", &self.rate_limit_per_second)
             .field("rate_limit_burst", &self.rate_limit_burst)
+            .field(
+                "opencti_rate_limit_per_second",
+                &self.opencti_rate_limit_per_second,
+            )
+            .field("opencti_rate_limit_burst", &self.opencti_rate_limit_burst)
             .field("web_dir", &self.web_dir)
             .field("licensed_modules", &self.licensed_modules)
             .field("license_client_uuid", &self.license_client_uuid)
@@ -462,6 +474,9 @@ impl ServerConfig {
                 .unwrap_or("4096"),
         )?;
 
+        let opencti_elastic_free =
+            Self::parse_storage_bool(vars, "CORROBORE_OPENCTI_ELASTIC_FREE", false)?;
+
         let reference_endpoint = vars
             .get("CORROBORE_OPENCTI_SHADOW_REFERENCE_ENDPOINT")
             .map(|value| value.trim().to_owned())
@@ -559,16 +574,30 @@ impl ServerConfig {
             routing_max_audits,
         };
 
-        let rate_limit_per_second = parse_u64(
+        let rate_limit_per_second = parse_positive_u64(
             "CORROBORE_HTTP_RATE_LIMIT_PER_SECOND",
             vars.get("CORROBORE_HTTP_RATE_LIMIT_PER_SECOND")
                 .map(String::as_str)
                 .unwrap_or("50"),
         )?;
 
-        let rate_limit_burst = parse_u32(
+        let rate_limit_burst = parse_positive_u32(
             "CORROBORE_HTTP_RATE_LIMIT_BURST",
             vars.get("CORROBORE_HTTP_RATE_LIMIT_BURST")
+                .map(String::as_str)
+                .unwrap_or("200"),
+        )?;
+
+        let opencti_rate_limit_per_second = parse_positive_u64(
+            "CORROBORE_OPENCTI_RATE_LIMIT_PER_SECOND",
+            vars.get("CORROBORE_OPENCTI_RATE_LIMIT_PER_SECOND")
+                .map(String::as_str)
+                .unwrap_or("50"),
+        )?;
+
+        let opencti_rate_limit_burst = parse_positive_u32(
+            "CORROBORE_OPENCTI_RATE_LIMIT_BURST",
+            vars.get("CORROBORE_OPENCTI_RATE_LIMIT_BURST")
                 .map(String::as_str)
                 .unwrap_or("200"),
         )?;
@@ -612,6 +641,24 @@ impl ServerConfig {
                 .map(String::as_str)
                 .unwrap_or("65536"),
         )?;
+        if opencti_elastic_free && storage_mode != StorageMode::Persistent {
+            return Err(ConfigError::InvalidEnv {
+                name: "CORROBORE_OPENCTI_ELASTIC_FREE",
+                value: "true requires CORROBORE_STORAGE_MODE=persistent".to_owned(),
+            });
+        }
+        if opencti_elastic_free && opencti_shadow.reference_endpoint.is_some() {
+            return Err(ConfigError::InvalidEnv {
+                name: "CORROBORE_OPENCTI_ELASTIC_FREE",
+                value: "true forbids CORROBORE_OPENCTI_SHADOW_REFERENCE_ENDPOINT".to_owned(),
+            });
+        }
+        if opencti_elastic_free && opencti_shadow.routing_policy_file.is_none() {
+            return Err(ConfigError::InvalidEnv {
+                name: "CORROBORE_OPENCTI_ELASTIC_FREE",
+                value: "true requires CORROBORE_OPENCTI_READ_ROUTING_POLICY_FILE".to_owned(),
+            });
+        }
         let (domain_provider_dir, domain_provider_manifest_file) =
             Self::parse_domain_provider_config(vars)?;
 
@@ -662,9 +709,12 @@ impl ServerConfig {
             import_max_body_bytes,
             opencti_sync_max_operations,
             opencti_sync_max_replay_identities,
+            opencti_elastic_free,
             opencti_shadow,
             rate_limit_per_second,
             rate_limit_burst,
+            opencti_rate_limit_per_second,
+            opencti_rate_limit_burst,
             web_dir,
             licensed_modules,
             license_client_uuid,
@@ -1070,6 +1120,17 @@ fn parse_u32(name: &'static str, value: &str) -> Result<u32, ConfigError> {
     })
 }
 
+fn parse_positive_u32(name: &'static str, value: &str) -> Result<u32, ConfigError> {
+    let parsed = parse_u32(name, value)?;
+    if parsed == 0 {
+        return Err(ConfigError::InvalidEnv {
+            name,
+            value: value.to_owned(),
+        });
+    }
+    Ok(parsed)
+}
+
 fn parse_usize(name: &'static str, value: &str) -> Result<usize, ConfigError> {
     value.parse::<usize>().map_err(|_| ConfigError::InvalidEnv {
         name,
@@ -1140,6 +1201,8 @@ mod tests {
         // 2.3: rate-limiting defaults are permissive but present.
         assert_eq!(config.rate_limit_per_second, 50);
         assert_eq!(config.rate_limit_burst, 200);
+        assert_eq!(config.opencti_rate_limit_per_second, 50);
+        assert_eq!(config.opencti_rate_limit_burst, 200);
         assert_eq!(config.web_dir, None);
         assert!(config.licensed_modules.is_empty());
         assert_eq!(config.license_client_uuid, None);
@@ -1380,6 +1443,14 @@ mod tests {
             "1".to_owned(),
         );
         vars.insert("CORROBORE_HTTP_RATE_LIMIT_BURST".to_owned(), "1".to_owned());
+        vars.insert(
+            "CORROBORE_OPENCTI_RATE_LIMIT_PER_SECOND".to_owned(),
+            "250".to_owned(),
+        );
+        vars.insert(
+            "CORROBORE_OPENCTI_RATE_LIMIT_BURST".to_owned(),
+            "2000".to_owned(),
+        );
 
         let config = ServerConfig::from_map(&vars).expect("config should parse");
         assert_eq!(config.max_body_bytes, 10);
@@ -1388,6 +1459,8 @@ mod tests {
         assert_eq!(config.opencti_sync_max_replay_identities, 11);
         assert_eq!(config.rate_limit_per_second, 1);
         assert_eq!(config.rate_limit_burst, 1);
+        assert_eq!(config.opencti_rate_limit_per_second, 250);
+        assert_eq!(config.opencti_rate_limit_burst, 2_000);
     }
 
     #[test]
@@ -1722,6 +1795,31 @@ mod tests {
                 value: "0".to_owned(),
             }
         );
+    }
+
+    #[test]
+    fn config_contract_rejects_zero_rate_limits() {
+        for name in [
+            "CORROBORE_HTTP_RATE_LIMIT_PER_SECOND",
+            "CORROBORE_HTTP_RATE_LIMIT_BURST",
+            "CORROBORE_OPENCTI_RATE_LIMIT_PER_SECOND",
+            "CORROBORE_OPENCTI_RATE_LIMIT_BURST",
+        ] {
+            let vars = HashMap::from([
+                (
+                    "CORROBORE_HTTP_AUTH_TOKEN".to_owned(),
+                    "token-123".to_owned(),
+                ),
+                (name.to_owned(), "0".to_owned()),
+            ]);
+            assert!(
+                matches!(
+                    ServerConfig::from_map(&vars),
+                    Err(ConfigError::InvalidEnv { name: invalid, .. }) if invalid == name
+                ),
+                "{name} should reject zero"
+            );
+        }
     }
 
     #[test]

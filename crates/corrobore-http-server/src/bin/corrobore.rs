@@ -66,7 +66,7 @@ enum ServerCommand {
     /// Print reproducible build metadata.
     Version,
     /// Probe the configured operational endpoints with a bounded timeout.
-    Status(ConfigArgs),
+    Status(StatusArgs),
     /// Create a coherent offline snapshot under exclusive storage ownership.
     Snapshot(SnapshotArgs),
     /// Validate a local snapshot and all component checksums.
@@ -249,6 +249,12 @@ struct ConfigArgs {
     /// Override the request burst allowance.
     #[arg(long)]
     rate_limit_burst: Option<u32>,
+    /// Override the sustained authenticated OpenCTI provider request rate.
+    #[arg(long)]
+    opencti_rate_limit_per_second: Option<u64>,
+    /// Override the authenticated OpenCTI provider request burst allowance.
+    #[arg(long)]
+    opencti_rate_limit_burst: Option<u32>,
     /// Override enabled interfaces as a comma-separated list.
     #[arg(long, value_delimiter = ',')]
     interfaces: Vec<String>,
@@ -270,6 +276,15 @@ struct ConfigArgs {
     /// Override the TLS private-key path.
     #[arg(long)]
     tls_private_key_file: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct StatusArgs {
+    #[command(flatten)]
+    config: ConfigArgs,
+    /// Override only the hostname used by the readiness probe.
+    #[arg(long)]
+    probe_host: Option<String>,
 }
 
 #[derive(Args)]
@@ -347,6 +362,8 @@ struct FileLimits {
     opencti_sync_max_replay_identities: Option<usize>,
     rate_limit_per_second: Option<u64>,
     rate_limit_burst: Option<u32>,
+    opencti_rate_limit_per_second: Option<u64>,
+    opencti_rate_limit_burst: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -466,8 +483,8 @@ async fn main() -> ExitCode {
         }
         Command::Server(ServerArgs {
             command: ServerCommand::Status(args),
-        }) => match load_config(&args) {
-            Ok(config) => status_probe(config).await,
+        }) => match load_config(&args.config) {
+            Ok(config) => status_probe(config, args.probe_host.as_deref()).await,
             Err(error) => config_failure(error),
         },
         Command::Server(ServerArgs {
@@ -676,9 +693,9 @@ fn database_operation_failure(
 
 /// Probe readiness and version compatibility, returning stable operational
 /// exit codes for automation.
-async fn status_probe(config: OperationalConfig) -> ExitCode {
+async fn status_probe(config: OperationalConfig, probe_host: Option<&str>) -> ExitCode {
     let timeout = std::time::Duration::from_millis(config.server.request_timeout_ms);
-    match tokio::time::timeout(timeout, probe_operational_endpoints(&config)).await {
+    match tokio::time::timeout(timeout, probe_operational_endpoints(&config, probe_host)).await {
         Ok(Ok(version)) => {
             println!("server status=ready version={version}");
             ExitCode::SUCCESS
@@ -708,8 +725,9 @@ enum StatusProbeError {
 
 async fn probe_operational_endpoints(
     config: &OperationalConfig,
+    probe_host: Option<&str>,
 ) -> Result<String, StatusProbeError> {
-    let host = match config.server.host.as_str() {
+    let host = match probe_host.unwrap_or(config.server.host.as_str()) {
         "0.0.0.0" => "127.0.0.1".to_owned(),
         "::" => "[::1]".to_owned(),
         host if host.contains(':') && !host.starts_with('[') => format!("[{host}]"),
@@ -998,6 +1016,16 @@ fn apply_file(path: &Path, values: &mut HashMap<String, String>) -> Result<(), S
         "CORROBORE_HTTP_RATE_LIMIT_BURST",
         config.limits.rate_limit_burst,
     );
+    insert_num(
+        values,
+        "CORROBORE_OPENCTI_RATE_LIMIT_PER_SECOND",
+        config.limits.opencti_rate_limit_per_second,
+    );
+    insert_num(
+        values,
+        "CORROBORE_OPENCTI_RATE_LIMIT_BURST",
+        config.limits.opencti_rate_limit_burst,
+    );
     insert(
         values,
         "CORROBORE_HTTP_WEB_DIR",
@@ -1164,6 +1192,16 @@ fn apply_cli(args: &ConfigArgs, values: &mut HashMap<String, String>) {
         values,
         "CORROBORE_HTTP_RATE_LIMIT_BURST",
         args.rate_limit_burst,
+    );
+    insert_num(
+        values,
+        "CORROBORE_OPENCTI_RATE_LIMIT_PER_SECOND",
+        args.opencti_rate_limit_per_second,
+    );
+    insert_num(
+        values,
+        "CORROBORE_OPENCTI_RATE_LIMIT_BURST",
+        args.opencti_rate_limit_burst,
     );
     if !args.interfaces.is_empty() {
         insert(
@@ -1477,6 +1515,14 @@ fn print_effective(config: &OperationalConfig) {
     println!(
         "limits.rate_limit_burst = {}",
         config.server.rate_limit_burst
+    );
+    println!(
+        "limits.opencti_rate_limit_per_second = {}",
+        config.server.opencti_rate_limit_per_second
+    );
+    println!(
+        "limits.opencti_rate_limit_burst = {}",
+        config.server.opencti_rate_limit_burst
     );
     println!("storage.mode = {:?}", config.server.storage_mode.as_str());
     if let Some(directory) = &config.server.storage_dir {

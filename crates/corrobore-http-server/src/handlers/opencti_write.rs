@@ -58,6 +58,31 @@ pub async fn execute_opencti_write(
                 "transactional write concurrency is saturated; retry with the same idempotency key",
             )
         })?;
+    if state.config.opencti_elastic_free {
+        // In final mode the canonical WAL is the only acknowledgement boundary.
+        // Do not create a reference-projection intent that can never be drained.
+        let corrobore_provider = ProviderDescriptor {
+            name: "corrobore".to_owned(),
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+            release: state.config.opencti_shadow.release.clone(),
+        };
+        let execution = tokio::time::timeout(
+            Duration::from_millis(state.config.opencti_shadow.timeout_ms),
+            execute_corrobore_primary(state.engine.clone(), corrobore_provider, request),
+        )
+        .await
+        .map_err(|_| {
+            ApiError::timeout(
+                "OPENCTI_PRIMARY_WRITE_TIMEOUT",
+                "canonical write exceeded the configured deadline; retry with the same idempotency key",
+            )
+        })?
+        .map_err(|reason| {
+            ApiError::service_unavailable("OPENCTI_PRIMARY_WRITE_FAILED", reason)
+        })?;
+        drop(permit);
+        return Ok(Json(execution.envelope));
+    }
     let sequence = state
         .opencti_write
         .lock()

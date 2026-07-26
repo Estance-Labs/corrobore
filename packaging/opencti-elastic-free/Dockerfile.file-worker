@@ -1,0 +1,15 @@
+# syntax=docker/dockerfile:1.7
+
+ARG CORROBORE_VERSION=0.2.2
+FROM ghcr.io/estance-labs/corrobore:${CORROBORE_VERSION} AS corrobore
+FROM minio/mc:RELEASE.2025-08-13T08-35-41Z AS minio_client
+
+FROM debian:bookworm-slim
+COPY --from=corrobore /usr/local/bin/corrobore-file-worker /usr/local/bin/corrobore-file-worker
+COPY --from=minio_client /usr/bin/mc /usr/local/bin/mc
+COPY packaging/opencti-elastic-free/file-worker-entrypoint.sh /usr/local/bin/opencti-file-worker-entrypoint
+RUN mkdir -p /opencti-files /metadata /tmp/mc \
+    && chown -R 65532:65532 /opencti-files /metadata /tmp/mc \
+    && chmod 0555 /usr/local/bin/opencti-file-worker-entrypoint
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/opencti-file-worker-entrypoint"]

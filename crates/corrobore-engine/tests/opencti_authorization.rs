@@ -494,6 +494,8 @@ fn list_count_order_and_page_boundaries_use_only_authorized_records() {
             filter: Value::Null,
             kinds: vec!["indicator".to_owned()],
             filters: Vec::new(),
+            predicate: None,
+            include_relationships: false,
         }),
         access("policy--v1"),
         "authorized-count",

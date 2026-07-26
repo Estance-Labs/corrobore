@@ -16,7 +16,7 @@ use corrobore_engine::{
     PaginateRequest, ReadFilter, ReadFilterOperator, ReadOrder, ReadPredicate, RequestContext,
     SortDirection,
 };
-use graph_core::{Graph, NodeId};
+use graph_core::{Graph, NodeId, NodeInput, PropertyValue};
 use opencti_adapter::{MappedRecord, OpenCtiAdapter};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -257,6 +257,104 @@ fn nested_predicates_and_multikey_cursor_pages_are_structural_stable_and_access_
 }
 
 #[test]
+fn nested_object_predicates_keep_conditions_on_one_array_item_and_support_wildcards() {
+    let mut graph = Graph::new();
+    graph
+        .create_node(
+            NodeInput::new(vec!["OpenCtiObject".to_owned()])
+                .with_property(
+                    "opencti.canonical_id",
+                    PropertyValue::String("relationship--nested-match".to_owned()),
+                )
+                .with_property(
+                    "opencti.raw",
+                    PropertyValue::Json(json!({
+                        "id": "relationship--nested-match",
+                        "type": "object",
+                        "connections": [
+                            {"internal_id": "identity--1", "role": "created-by_from"},
+                            {"internal_id": "identity--2", "role": "created-by_to"}
+                        ]
+                    })),
+                ),
+        )
+        .unwrap();
+    let mut engine = CorroboreEngine::builder()
+        .persistence(Box::new(StaticPersistence { graph }))
+        .build()
+        .unwrap();
+    let query = ListRequest {
+        predicate: Some(ReadPredicate::Nested {
+            path: "connections".to_owned(),
+            predicate: Box::new(ReadPredicate::And(vec![
+                predicate_filter(
+                    "internal_id",
+                    ReadFilterOperator::Equal,
+                    Some(json!("identity--1")),
+                ),
+                predicate_filter("role", ReadFilterOperator::Wildcard, Some(json!("*_from"))),
+            ])),
+        }),
+        limit: 10,
+        ..ListRequest::default()
+    };
+
+    let result = execute(
+        &mut engine,
+        KnowledgeDataOperation::List(query),
+        system_access(),
+        "nested-object-wildcard",
+    );
+    let KnowledgeDataResponse::Records(page) = result else {
+        panic!("expected records");
+    };
+    assert_eq!(page.records.len(), 1);
+    assert_eq!(page.records[0].id, "relationship--nested-match");
+}
+
+#[test]
+fn opencti_entity_type_is_the_record_kind_when_raw_documents_have_no_type() {
+    let mut graph = Graph::new();
+    graph
+        .create_node(
+            NodeInput::new(vec!["OpenCtiObject".to_owned()])
+                .with_property(
+                    "opencti.canonical_id",
+                    PropertyValue::String("settings--platform".to_owned()),
+                )
+                .with_property(
+                    "opencti.raw",
+                    PropertyValue::Json(json!({
+                        "id": "settings--platform",
+                        "entity_type": "Settings",
+                        "platform_title": "OpenCTI"
+                    })),
+                ),
+        )
+        .unwrap();
+    let mut engine = CorroboreEngine::builder()
+        .persistence(Box::new(StaticPersistence { graph }))
+        .build()
+        .unwrap();
+
+    let result = execute(
+        &mut engine,
+        KnowledgeDataOperation::List(ListRequest {
+            kinds: vec!["Settings".to_owned()],
+            limit: 10,
+            ..ListRequest::default()
+        }),
+        system_access(),
+        "entity-type-kind",
+    );
+    let KnowledgeDataResponse::Records(page) = result else {
+        panic!("expected records");
+    };
+    assert_eq!(page.records.len(), 1);
+    assert_eq!(page.records[0].kind, "Settings");
+}
+
+#[test]
 fn terms_and_histogram_match_the_pinned_opencti_dashboard_captures() {
     let graph = corpus_graph();
     let mut engine = CorroboreEngine::builder()
@@ -273,6 +371,7 @@ fn terms_and_histogram_match_the_pinned_opencti_dashboard_captures() {
                 limit: 20,
             },
             candidate_limit: 10_000,
+            include_relationships: false,
         },
         system_access(),
         "dashboard-terms",
@@ -306,6 +405,7 @@ fn terms_and_histogram_match_the_pinned_opencti_dashboard_captures() {
                 include_empty: false,
             },
             candidate_limit: 10_000,
+            include_relationships: false,
         },
         system_access(),
         "dashboard-histogram",
@@ -336,6 +436,7 @@ fn cardinality_metrics_nested_filter_and_reverse_nested_never_include_denied_rec
                 field: "x_opencti_tenant_refs".to_owned(),
             },
             candidate_limit: 100,
+            include_relationships: false,
         },
         clear_access(),
         "cardinality-access",
@@ -364,6 +465,7 @@ fn cardinality_metrics_nested_filter_and_reverse_nested_never_include_denied_rec
                 }),
             },
             candidate_limit: 100,
+            include_relationships: false,
         },
         clear_access(),
         "reverse-nested-access",
@@ -386,6 +488,7 @@ fn materialized_advanced_projection_is_versioned_and_rebuildable_not_authoritati
             predicate: None,
             aggregation: Aggregation::Count,
             candidate_limit: 100,
+            include_relationships: false,
         },
         system_access(),
         "rebuildable-count",
@@ -404,6 +507,7 @@ fn materialized_advanced_projection_is_versioned_and_rebuildable_not_authoritati
             predicate: None,
             aggregation: Aggregation::Count,
             candidate_limit: 100,
+            include_relationships: false,
         },
         system_access(),
         "rebuilt-count",
@@ -452,6 +556,7 @@ fn numeric_metrics_ignore_missing_values_and_preserve_finite_results() {
                 predicate: None,
                 aggregation: aggregation_kind,
                 candidate_limit: 100,
+                include_relationships: false,
             },
             system_access(),
             "numeric-metric",
@@ -482,6 +587,7 @@ fn aggregation_refuses_unbounded_or_exhausted_candidate_budgets() {
                         predicate: None,
                         aggregation: Aggregation::Count,
                         candidate_limit,
+                        include_relationships: false,
                     },
                 }),
                 system_access(),
