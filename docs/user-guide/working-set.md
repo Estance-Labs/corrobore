@@ -1,6 +1,6 @@
 # Learned Working Set
 
-Corrobore's working set is a bounded, explainable view used to navigate a graph without loading every node and relationship. Epic 0017 is in progress; the primitives through the benchmark harness are implemented, while the final acceptance suite and reproducibility report remain open in issue #274.
+Corrobore's working set is a bounded, explainable view used to navigate a graph without loading every node and relationship. Epic 0017 is implemented and benchmarked; its [migrated epic tracker #86](https://github.com/Estance-Labs/project-documents/issues/86) and [final acceptance issue #73](https://github.com/Estance-Labs/project-documents/issues/73) are complete.
 
 This guide targets the current `0.1.x` runtime baseline.
 
@@ -37,7 +37,7 @@ The learned controller does not replace deterministic budgets or supernode prote
 
 The harness represents LRU, LFU, static profiles, semantic-only, PageRank/spreading activation, contextual bandit, and learned pheromone policy families. Reports include evidence recall, pages loaded, peak memory, p95 latency, dead-end expansions, supernode blow-ups, and reproducibility metadata.
 
-The target gains stated by Epic 0017 are research acceptance targets, not current product claims. Use the final issue #274 report, once merged, as the evidence source for any performance statement.
+The target gains stated by Epic 0017 are measured research results on the reference workload, not general production performance guarantees. Use the completed [acceptance suite](https://github.com/Estance-Labs/corrobore/blob/main/crates/graph-core/tests/epic_0017_acceptance.rs) and [reproducibility report](https://github.com/Estance-Labs/project-documents/blob/main/feature-0017-learned-working-set/artifacts/0017-reproducibility-report.md) as the evidence source and scope for any performance statement.
 
 For operational query boundaries and runtime policy behavior, use the
 [HTTP Server guide](http-server.md) and [Cypher Support](cypher.md) as primary

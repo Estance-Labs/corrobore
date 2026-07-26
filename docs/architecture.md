@@ -86,7 +86,7 @@ Read and write availability is controlled by the host. The HTTP API exposes expl
 - a contextual controller chooses from explicit working-set actions and observes scalarized rewards;
 - the benchmark harness compares classic and learned policy families on a reproducible FIMI multi-hop workload.
 
-The remaining Epic 0017 acceptance report is not presented as completed; see [Learned Working Set](user-guide/working-set.md) for the implemented surface and limitations.
+The Epic 0017 acceptance suite and reproducibility report are complete; see [Learned Working Set](user-guide/working-set.md) for the implemented surface, benchmark results, and evidence scope.
 
 ## Durability and transport boundaries
 
