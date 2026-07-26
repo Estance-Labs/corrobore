@@ -1,6 +1,6 @@
 [Unit]
 Description=Corrobore standalone graph server
-Documentation=https://noetance-labs.github.io/corrobore/user-guide/standalone-server/
+Documentation=https://estance-labs.github.io/corrobore/user-guide/standalone-server/
 After=network-online.target
 Wants=network-online.target
 

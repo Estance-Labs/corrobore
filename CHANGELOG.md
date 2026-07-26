@@ -19,4 +19,4 @@ Changes on `main` that have not yet been tagged in a release.
 - **v0.1.0** — see [docs/release-notes/v0.1.0.md](docs/release-notes/v0.1.0.md).
 - **v0.0.1** — see [docs/release-notes/v0.0.1.md](docs/release-notes/v0.0.1.md) (historical foundation milestone).
 
-[Unreleased]: https://github.com/Noetance-Labs/corrobore/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/Estance-Labs/corrobore/compare/v0.2.2...HEAD

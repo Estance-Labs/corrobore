@@ -28,12 +28,12 @@ For Docker-specific examples and environment variables, see
 No local installation required. Pull and run in a single command:
 
 ```bash
-docker run -e CORROBORE_HTTP_AUTH_TOKEN=change-me -p 8080:8080 ghcr.io/noetance-labs/corrobore:latest
+docker run -e CORROBORE_HTTP_AUTH_TOKEN=change-me -p 8080:8080 ghcr.io/estance-labs/corrobore:latest
 ```
 
 ### Prebuilt binary
 
-Download the archive for your platform from the [latest release](https://github.com/Noetance-Labs/corrobore/releases/latest):
+Download the archive for your platform from the [latest release](https://github.com/Estance-Labs/corrobore/releases/latest):
 
 | Platform          | Archive                             |
 |-------------------|-------------------------------------|

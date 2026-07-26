@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "generated_at": "2026-06-28T00:00:00+02:00",
   "target": {
-    "repository": "Noetance-Labs/corrobore",
+    "repository": "Estance-Labs/corrobore",
     "epic": "Epic 0001: Rust Graph Core",
     "crate": "crates/graph-core",
     "primary_validation_command": "cargo test -p graph-core",

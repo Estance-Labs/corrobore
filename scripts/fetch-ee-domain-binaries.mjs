@@ -207,7 +207,7 @@ async function resolveArchivePath({
 
 function parseArgs(argv) {
   const options = {
-    owner: 'Noetance-Labs',
+    owner: 'Estance-Labs',
     downloadMode: 'github',
     outputDir: path.resolve(process.cwd(), 'overrides/domain-providers'),
   };
@@ -268,7 +268,7 @@ function usage() {
     '  --platform           linux-x64 | linux-arm64 | macos-arm64 | macos-x64 | windows-x64',
     '',
     'Optional:',
-    '  --owner              GitHub org or user (default: Noetance-Labs)',
+    '  --owner              GitHub org or user (default: Estance-Labs)',
     '  --output-dir         Destination directory for provider libraries',
     '  --manifest-file      Output path for domain-providers.json',
     '  --download-mode      github (default) or local',

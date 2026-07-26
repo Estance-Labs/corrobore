@@ -133,7 +133,7 @@ Run the same check locally:
 
 ```bash
 export GITHUB_TOKEN="$(gh auth token)"
-export GITHUB_REPOSITORY="Noetance-Labs/corrobore"
+export GITHUB_REPOSITORY="Estance-Labs/corrobore"
 export P95_MAX_MINUTES="30"
 node scripts/ci-duration-guard.mjs --workflow rust-ci.yml --branch main --max-runs 30
 ```

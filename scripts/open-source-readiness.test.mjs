@@ -140,7 +140,7 @@ test('public repository metadata and identity are current', () => {
   assert.deepEqual(stalePaths, []);
 
   const workspace = fs.readFileSync(repositoryPath('Cargo.toml'), 'utf8');
-  assert.match(workspace, /repository\s*=\s*"https:\/\/github\.com\/Noetance-Labs\/corrobore"/);
+  assert.match(workspace, /repository\s*=\s*"https:\/\/github\.com\/Estance-Labs\/corrobore"/);
 
   const license = fs.readFileSync(repositoryPath('LICENSE'), 'utf8');
   assert.match(license, /Copyright \(c\) 2026 AreDee-Bangs/);
@@ -150,7 +150,7 @@ test('public repository metadata and identity are current', () => {
   );
   const legacyCopyrights = legalSourceFiles.filter((file) => {
     const content = fs.readFileSync(repositoryPath(file), 'utf8');
-    return content.includes('Copyright (c) 2026 Noétance.');
+    return content.includes('Copyright (c) 2026 Estance.');
   });
   assert.deepEqual(legacyCopyrights, []);
 
