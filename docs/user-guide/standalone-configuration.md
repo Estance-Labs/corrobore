@@ -115,8 +115,8 @@ rejected.
 | — | `CORROBORE_OPENCTI_SHADOW_REFERENCE_AUTH_TOKEN_FILE` | — | unset |
 | — | `CORROBORE_OPENCTI_SHADOW_RELEASE` | — | package version |
 | — | `CORROBORE_OPENCTI_SHADOW_SAMPLE_BASIS_POINTS` | — | `0` |
-| — | `CORROBORE_OPENCTI_SHADOW_MAX_CONCURRENCY` | — | `4`; also bounds reference-authoritative dual writes |
-| — | `CORROBORE_OPENCTI_SHADOW_TIMEOUT_MS` | — | `2000`; also applies per dual-write provider |
+| — | `CORROBORE_OPENCTI_SHADOW_MAX_CONCURRENCY` | — | `4`; also bounds Corrobore-primary writes |
+| — | `CORROBORE_OPENCTI_SHADOW_TIMEOUT_MS` | — | `2000`; also applies to canonical writes and reference projection |
 | — | `CORROBORE_OPENCTI_SHADOW_MAX_REPORTS` | — | `10000` |
 | — | `CORROBORE_OPENCTI_SHADOW_SAMPLING_POLICY_FILE` | — | unset |
 | — | `CORROBORE_OPENCTI_SHADOW_BASELINE_FILE` | — | unset |

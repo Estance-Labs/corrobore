@@ -361,6 +361,13 @@ components:
         - failed_operations
         - idempotent_replays
         - quarantined_reconciliation
+        - projection_outbox_depth
+        - projection_lag
+        - projection_retries
+        - projection_quarantined
+        - write_authority
+        - fully_synchronized
+        - reconstruction_runs
       properties:
         pending_reconciliation: {type: integer, minimum: 0}
         fully_reconciled: {type: boolean}
@@ -368,6 +375,15 @@ components:
         failed_operations: {type: integer, minimum: 0}
         idempotent_replays: {type: integer, minimum: 0}
         quarantined_reconciliation: {type: integer, minimum: 0}
+        projection_outbox_depth: {type: integer, minimum: 0}
+        projection_lag: {type: integer, minimum: 0}
+        projection_retries: {type: integer, minimum: 0}
+        projection_quarantined: {type: integer, minimum: 0}
+        write_authority:
+          type: string
+          enum: [corrobore_primary, writes_suspended, reference_primary]
+        fully_synchronized: {type: boolean}
+        reconstruction_runs: {type: integer, minimum: 0}
     OpenCtiReconciliationCommand:
       type: object
       required: [command_id, mode, scope, reference_records, allow_extra_deletion]
@@ -1096,7 +1112,7 @@ paths:
   /v1/opencti/writes:
     post:
       operationId: executeOpenCtiTransactionalWrite
-      summary: Apply a reference-authoritative transactional OpenCTI write and durable mirror
+      summary: Commit a Corrobore-authoritative write and enqueue verified reference projection
       tags: [Import]
       requestBody:
         required: true
@@ -1105,7 +1121,7 @@ paths:
             schema: {$ref: '#/components/schemas/OpenCtiWriteRequest'}
       responses:
         '200':
-          description: Unmodified reference Knowledge Data Engine response envelope
+          description: Canonical Corrobore Knowledge Data Engine response envelope
           content:
             application/json:
               schema: {type: object}
@@ -1115,28 +1131,93 @@ paths:
         '413':
           description: Configured payload-byte limit exceeded
         '503':
-          description: Reference unavailable, write backpressure, or durable state failure
+          description: Write suspension, outbox backpressure, or durable state failure
         '504':
           description: Configured write deadline exceeded
 
   /v1/opencti/writes/status:
     get:
       operationId: getOpenCtiTransactionalWriteStatus
-      summary: Inspect payload-free write, audit, and reconciliation state
+      summary: Inspect primary-write authority, projection lag, audit, and recovery state
       tags: [Import]
       responses:
         '200':
-          description: Bounded counters, reconciliations, and committed WAL audit receipts
+          description: Bounded counters, projections, reconciliations, and committed WAL receipts
           content:
             application/json:
               schema:
                 type: object
-                required: [ok, result, reconciliations, audits]
+                required: [ok, result, reconciliations, projections, audits]
                 properties:
                   ok: {type: boolean, const: true}
                   result: {$ref: '#/components/schemas/OpenCtiWriteStatus'}
                   reconciliations: {type: array, items: {type: object}}
+                  projections: {type: array, items: {type: object}}
                   audits: {type: array, items: {type: object}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/admin/opencti/projection/drain:
+    post:
+      operationId: drainOpenCtiReferenceProjection
+      summary: Retry the ordered reference projection outbox
+      tags: [Import]
+      responses:
+        '200': {description: Current projection status after bounded drain}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '503': {description: Durable projection state failure}
+
+  /v1/admin/opencti/reconstruction:
+    post:
+      operationId: reconstructOpenCtiReference
+      summary: Export a lossless canonical corpus for a clean reference rebuild
+      tags: [Import]
+      responses:
+        '200': {description: Deterministic records and canonical outbox high-water sequence}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '503': {description: Persistent canonical storage unavailable}
+
+  /v1/admin/opencti/authority/suspend:
+    post:
+      operationId: suspendOpenCtiWrites
+      summary: Suspend writes for a declared rollback trigger
+      tags: [Import]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [trigger]
+              properties:
+                trigger:
+                  type: string
+                  enum: [security_divergence, corruption, latency_regression, migration_failure, write_divergence, reference_availability]
+      responses:
+        '200': {description: Writes durably suspended}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/admin/opencti/authority:
+    post:
+      operationId: transitionOpenCtiWriteAuthority
+      summary: Assign exclusive write authority after health, replay, and parity gates
+      tags: [Import]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target, reference_healthy, replay_complete, parity_verified]
+              properties:
+                target:
+                  type: string
+                  enum: [corrobore_primary, writes_suspended, reference_primary]
+                reference_healthy: {type: boolean}
+                replay_complete: {type: boolean}
+                parity_verified: {type: boolean}
+      responses:
+        '200': {description: Durable authority after the gated transition}
+        '400': {description: One or more transition gates failed}
         '401': {$ref: '#/components/responses/Unauthorized'}
 
   /v1/opencti/reconciliation:
