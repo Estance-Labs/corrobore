@@ -67,6 +67,7 @@ pyvenv.cfg
 .env
 .env.*
 !.env.sample
+!packaging/opencti-elastic-free/.env.example
 
 # Python caches
 __pycache__/
