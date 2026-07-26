@@ -7,13 +7,22 @@ RabbitMQ, or MinIO and does not claim high availability.
 ## Install
 
 Copy `packaging/opencti-elastic-free/.env.example` to a protected environment
-file, create every referenced secret with mode `0600`, and generate a TLS
-certificate whose SAN includes `corrobore`. Generate the mandatory OpenCTI
-encryption secret with the following command and keep it with the backups;
-encrypted platform values cannot be recovered without it:
+file and create every referenced secret below a directory with mode `0700`.
+Set each secret source file to read-only mode `0444`: Docker Compose bind-mounts
+these files into containers that deliberately run under different non-root
+UIDs, and Compose does not apply the declared secret `uid`, `gid`, or `mode` to
+file-backed secrets. The protected parent directory prevents host users from
+traversing to those files, while each container receives only its explicitly
+declared secret. Generate a TLS certificate whose SAN includes `corrobore`.
+Generate the mandatory OpenCTI encryption secret with the following commands
+and keep it with the backups; encrypted platform values cannot be recovered
+without it:
 
 ```bash
+mkdir -p packaging/opencti-elastic-free/secrets
+chmod 0700 packaging/opencti-elastic-free/secrets
 openssl rand -base64 -out packaging/opencti-elastic-free/secrets/opencti-encryption-key 32
+chmod 0444 packaging/opencti-elastic-free/secrets/*
 ```
 
 Select either

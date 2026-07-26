@@ -118,7 +118,8 @@ jobs:
             -keyout packaging/opencti-elastic-free/secrets/tls.key \
             -out packaging/opencti-elastic-free/secrets/tls.crt -days 1 \
             -subj /CN=corrobore -addext subjectAltName=DNS:corrobore
-          chmod 0600 packaging/opencti-elastic-free/secrets/*
+          chmod 0700 packaging/opencti-elastic-free/secrets
+          chmod 0444 packaging/opencti-elastic-free/secrets/*
           cp packaging/opencti-elastic-free/.env.example packaging/opencti-elastic-free/.env
 
       - name: Build and run exact shipped artifacts

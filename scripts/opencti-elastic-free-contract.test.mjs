@@ -88,17 +88,22 @@ test("the native OpenCTI provider is source-locked to the Estance fork", async (
 });
 
 test("OpenCTI runtime secrets include the mandatory encryption key", async () => {
-  const [compose, environment, entrypoint, workflow] = await Promise.all([
+  const [compose, environment, entrypoint, workflow, operations] = await Promise.all([
     read("packaging/opencti-elastic-free/compose.yml"),
     read("packaging/opencti-elastic-free/.env.example"),
     read("packaging/opencti-elastic-free/opencti-entrypoint.sh"),
     read(".github/workflows/opencti-elastic-free.yml"),
+    read("docs/user-guide/opencti-elastic-free-operations.md"),
   ]);
 
   assert.ok(environment.includes("OPENCTI_ENCRYPTION_KEY_FILE=./secrets/opencti-encryption-key"));
   assert.ok(compose.includes("OPENCTI_ENCRYPTION_KEY_FILE:?set OPENCTI_ENCRYPTION_KEY_FILE"));
   assert.ok(entrypoint.includes("read_secret APP__ENCRYPTION_KEY /run/secrets/opencti-encryption-key"));
   assert.ok(workflow.includes("secrets/opencti-encryption-key"));
+  assert.ok(workflow.includes("chmod 0700 packaging/opencti-elastic-free/secrets"));
+  assert.ok(workflow.includes("chmod 0444 packaging/opencti-elastic-free/secrets/*"));
+  assert.ok(operations.includes("directory with mode `0700`"));
+  assert.ok(operations.includes("read-only mode `0444`"));
 });
 
 test("migration and rollback cover every reversible operating mode", async () => {
