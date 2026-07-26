@@ -11,11 +11,18 @@ use std::{
 
 use clap::{Args, Parser, Subcommand};
 use corrobore_http_server::{
-    AppState, AppStateInitError, ServerConfig, ServerLifecycleError, build_router,
-    install_shutdown_signal,
+    AppState, AppStateInitError, DataDirectoryOwnership, ServerConfig, ServerLifecycleError,
+    build_router, install_shutdown_signal,
     logging::init_logging,
+    s3_snapshot_store::{S3SnapshotArtifactStore, S3SnapshotStoreConfig},
     security::{OperationalEndpointPolicy, TlsMaterialPaths, load_tls_material},
     serve_tls_with_lifecycle, serve_with_lifecycle,
+};
+use graph_storage::{
+    CanonicalEngineStore, CanonicalStoreOptions, MigrationRequest, SnapshotRequest,
+    cancel_derived_index_rebuild, create_consistent_snapshot, export_snapshot_to_store,
+    migrate_storage, open_storage_root, rebuild_derived_indexes, restore_consistent_snapshot,
+    rollback_storage_migration, validate_consistent_snapshot,
 };
 use serde::Deserialize;
 use tokio::net::TcpListener;
@@ -29,6 +36,7 @@ const STORAGE_RECOVERY_EXIT_CODE: u8 = 6;
 const FORCED_SHUTDOWN_EXIT_CODE: u8 = 7;
 const STATUS_UNAVAILABLE_EXIT_CODE: u8 = 8;
 const STATUS_INCOMPATIBLE_EXIT_CODE: u8 = 9;
+const DATABASE_OPERATION_EXIT_CODE: u8 = 10;
 
 #[derive(Parser)]
 #[command(name = "corrobore", about = "Operate a Corrobore standalone server")]
@@ -59,6 +67,100 @@ enum ServerCommand {
     Version,
     /// Probe the configured operational endpoints with a bounded timeout.
     Status(ConfigArgs),
+    /// Create a coherent offline snapshot under exclusive storage ownership.
+    Snapshot(SnapshotArgs),
+    /// Validate a local snapshot and all component checksums.
+    ValidateSnapshot(ValidateSnapshotArgs),
+    /// Export a validated local snapshot to an S3 or MinIO bucket.
+    ExportSnapshotS3(ExportSnapshotS3Args),
+    /// Restore a validated snapshot into a new empty data directory.
+    Restore(RestoreArgs),
+    /// Run or resume the supported previous-version storage migration.
+    Migrate(MigrationArgs),
+    /// Roll back the compatible manifest boundary after a completed migration.
+    Rollback(MigrationRootArgs),
+    /// Rebuild every derived index from canonical data.
+    RebuildIndexes(MigrationRootArgs),
+    /// Cancel an incomplete derived-index rebuild at its durable boundary.
+    CancelRebuild(MigrationRootArgs),
+}
+
+#[derive(Args)]
+struct SnapshotArgs {
+    /// Persistent source data directory.
+    #[arg(long)]
+    storage_dir: PathBuf,
+    /// New local snapshot artifact directory.
+    #[arg(long)]
+    destination: PathBuf,
+    /// Optional key-provider identity; key material is never stored.
+    #[arg(long)]
+    encryption_key_id: Option<String>,
+    /// Optional provider lifecycle/retention hook.
+    #[arg(long)]
+    retention_hook: Option<String>,
+}
+
+#[derive(Args)]
+struct ValidateSnapshotArgs {
+    /// Local snapshot artifact directory.
+    #[arg(long)]
+    snapshot: PathBuf,
+    /// Expected key-provider identity.
+    #[arg(long)]
+    encryption_key_id: Option<String>,
+}
+
+#[derive(Args)]
+struct ExportSnapshotS3Args {
+    /// Validated local snapshot artifact directory.
+    #[arg(long)]
+    snapshot: PathBuf,
+    /// S3 or MinIO endpoint.
+    #[arg(long)]
+    endpoint: String,
+    /// Destination bucket.
+    #[arg(long)]
+    bucket: String,
+    /// Destination object prefix.
+    #[arg(long)]
+    prefix: String,
+    /// AWS signing region.
+    #[arg(long, default_value = "us-east-1")]
+    region: String,
+}
+
+#[derive(Args)]
+struct RestoreArgs {
+    /// Local snapshot artifact directory.
+    #[arg(long)]
+    snapshot: PathBuf,
+    /// New empty target data directory.
+    #[arg(long)]
+    target: PathBuf,
+    /// Expected key-provider identity.
+    #[arg(long)]
+    encryption_key_id: Option<String>,
+}
+
+#[derive(Args)]
+struct MigrationArgs {
+    /// Offline persistent data directory.
+    #[arg(long)]
+    storage_dir: PathBuf,
+    /// Previous storage version. Only V0 is currently supported.
+    #[arg(long, default_value = "V0")]
+    from: String,
+    /// Target storage version. Only V1 is currently supported.
+    #[arg(long, default_value = "V1")]
+    to: String,
+}
+
+#[derive(Args)]
+struct MigrationRootArgs {
+    /// Offline persistent data directory.
+    #[arg(long)]
+    storage_dir: PathBuf,
 }
 
 #[derive(Args)]
@@ -368,7 +470,208 @@ async fn main() -> ExitCode {
             Ok(config) => status_probe(config).await,
             Err(error) => config_failure(error),
         },
+        Command::Server(ServerArgs {
+            command: ServerCommand::Snapshot(args),
+        }) => run_snapshot(args),
+        Command::Server(ServerArgs {
+            command: ServerCommand::ValidateSnapshot(args),
+        }) => run_snapshot_validation(args),
+        Command::Server(ServerArgs {
+            command: ServerCommand::ExportSnapshotS3(args),
+        }) => run_snapshot_s3_export(args),
+        Command::Server(ServerArgs {
+            command: ServerCommand::Restore(args),
+        }) => run_restore(args),
+        Command::Server(ServerArgs {
+            command: ServerCommand::Migrate(args),
+        }) => run_migration(args),
+        Command::Server(ServerArgs {
+            command: ServerCommand::Rollback(args),
+        }) => run_rollback(args),
+        Command::Server(ServerArgs {
+            command: ServerCommand::RebuildIndexes(args),
+        }) => run_index_rebuild(args),
+        Command::Server(ServerArgs {
+            command: ServerCommand::CancelRebuild(args),
+        }) => run_index_rebuild_cancellation(args),
     }
+}
+
+fn run_snapshot(args: SnapshotArgs) -> ExitCode {
+    let started = std::time::Instant::now();
+    let ownership = match DataDirectoryOwnership::acquire(&args.storage_dir) {
+        Ok(ownership) => ownership,
+        Err(error) => return database_operation_failure("snapshot", started, error),
+    };
+    let root = match open_storage_root(&args.storage_dir) {
+        Ok(root) => root,
+        Err(error) => return database_operation_failure("snapshot", started, error),
+    };
+    let result = create_consistent_snapshot(
+        &root,
+        &args.destination,
+        SnapshotRequest {
+            created_at: chrono::Utc::now().to_rfc3339(),
+            encryption_key_id: args.encryption_key_id,
+            retention_hook: args.retention_hook,
+        },
+    );
+    drop(ownership);
+    print_database_operation("snapshot", started, result)
+}
+
+fn run_snapshot_validation(args: ValidateSnapshotArgs) -> ExitCode {
+    let started = std::time::Instant::now();
+    print_database_operation(
+        "validate_snapshot",
+        started,
+        validate_consistent_snapshot(args.snapshot, args.encryption_key_id.as_deref()),
+    )
+}
+
+fn run_snapshot_s3_export(args: ExportSnapshotS3Args) -> ExitCode {
+    let started = std::time::Instant::now();
+    let access_key = match std::env::var("CORROBORE_S3_ACCESS_KEY") {
+        Ok(value) if !value.trim().is_empty() => value,
+        _ => {
+            return database_operation_failure(
+                "export_snapshot_s3",
+                started,
+                "CORROBORE_S3_ACCESS_KEY is required",
+            );
+        }
+    };
+    let secret_key = match std::env::var("CORROBORE_S3_SECRET_KEY") {
+        Ok(value) if !value.is_empty() => value,
+        _ => {
+            return database_operation_failure(
+                "export_snapshot_s3",
+                started,
+                "CORROBORE_S3_SECRET_KEY is required",
+            );
+        }
+    };
+    let session_token = std::env::var("CORROBORE_S3_SESSION_TOKEN")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let mut store = match S3SnapshotArtifactStore::new(S3SnapshotStoreConfig {
+        endpoint: args.endpoint,
+        bucket: args.bucket,
+        region: args.region,
+        access_key,
+        secret_key,
+        session_token,
+    }) {
+        Ok(store) => store,
+        Err(error) => return database_operation_failure("export_snapshot_s3", started, error),
+    };
+    print_database_operation(
+        "export_snapshot_s3",
+        started,
+        export_snapshot_to_store(args.snapshot, &mut store, &args.prefix),
+    )
+}
+
+fn run_restore(args: RestoreArgs) -> ExitCode {
+    let started = std::time::Instant::now();
+    let ownership = match DataDirectoryOwnership::acquire(&args.target) {
+        Ok(ownership) => ownership,
+        Err(error) => return database_operation_failure("restore", started, error),
+    };
+    let result = restore_consistent_snapshot(
+        args.snapshot,
+        &args.target,
+        args.encryption_key_id.as_deref(),
+    );
+    drop(ownership);
+    print_database_operation("restore", started, result)
+}
+
+fn run_migration(args: MigrationArgs) -> ExitCode {
+    let started = std::time::Instant::now();
+    let ownership = match DataDirectoryOwnership::acquire(&args.storage_dir) {
+        Ok(ownership) => ownership,
+        Err(error) => return database_operation_failure("migrate", started, error),
+    };
+    let result = migrate_storage(
+        &args.storage_dir,
+        MigrationRequest {
+            source_version: args.from,
+            target_version: args.to,
+            started_at: chrono::Utc::now().to_rfc3339(),
+        },
+        None,
+    );
+    drop(ownership);
+    print_database_operation("migrate", started, result)
+}
+
+fn run_rollback(args: MigrationRootArgs) -> ExitCode {
+    let started = std::time::Instant::now();
+    let ownership = match DataDirectoryOwnership::acquire(&args.storage_dir) {
+        Ok(ownership) => ownership,
+        Err(error) => return database_operation_failure("rollback", started, error),
+    };
+    let result = rollback_storage_migration(&args.storage_dir);
+    drop(ownership);
+    print_database_operation("rollback", started, result)
+}
+
+fn run_index_rebuild(args: MigrationRootArgs) -> ExitCode {
+    let started = std::time::Instant::now();
+    let ownership = match DataDirectoryOwnership::acquire(&args.storage_dir) {
+        Ok(ownership) => ownership,
+        Err(error) => return database_operation_failure("rebuild_indexes", started, error),
+    };
+    let result = open_storage_root(&args.storage_dir)
+        .and_then(|root| CanonicalEngineStore::open(root, CanonicalStoreOptions::default()))
+        .and_then(|mut store| rebuild_derived_indexes(&mut store, None));
+    drop(ownership);
+    print_database_operation("rebuild_indexes", started, result)
+}
+
+fn run_index_rebuild_cancellation(args: MigrationRootArgs) -> ExitCode {
+    let started = std::time::Instant::now();
+    let ownership = match DataDirectoryOwnership::acquire(&args.storage_dir) {
+        Ok(ownership) => ownership,
+        Err(error) => return database_operation_failure("cancel_rebuild", started, error),
+    };
+    let result = cancel_derived_index_rebuild(&args.storage_dir);
+    drop(ownership);
+    print_database_operation("cancel_rebuild", started, result)
+}
+
+fn print_database_operation<T: serde::Serialize, E: std::fmt::Display>(
+    operation: &'static str,
+    started: std::time::Instant,
+    result: Result<T, E>,
+) -> ExitCode {
+    match result {
+        Ok(report) => match serde_json::to_string_pretty(&report) {
+            Ok(report) => {
+                println!("{report}");
+                eprintln!(
+                    "database operation completed: operation={operation} duration_ms={}",
+                    started.elapsed().as_millis()
+                );
+                ExitCode::SUCCESS
+            }
+            Err(error) => database_operation_failure(operation, started, error),
+        },
+        Err(error) => database_operation_failure(operation, started, error),
+    }
+}
+
+fn database_operation_failure(
+    operation: &'static str,
+    started: std::time::Instant,
+    error: impl std::fmt::Display,
+) -> ExitCode {
+    eprintln!(
+        "database operation failed: operation={operation} duration_ms={} error={error}",
+        started.elapsed().as_millis()
+    );
+    ExitCode::from(DATABASE_OPERATION_EXIT_CODE)
 }
 
 /// Probe readiness and version compatibility, returning stable operational

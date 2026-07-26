@@ -433,6 +433,47 @@ corrobore_opencti_reconciliation_parity_verified {}\n",
         reconciliation_status.quarantined_commands,
         reconciliation_status.parity_verified_commands,
     ));
+    let database = state
+        .database_operations
+        .lock()
+        .map(|metrics| metrics.clone())
+        .unwrap_or_default();
+    body.push_str(&format!(
+        concat!(
+            "# HELP corrobore_database_snapshots_total Completed coherent database snapshots.\n",
+            "# TYPE corrobore_database_snapshots_total counter\n",
+            "corrobore_database_snapshots_total {}\n",
+            "# HELP corrobore_database_snapshot_failures_total Failed database snapshot attempts.\n",
+            "# TYPE corrobore_database_snapshot_failures_total counter\n",
+            "corrobore_database_snapshot_failures_total {}\n",
+            "# HELP corrobore_database_snapshot_bytes Bytes in the latest coherent snapshot.\n",
+            "# TYPE corrobore_database_snapshot_bytes gauge\n",
+            "corrobore_database_snapshot_bytes {}\n",
+            "# HELP corrobore_database_snapshot_duration_ms Duration of the latest snapshot.\n",
+            "# TYPE corrobore_database_snapshot_duration_ms gauge\n",
+            "corrobore_database_snapshot_duration_ms {}\n",
+            "# HELP corrobore_database_rebuilds_total Completed full derived-index rebuilds.\n",
+            "# TYPE corrobore_database_rebuilds_total counter\n",
+            "corrobore_database_rebuilds_total {}\n",
+            "# HELP corrobore_database_rebuild_failures_total Failed derived-index rebuild attempts.\n",
+            "# TYPE corrobore_database_rebuild_failures_total counter\n",
+            "corrobore_database_rebuild_failures_total {}\n",
+            "# HELP corrobore_database_rebuild_duration_ms Duration of the latest rebuild.\n",
+            "# TYPE corrobore_database_rebuild_duration_ms gauge\n",
+            "corrobore_database_rebuild_duration_ms {}\n",
+            "# HELP corrobore_database_rebuild_records_scanned Canonical records scanned by the latest rebuild.\n",
+            "# TYPE corrobore_database_rebuild_records_scanned gauge\n",
+            "corrobore_database_rebuild_records_scanned {}\n",
+        ),
+        database.snapshots_completed,
+        database.snapshot_failures,
+        database.snapshot_bytes,
+        database.snapshot_duration_ms,
+        database.rebuilds_completed,
+        database.rebuild_failures,
+        database.rebuild_duration_ms,
+        database.rebuild_records_scanned,
+    ));
 
     ([(header::CONTENT_TYPE, PROMETHEUS_CONTENT_TYPE)], body)
 }

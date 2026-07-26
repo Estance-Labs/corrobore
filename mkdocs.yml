@@ -71,6 +71,7 @@ nav:
     - Standalone Server CLI: user-guide/standalone-server.md
     - Standalone Configuration: user-guide/standalone-configuration.md
     - Standalone Operations: user-guide/standalone-operations.md
+    - Database Operations: user-guide/database-operations.md
   - TAXII Ingestion: user-guide/ingestion.md
   - For LLM Agents: for-llms.md
   - Skills:

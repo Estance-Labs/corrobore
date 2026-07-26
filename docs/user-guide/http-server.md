@@ -6,6 +6,12 @@ This page is the transport and client contract. For the supported operator entry
 point and deployment runbooks, start with
 [Deployment Modes](deployment-modes.md).
 
+Administrative database operations are available at
+`POST /v1/admin/storage/snapshots`, `POST /v1/admin/storage/indexes/rebuild`, and
+`GET /v1/admin/storage/operations`. They require the administrative bearer token;
+see [Database operations](database-operations.md) for restore, migration, S3/MinIO,
+rollback, cancellation and recovery procedures.
+
 ## Authentication and limits
 
 Operational endpoints are public by default on loopback and can be protected

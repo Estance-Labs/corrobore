@@ -22,6 +22,7 @@ pub mod app;
 pub mod auth;
 pub mod config;
 pub mod correlation;
+pub mod database_operations;
 mod durability;
 mod enterprise;
 pub mod error;
@@ -33,6 +34,7 @@ pub mod opencti_reconciliation;
 pub mod opencti_shadow;
 pub mod opencti_sync;
 pub mod opencti_write;
+pub mod s3_snapshot_store;
 pub mod security;
 pub mod session_runtime;
 mod storage_ownership;
@@ -47,3 +49,4 @@ pub use lifecycle::{
     LifecycleState, ServerLifecycle, ServerLifecycleError, install_shutdown_signal,
     serve_tls_with_lifecycle, serve_with_lifecycle,
 };
+pub use storage_ownership::{DataDirectoryOwnership, DataDirectoryOwnershipError};

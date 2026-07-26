@@ -50,7 +50,20 @@ fn unified_cli_exposes_the_server_command_surface() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success());
-    for command in ["start", "validate-config", "version", "status"] {
+    for command in [
+        "start",
+        "validate-config",
+        "version",
+        "status",
+        "snapshot",
+        "validate-snapshot",
+        "export-snapshot-s3",
+        "restore",
+        "migrate",
+        "rollback",
+        "rebuild-indexes",
+        "cancel-rebuild",
+    ] {
         assert!(
             stdout.contains(command),
             "missing server command: {command}"
