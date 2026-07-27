@@ -392,6 +392,24 @@ writes; atomic and partial bulk policies retain deterministic per-item order.
 See [OpenCTI transactional writes](../developer-guide/opencti-transactional-writes.md)
 for the request example, recovery rules and configured bounds.
 
+## `POST /v1/opencti/files`
+
+Enqueues durable file-content extraction, or deletes existing file-content
+projections, against the canonical store. The body is one of two variants:
+
+- `enqueue` takes a `descriptor` carrying the canonical file identity,
+  provenance, digest and access metadata for one immutable object-storage
+  version. The response is `202` with a deterministic `job_id`; a descriptor
+  already queued returns `result: "duplicate"` instead of `"enqueued"` rather
+  than queueing the work twice.
+- `delete` takes a non-empty `file_ids` array and removes those projections
+  synchronously, answering `200` with `result: "deleted"`.
+
+Responses carry no file content and no authorization metadata. The route
+requires persistent canonical storage and returns `503` under an ephemeral
+store. See [OpenCTI file content search](../developer-guide/opencti-file-content-search.md)
+for extraction and search behavior.
+
 ## `GET /v1/opencti/writes/status`
 
 Returns write counters, authority, outbox depth/lag/retries/quarantine,

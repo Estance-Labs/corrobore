@@ -74,6 +74,9 @@ same overrides.
 | `--opencti-sync-max-replay-identities` | Override bounded replay-identity and dead-letter retention. |
 | `--rate-limit-per-second` | Override the sustained protected-route rate. |
 | `--rate-limit-burst` | Override the protected-route burst allowance. |
+| `--opencti-rate-limit-per-second` | Override the sustained rate for OpenCTI compatibility routes. |
+| `--opencti-rate-limit-burst` | Override the burst allowance for OpenCTI compatibility routes. |
+| `--probe-host` | `corrobore server status` only: override just the hostname used by the readiness probe, keeping the configured port, scheme, and authentication. |
 | `--interfaces` | Supply a comma-separated set containing `http` and optionally `web`. |
 | `--web-dir` | Override the production explorer asset directory. |
 | `--maintenance-enabled` | Enable or disable lifecycle maintenance policy. |
@@ -138,6 +141,7 @@ rejected.
 | `limits.import_max_body_bytes` | `CORROBORE_HTTP_IMPORT_MAX_BODY_BYTES` | `--import-max-body-bytes` | `33554432`; also bounds transactional writes |
 | `limits.opencti_sync_max_operations` | `CORROBORE_OPENCTI_SYNC_MAX_OPERATIONS` | `--opencti-sync-max-operations` | `512`; also bounds transactional bulk writes |
 | `limits.opencti_sync_max_replay_identities` | `CORROBORE_OPENCTI_SYNC_MAX_REPLAY_IDENTITIES` | `--opencti-sync-max-replay-identities` | `4096`; also bounds reconciliation state |
+| — | `CORROBORE_OPENCTI_ELASTIC_FREE` | — | `false`; `true` requires `CORROBORE_STORAGE_MODE=persistent` and a routing policy file, and forbids `CORROBORE_OPENCTI_SHADOW_REFERENCE_ENDPOINT`. See [Elastic-free OpenCTI operations](opencti-elastic-free-operations.md) |
 | — | `CORROBORE_OPENCTI_SHADOW_REFERENCE_ENDPOINT` | — | unset |
 | — | `CORROBORE_OPENCTI_SHADOW_REFERENCE_VERSION` | — | `unconfigured` |
 | — | `CORROBORE_OPENCTI_SHADOW_REFERENCE_AUTH_TOKEN` | — | unset; prefer file source |
@@ -153,6 +157,8 @@ rejected.
 | — | `CORROBORE_OPENCTI_READ_ROUTING_MAX_AUDITS` | — | `10000` |
 | `limits.rate_limit_per_second` | `CORROBORE_HTTP_RATE_LIMIT_PER_SECOND` | `--rate-limit-per-second` | `50` |
 | `limits.rate_limit_burst` | `CORROBORE_HTTP_RATE_LIMIT_BURST` | `--rate-limit-burst` | `200` |
+| `limits.opencti_rate_limit_per_second` | `CORROBORE_OPENCTI_RATE_LIMIT_PER_SECOND` | `--opencti-rate-limit-per-second` | `50` |
+| `limits.opencti_rate_limit_burst` | `CORROBORE_OPENCTI_RATE_LIMIT_BURST` | `--opencti-rate-limit-burst` | `200` |
 | `interfaces.enabled` | `CORROBORE_SERVER_INTERFACES` | `--interfaces` | `["http"]` |
 | `interfaces.web_directory` | `CORROBORE_HTTP_WEB_DIR` | `--web-dir` | unset |
 | `maintenance.enabled` | `CORROBORE_MAINTENANCE_ENABLED` | `--maintenance-enabled` | `false` |
