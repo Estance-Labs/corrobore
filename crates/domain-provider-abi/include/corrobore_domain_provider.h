@@ -15,7 +15,10 @@ extern "C" {
 #endif
 
 #define CORROBORE_DOMAIN_PROVIDER_ABI_MAJOR_V1 UINT16_C(1)
-#define CORROBORE_DOMAIN_PROVIDER_ABI_MINOR_V1 UINT16_C(0)
+/* Minor 1 adds the additive "medical" and "research" JSON domain names. Domain
+ * names cross the boundary as JSON, not as a C enum, so the binary layout is
+ * unchanged and a host built against minor 0 keeps loading existing providers. */
+#define CORROBORE_DOMAIN_PROVIDER_ABI_MINOR_V1 UINT16_C(1)
 
 enum corrobore_domain_provider_status_v1 {
     CORROBORE_DOMAIN_PROVIDER_STATUS_OK = 0,
