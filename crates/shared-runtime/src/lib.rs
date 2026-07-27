@@ -28,8 +28,8 @@
 
 pub use cypher_executor::ExecutionPolicy;
 pub(crate) use cypher_executor::{
-    CypherPipelineExecutor, ExecutionError, ExecutionRecord, ExecutionResult, ExecutionResultData,
-    ExecutionStatus,
+    CypherPipelineExecutor, ExecutionError, ExecutionLimits, ExecutionRecord, ExecutionResult,
+    ExecutionResultData, ExecutionStatus,
 };
 pub(crate) use graph_core::{ActorId, Graph, SessionId, TransactionId, WorkspaceId};
 pub(crate) use serde::{Deserialize, Serialize};

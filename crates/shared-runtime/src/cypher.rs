@@ -33,20 +33,66 @@ pub enum CypherRequestMode {
     ValidateOnly,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+/// A typed parameter value carried across the runtime boundary.
+///
+/// Types are preserved end to end so a bound value reaches the executor as the
+/// scalar the caller supplied. Flattening everything to text is what previously
+/// made `LIMIT $n` and numeric comparisons silently return the wrong rows.
+pub enum CypherValue {
+    /// UTF-8 text.
+    String(String),
+    /// Signed integer.
+    Integer(i64),
+    /// Finite decimal encoded losslessly as source text.
+    Float(String),
+    /// Boolean.
+    Boolean(bool),
+    /// Explicit null.
+    Null,
+}
+
+impl CypherValue {
+    /// Names the type for diagnostics and audit records.
+    pub const fn type_name(&self) -> &'static str {
+        match self {
+            Self::String(_) => "string",
+            Self::Integer(_) => "integer",
+            Self::Float(_) => "float",
+            Self::Boolean(_) => "boolean",
+            Self::Null => "null",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 /// Cypher parameters.
 pub struct CypherParameters {
-    values: HashMap<String, String>,
+    values: HashMap<String, CypherValue>,
 }
 
 impl CypherParameters {
-    /// Creates a new instance.
+    /// Creates parameters whose values are all text.
+    ///
+    /// Retained for callers that genuinely only bind strings; prefer
+    /// [`CypherParameters::typed`] so numeric and boolean values keep their type.
     pub fn new(values: HashMap<String, String>) -> Self {
+        Self {
+            values: values
+                .into_iter()
+                .map(|(name, value)| (name, CypherValue::String(value)))
+                .collect(),
+        }
+    }
+
+    /// Creates parameters from already-typed values.
+    pub fn typed(values: HashMap<String, CypherValue>) -> Self {
         Self { values }
     }
 
     /// Values.
-    pub fn values(&self) -> &HashMap<String, String> {
+    pub fn values(&self) -> &HashMap<String, CypherValue> {
         &self.values
     }
 }

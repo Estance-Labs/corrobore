@@ -82,7 +82,7 @@ use shared_runtime::{
 };
 pub use shared_runtime::{
     CypherMutationSummary, CypherRecord, CypherResponse, CypherResponseData, CypherResponseStatus,
-    CypherValidationError,
+    CypherValidationError, CypherValue,
 };
 use thiserror::Error;
 
@@ -115,7 +115,7 @@ pub enum EngineRequestMode {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EngineRequest {
     query: String,
-    parameters: HashMap<String, String>,
+    parameters: HashMap<String, CypherValue>,
     mode: EngineRequestMode,
     workspace_id: Option<String>,
     session_id: Option<String>,
@@ -136,7 +136,20 @@ impl EngineRequest {
     }
 
     /// Sets string parameters for the request.
+    ///
+    /// Every value binds as text. Use [`EngineRequest::with_typed_parameters`]
+    /// when a placeholder stands for a row count or a numeric comparison, since a
+    /// string bound there is a type error rather than a silently empty result.
     pub fn with_parameters(mut self, parameters: HashMap<String, String>) -> Self {
+        self.parameters = parameters
+            .into_iter()
+            .map(|(name, value)| (name, CypherValue::String(value)))
+            .collect();
+        self
+    }
+
+    /// Sets parameters whose scalar types are preserved end to end.
+    pub fn with_typed_parameters(mut self, parameters: HashMap<String, CypherValue>) -> Self {
         self.parameters = parameters;
         self
     }
@@ -542,7 +555,7 @@ impl CorroboreEngine {
             mode == shared_runtime::CypherRequestMode::Mutation && self.persistence.is_some();
         let runtime_request = CypherRequest::new(
             request.query,
-            CypherParameters::new(request.parameters),
+            CypherParameters::typed(request.parameters),
             mode,
             workspace_id,
             session_id,
