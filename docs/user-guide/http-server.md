@@ -266,7 +266,9 @@ semantics, limits, examples, errors, and compatibility rules.
 
 ## `POST /v1/domains/{domain}/validate`
 
-Invokes `node.validate/1` through the common provider registry for `cti`, `fimi`, or `crisis` after build, license, readiness, and capability gates.
+Invokes `node.validate/1` through the common provider registry for `cti`, `fimi`, `crisis`, `medical`, and `research` after the gates that apply to the requested domain.
+
+The enterprise domains `cti`, `fimi`, and `crisis` pass build, license, readiness, and capability gates. The MIT domains `medical` and `research` ship with the open-source runtime and pass only readiness and capability gates: they require neither an enterprise build feature nor a signed license claim, so `FEATURE_NOT_AVAILABLE` and `LICENSE_MODULE_MISSING` never apply to them. Every domain still fails closed when its provider is absent, unhealthy, or missing `node.validate`.
 
 ```json
 {
