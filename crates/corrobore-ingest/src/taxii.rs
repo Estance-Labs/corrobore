@@ -18,6 +18,8 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
+use std::time::Duration;
+
 use reqwest::header::ACCEPT;
 use serde::Deserialize;
 use serde_json::Value;
@@ -30,6 +32,22 @@ const DATE_ADDED_LAST_HEADER: &str = "X-TAXII-Date-Added-Last";
 // Upper bound on envelope pages per cycle so a misbehaving server that always
 // answers `more: true` cannot pin the connector in an endless drain loop.
 const MAX_PAGES_PER_CYCLE: usize = 1_000;
+// `reqwest` applies no timeout of its own, so a TAXII server that accepts the
+// connection and then stalls would block a poll cycle forever. The bound is
+// generous enough for a full envelope page over a slow link.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Builds the shared HTTP client with explicit transport bounds.
+fn build_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(REQUEST_TIMEOUT)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .build()
+        // Only the timeouts are configured here, so construction fails solely
+        // when the TLS backend cannot initialize, which is not recoverable.
+        .expect("TAXII HTTP client with timeouts must build")
+}
 
 #[derive(Debug, Deserialize)]
 struct TaxiiEnvelope {
@@ -72,7 +90,7 @@ impl TaxiiClient {
             collection_id: collection_id.into(),
             auth,
             page_limit,
-            http: reqwest::Client::new(),
+            http: build_http_client(),
         }
     }
 
