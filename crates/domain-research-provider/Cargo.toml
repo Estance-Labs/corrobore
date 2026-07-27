@@ -1,0 +1,23 @@
+[package]
+name = "domain-research-provider"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+
+# Dynamic-library artifact only. The shared ABI symbol must not live in an
+# `rlib`, or linking two packs into one binary is a duplicate-symbol error.
+[lib]
+name = "domain_research_provider"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+domain-research = { path = "../domain-research" }
+domain-provider-abi = { path = "../domain-provider-abi" }
+
+[lints]
+workspace = true

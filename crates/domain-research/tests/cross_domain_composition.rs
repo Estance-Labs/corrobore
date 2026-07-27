@@ -141,11 +141,15 @@ fn declared_domain(api: *const domain_provider_abi::DomainProviderApiV1) -> Stri
 
 #[test]
 fn statically_linked_packs_resolve_to_their_own_provider() {
-    // Regression guard. Both packs export the shared `dlsym` entry point
-    // `corrobore_domain_provider_get_api_v1`, so linking both as rlibs lets the
-    // linker collapse that symbol onto a single definition, and a Rust caller
-    // silently receives the wrong pack's table. The uniquely-named accessors
-    // must not have that ambiguity.
+    // Regression guard for the duplicate-symbol defect this file first exposed.
+    //
+    // The shared `dlsym` entry point `corrobore_domain_provider_get_api_v1` now
+    // lives only in each pack's `-provider` cdylib, never in its rlib, so this
+    // binary can link both packs at all. Merely compiling this test is half the
+    // assertion: with the symbol back in the rlibs, linking fails outright on
+    // GNU/Linux and silently collapses onto one definition on macOS.
+    //
+    // The rest asserts each uniquely-named accessor reaches its own provider.
     let medical = medical_provider_api_v1();
     let research = research_provider_api_v1();
 

@@ -388,18 +388,3 @@ static PROVIDER_API: DomainProviderApiV1 = DomainProviderApiV1 {
 pub fn research_provider_api_v1() -> *const DomainProviderApiV1 {
     &PROVIDER_API
 }
-
-/// Returns the stable ABI v1 function table consumed by the Corrobore host.
-///
-/// This is the `dlopen`/`dlsym` entry point named by
-/// `CORROBORE_DOMAIN_PROVIDER_ENTRYPOINT_V1`, and every pack exports it under
-/// the same symbol by design: the host resolves it per loaded library.
-///
-/// Rust callers must not use it. Because the symbol name is shared, linking two
-/// packs as `rlib`s into one binary lets the linker resolve every call to a
-/// single definition, silently returning another pack's table. Call
-/// [`research_provider_api_v1`] instead, which has no such ambiguity.
-#[unsafe(no_mangle)]
-pub extern "C" fn corrobore_domain_provider_get_api_v1() -> *const DomainProviderApiV1 {
-    &PROVIDER_API
-}

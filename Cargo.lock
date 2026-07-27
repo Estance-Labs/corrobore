@@ -1100,6 +1100,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "domain-medical-provider"
+version = "0.3.0"
+dependencies = [
+ "domain-medical",
+ "domain-provider-abi",
+]
+
+[[package]]
 name = "domain-provider-abi"
 version = "0.3.0"
 dependencies = [
@@ -1117,6 +1125,14 @@ dependencies = [
  "graph-core",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "domain-research-provider"
+version = "0.3.0"
+dependencies = [
+ "domain-provider-abi",
+ "domain-research",
 ]
 
 [[package]]

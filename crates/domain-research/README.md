@@ -44,14 +44,20 @@ proves a string is well-formed but never that the work it names exists. ORCID
 uses ISO 7064 MOD 11-2 and ISSN uses its mod-11 check digit, so a transposed
 digit is rejected rather than stored.
 
-## Linking several packs
+## Artifacts
 
-Every pack exports the same `dlsym` entry point,
-`corrobore_domain_provider_get_api_v1`, because the host resolves it per loaded
-library. Rust callers that link more than one pack as an `rlib` must use the
-uniquely-named accessor (`research_provider_api_v1`,
-`medical_provider_api_v1`), since the shared symbol collapses onto a single
-definition at link time.
+The pack ships two crates:
+
+- `domain-research` is a pure `rlib` holding the types, validation, built-ins,
+  exporter, and provider table. Rust callers use `research_provider_api_v1`.
+- `domain-research-provider` is the `cdylib` a host loads with `dlopen`. It
+  contains only the `corrobore_domain_provider_get_api_v1` entry point,
+  delegating to the accessor above.
+
+The split is deliberate. Every pack must export that entry point under the same
+symbol, because the host resolves it per loaded library. Keeping the symbol out
+of the `rlib` is what lets several packs be linked into one binary; with it in
+the `rlib`, doing so is a duplicate-symbol link error.
 
 See the product requirements in
 `Estance-Labs/project-documents/product/research-domain-product-requirements.md`.

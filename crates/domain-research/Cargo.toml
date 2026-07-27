@@ -11,7 +11,9 @@ documentation.workspace = true
 [lib]
 name = "domain_research"
 path = "src/lib.rs"
-crate-type = ["rlib", "cdylib"]
+# `rlib` only. The shared ABI symbol lives in the `domain-research-provider`
+# cdylib so several packs can be linked into one binary.
+crate-type = ["rlib"]
 
 [dependencies]
 domain-common = { path = "../domain-common" }

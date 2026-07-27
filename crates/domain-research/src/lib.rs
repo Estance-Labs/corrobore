@@ -26,7 +26,7 @@ pub use export::{
 pub use identifier::{
     IdentifierSystem, research_identifier_is_valid, research_identifier_normalize,
 };
-pub use provider_abi::{corrobore_domain_provider_get_api_v1, research_provider_api_v1};
+pub use provider_abi::research_provider_api_v1;
 
 use domain_common::{
     DomainValidationIssue, DomainValidationResult, DomainValidationSeverity, EvidenceRequirement,
