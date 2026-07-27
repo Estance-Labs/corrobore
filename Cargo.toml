@@ -6,6 +6,7 @@ members = [
     "crates/domain-provider-abi",
     "crates/domain-common",
     "crates/domain-medical",
+    "crates/domain-research",
     "crates/export-fimi",
     "crates/export-stix",
     "crates/function-registry",

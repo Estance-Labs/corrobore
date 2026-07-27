@@ -1,9 +1,9 @@
 // Copyright (c) 2026 AreDee-Bangs
 // SPDX-License-Identifier: MIT
 
-//! MEDICAL domain provider over the stable Corrobore domain provider ABI v1.
+//! RESEARCH domain provider over the stable Corrobore domain provider ABI v1.
 //!
-//! Exposes the `node.validate` capability with `domain: medical`. Behaviour is
+//! Exposes the `node.validate` capability with `domain: research`. Behaviour is
 //! fail-closed: malformed input, a domain mismatch, or an unsupported operation
 //! yields an explicit status rather than a silent success.
 
@@ -20,14 +20,13 @@ use domain_provider_abi::{
 use serde_json::Value;
 
 use crate::{
-    DeidentificationAttestation, DeidentificationMethod, EffectEstimate, EffectMeasure,
-    MedicalNodeRecord, MedicalNodeType, MedicalValidationPolicy, ObservationWindow, StudyDesign,
-    validate_medical_node,
+    ReplicationAttemptRecord, ReplicationOutcome, ReproducibilityArtifacts, ResearchNodeRecord,
+    ResearchNodeType, RetractionOverride, SupportingWork, validate_research_node,
 };
 
-struct MedicalProviderHandle;
+struct ResearchProviderHandle;
 
-const PROVIDER_ID: &str = "fr.estance.corrobore.domain.medical";
+const PROVIDER_ID: &str = "fr.estance.corrobore.domain.research";
 const PROVIDER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const OPERATION_NODE_VALIDATE: &str = "node.validate";
 const MAX_PAYLOAD_BYTES: usize = 1_048_576;
@@ -76,7 +75,7 @@ unsafe extern "C" fn provider_metadata(
         schema_version: SCHEMA_V1.to_owned(),
         provider_id: PROVIDER_ID.to_owned(),
         provider_version: PROVIDER_VERSION.to_owned(),
-        domain: DomainName::Medical,
+        domain: DomainName::Research,
         thread_safe: true,
         max_concurrency: 1,
         max_request_bytes: MAX_PAYLOAD_BYTES,
@@ -98,7 +97,7 @@ unsafe extern "C" fn provider_create(
         return STATUS_INVALID_ARGUMENT;
     }
 
-    let handle = Box::new(MedicalProviderHandle);
+    let handle = Box::new(ResearchProviderHandle);
     // SAFETY: output handle pointer is validated non-null above.
     unsafe {
         *provider_handle = Box::into_raw(handle) as *mut c_void;
@@ -106,123 +105,157 @@ unsafe extern "C" fn provider_create(
     STATUS_OK
 }
 
-fn study_design_from_str(value: &str) -> Option<StudyDesign> {
-    let design = match value {
-        "SystematicReview" => StudyDesign::SystematicReview,
-        "RandomizedControlledTrial" => StudyDesign::RandomizedControlledTrial,
-        "CohortStudy" => StudyDesign::CohortStudy,
-        "CaseControlStudy" => StudyDesign::CaseControlStudy,
-        "CaseSeries" => StudyDesign::CaseSeries,
-        "CaseReport" => StudyDesign::CaseReport,
-        "ExpertOpinion" => StudyDesign::ExpertOpinion,
-        _ => return None,
-    };
-    Some(design)
-}
-
-fn effect_estimate_from_value(value: &Value) -> Option<EffectEstimate> {
-    let measure = match value.get("measure").and_then(Value::as_str)? {
-        "ratio" => EffectMeasure::Ratio,
-        "difference" => EffectMeasure::Difference,
-        _ => return None,
-    };
-    let point = value.get("point").and_then(Value::as_f64)?;
-    let interval = match value.get("interval") {
-        Some(Value::Array(bounds)) if bounds.len() == 2 => {
-            let low = bounds[0].as_f64()?;
-            let high = bounds[1].as_f64()?;
-            Some((low, high))
-        }
-        _ => None,
-    };
-    Some(EffectEstimate {
-        measure,
-        point,
-        interval,
-    })
-}
-
-fn deidentification_from_value(value: &Value) -> Option<DeidentificationAttestation> {
-    let method = match value.get("method").and_then(Value::as_str)? {
-        "SafeHarbor" => DeidentificationMethod::SafeHarbor,
-        "ExpertDetermination" => DeidentificationMethod::ExpertDetermination,
-        "Aggregate" => DeidentificationMethod::Aggregate,
-        "SyntheticData" => DeidentificationMethod::SyntheticData,
-        _ => return None,
-    };
-    let attested_by = value
-        .get("attested_by")
-        .and_then(Value::as_str)
+fn string_list(payload: &Value, key: &str) -> Vec<String> {
+    payload
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
         .unwrap_or_default()
-        .to_owned();
-    Some(DeidentificationAttestation {
-        method,
-        attested_by,
+}
+
+fn replication_outcome_from_str(value: &str) -> Option<ReplicationOutcome> {
+    let outcome = match value {
+        "successful" => ReplicationOutcome::Successful,
+        "failed" => ReplicationOutcome::Failed,
+        "partially_successful" => ReplicationOutcome::PartiallySuccessful,
+        "inconclusive" => ReplicationOutcome::Inconclusive,
+        _ => return None,
+    };
+    Some(outcome)
+}
+
+fn supporting_work_from_value(value: &Value) -> Option<SupportingWork> {
+    let work_id = value.get("work_id").and_then(Value::as_str)?;
+    let mut work = SupportingWork::new(work_id);
+    if value
+        .get("retracted")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        work = work.retracted();
+    }
+    if let Some(raw) = value.get("retraction_override") {
+        let justification = raw
+            .get("justification")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let recorded_by = raw
+            .get("recorded_by")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        work = work.with_override(RetractionOverride {
+            justification,
+            recorded_by,
+        });
+    }
+    Some(work)
+}
+
+fn replication_attempt_from_value(value: &Value) -> Option<ReplicationAttemptRecord> {
+    let outcome = value
+        .get("outcome")
+        .and_then(Value::as_str)
+        .and_then(replication_outcome_from_str)?;
+    Some(ReplicationAttemptRecord {
+        target_work: value
+            .get("target_work")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        reporting_work: value
+            .get("reporting_work")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        outcome,
     })
 }
 
-fn to_medical_record(payload: &Value) -> MedicalNodeRecord {
+fn to_research_record(payload: &Value) -> ResearchNodeRecord {
+    // An unknown or absent label leaves the node type unset, which validation
+    // rejects rather than silently defaulting to a permissive type.
     let node_type = payload
         .get("labels")
         .and_then(Value::as_array)
         .and_then(|labels| labels.first())
         .and_then(Value::as_str)
-        .and_then(MedicalNodeType::from_label)
-        .unwrap_or(MedicalNodeType::Evidence);
+        .and_then(ResearchNodeType::from_label);
 
-    let mut record = MedicalNodeRecord::new(node_type);
+    let mut record = ResearchNodeRecord {
+        node_type,
+        ..ResearchNodeRecord::default()
+    };
 
     if let Some(external_id) = payload.get("external_id").and_then(Value::as_str) {
         record = record.with_external_id(external_id);
     }
-    if let Some(evidence_refs) = payload.get("evidence_refs").and_then(Value::as_array) {
-        for reference in evidence_refs.iter().filter_map(Value::as_str) {
-            record = record.with_evidence_ref(reference);
-        }
-    }
+    record.evidence_refs = string_list(payload, "evidence_refs");
+    record.result_refs = string_list(payload, "result_refs");
+    record.source_refs = string_list(payload, "source_refs");
+    record.conflict_refs = string_list(payload, "conflict_refs");
+    record.supersedes = string_list(payload, "supersedes");
+
     if let Some(confidence) = payload.get("confidence").and_then(Value::as_f64)
         && let Ok(confidence) = graph_core::Confidence::new(confidence)
     {
         record = record.with_confidence(confidence);
     }
-    if let Some(design) = payload
-        .get("study_design")
-        .and_then(Value::as_str)
-        .and_then(study_design_from_str)
+    if let (Some(work), Some(actor)) = (
+        payload.get("asserting_work").and_then(Value::as_str),
+        payload.get("credited_actor").and_then(Value::as_str),
+    ) {
+        record = record.with_attribution(work, actor);
+    } else {
+        // Preserve a partial attribution so validation can reject it.
+        record.asserting_work = payload
+            .get("asserting_work")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        record.credited_actor = payload
+            .get("credited_actor")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+    }
+
+    if let Some(works) = payload.get("supporting_works").and_then(Value::as_array) {
+        record.supporting_works = works
+            .iter()
+            .filter_map(supporting_work_from_value)
+            .collect();
+    }
+    if let Some(attempts) = payload
+        .get("replication_attempts")
+        .and_then(Value::as_array)
     {
-        record = record.with_study_design(design);
+        record.replication_attempts = attempts
+            .iter()
+            .filter_map(replication_attempt_from_value)
+            .collect();
     }
-    if let Some(study_refs) = payload.get("study_refs").and_then(Value::as_array) {
-        for reference in study_refs.iter().filter_map(Value::as_str) {
-            record = record.with_study_ref(reference);
-        }
-    }
-    if let Some(estimate) = payload
-        .get("effect_estimate")
-        .and_then(effect_estimate_from_value)
-    {
-        record = record.with_effect_estimate(estimate);
-    }
-    if let Some(window) = payload.get("observation_window")
-        && let (Some(start), Some(end)) = (
-            window.get("start").and_then(Value::as_str),
-            window.get("end").and_then(Value::as_str),
-        )
-    {
-        record = record.with_observation_window(ObservationWindow {
-            start: start.to_owned(),
-            end: end.to_owned(),
-        });
-    }
+
+    record.reproducibility = ReproducibilityArtifacts {
+        dataset_refs: string_list(payload, "dataset_refs"),
+        code_refs: string_list(payload, "code_refs"),
+        method_ref: payload
+            .get("method_ref")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    };
+
     if payload
-        .get("contains_participant_level")
+        .get("retracted")
         .and_then(Value::as_bool)
         .unwrap_or(false)
     {
-        let attestation = payload
-            .get("deidentification")
-            .and_then(deidentification_from_value);
-        record = record.with_participant_level(attestation);
+        record = record.retracted();
     }
     if payload.get("intended_status").and_then(Value::as_str) == Some("validated") {
         record = record.intended_validated();
@@ -248,16 +281,15 @@ unsafe extern "C" fn provider_invoke(
         None => return STATUS_INVALID_REQUEST,
     };
 
-    if request.schema_version != SCHEMA_V1 || request.domain != DomainName::Medical {
+    if request.schema_version != SCHEMA_V1 || request.domain != DomainName::Research {
         return STATUS_INVALID_REQUEST;
     }
     if request.operation != OPERATION_NODE_VALIDATE {
         return STATUS_UNSUPPORTED_CAPABILITY;
     }
 
-    let policy = MedicalValidationPolicy::strict_default();
-    let record = to_medical_record(&request.payload);
-    let validation = validate_medical_node(&record, &policy);
+    let record = to_research_record(&request.payload);
+    let validation = validate_research_node(&record);
 
     let status = if validation
         .issues()
@@ -319,7 +351,7 @@ unsafe extern "C" fn provider_destroy(provider_handle: *mut c_void) {
 
     // SAFETY: handle was created by Box::into_raw in provider_create.
     unsafe {
-        let _ = Box::from_raw(provider_handle as *mut MedicalProviderHandle);
+        let _ = Box::from_raw(provider_handle as *mut ResearchProviderHandle);
     }
 }
 
@@ -353,7 +385,7 @@ static PROVIDER_API: DomainProviderApiV1 = DomainProviderApiV1 {
 /// so a binary linking several packs as `rlib`s always reaches the intended
 /// provider.
 #[must_use]
-pub fn medical_provider_api_v1() -> *const DomainProviderApiV1 {
+pub fn research_provider_api_v1() -> *const DomainProviderApiV1 {
     &PROVIDER_API
 }
 
@@ -366,7 +398,7 @@ pub fn medical_provider_api_v1() -> *const DomainProviderApiV1 {
 /// Rust callers must not use it. Because the symbol name is shared, linking two
 /// packs as `rlib`s into one binary lets the linker resolve every call to a
 /// single definition, silently returning another pack's table. Call
-/// [`medical_provider_api_v1`] instead, which has no such ambiguity.
+/// [`research_provider_api_v1`] instead, which has no such ambiguity.
 #[unsafe(no_mangle)]
 pub extern "C" fn corrobore_domain_provider_get_api_v1() -> *const DomainProviderApiV1 {
     &PROVIDER_API

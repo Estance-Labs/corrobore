@@ -29,8 +29,18 @@ capability.
   `medical_interval_contains_null`, `medical_deidentification_status`.
 - Export: `EvidenceTableExporter`, deterministic and byte-stable per snapshot
   and exporter version, with strict and permissive modes.
-- Provider: `corrobore_domain_provider_get_api_v1` exposes `node.validate` with
-  `domain: medical` over the domain provider ABI v1.
+- Provider: `medical_provider_api_v1` for Rust callers;
+  `corrobore_domain_provider_get_api_v1` is the `dlsym` entry point. Both expose
+  `node.validate` with `domain: medical` over the domain provider ABI v1.
+
+## Linking several packs
+
+Every pack exports the same `dlsym` entry point,
+`corrobore_domain_provider_get_api_v1`, because the host resolves it per loaded
+library. Rust callers that link more than one pack as an `rlib` must use the
+uniquely-named accessor (`medical_provider_api_v1`,
+`research_provider_api_v1`), since the shared symbol collapses onto a single
+definition at link time.
 
 See the product requirements in
 `Estance-Labs/project-documents/product/medical-domain-product-requirements.md`.
