@@ -26,6 +26,8 @@
 //! logical planning and execution. Covers `MATCH`, `WHERE`, `RETURN`, `CREATE`,
 //! `MERGE`, `SET`, `REMOVE`, `DELETE`, aggregation functions, and ordering.
 
+use std::collections::HashMap;
+
 use thiserror::Error;
 
 mod investigation_query;
@@ -350,6 +352,13 @@ pub enum ParseErrorCode {
     UnsupportedFeature,
     /// Invalid syntax.
     InvalidSyntax,
+    /// A `$name` placeholder has no binding, or its bound value has a type the
+    /// placeholder position cannot accept.
+    ///
+    /// Kept distinct from [`ParseErrorCode::InvalidSyntax`] because structured
+    /// parsing is best effort for shapes outside the supported subset, while a
+    /// parameter problem must always be fatal.
+    InvalidParameter,
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -389,11 +398,130 @@ pub fn mvp_supported_clauses() -> Vec<&'static str> {
     ]
 }
 
-//
-// This parser establishes a deterministic AST contract for the MVP pipeline.
+/// Tracks single-quoted string state while scanning Cypher text.
+///
+/// Every clause-splitting helper in this module must decide whether a byte sits
+/// inside a string literal. Doing that with a bare `quoted = !quoted` toggle
+/// treats an escaped quote as a terminator, which desynchronizes the scan and
+/// lets literal content be read as syntax. This scanner is the single place
+/// where that decision is made, and it honors the backslash escapes produced by
+/// [`escape_string_literal`].
+#[derive(Clone, Copy, Debug, Default)]
+struct StringLiteralScanner {
+    inside: bool,
+    escaped: bool,
+}
+
+impl StringLiteralScanner {
+    /// Feeds one byte and reports whether it belongs to a string literal,
+    /// including the quotes that delimit it and the backslashes that escape
+    /// characters within it. Bytes reported as literal content must never be
+    /// interpreted as Cypher syntax.
+    fn consume(&mut self, byte: u8) -> bool {
+        if self.inside {
+            if self.escaped {
+                self.escaped = false;
+            } else if byte == b'\\' {
+                self.escaped = true;
+            } else if byte == b'\'' {
+                self.inside = false;
+            }
+            return true;
+        }
+        if byte == b'\'' {
+            self.inside = true;
+            return true;
+        }
+        false
+    }
+}
+
+/// Encodes `value` as a quoted Cypher string literal.
+///
+/// This is the inverse of the decoding performed by the parser, and the only
+/// supported way to place caller-supplied text into a query. Callers that build
+/// their own quoting drift from the grammar and reintroduce injection.
+pub fn escape_string_literal(value: &str) -> String {
+    let mut literal = String::with_capacity(value.len() + 2);
+    literal.push('\'');
+    for character in value.chars() {
+        if character == '\\' || character == '\'' {
+            literal.push('\\');
+        }
+        literal.push(character);
+    }
+    literal.push('\'');
+    literal
+}
+
+/// Decodes a complete quoted Cypher string literal.
+///
+/// Returns `None` unless `input` is exactly one well-formed literal, so text
+/// such as `'a' + 'b'` is not mistaken for a single value.
+pub fn decode_string_literal(input: &str) -> Option<String> {
+    let bytes = input.as_bytes();
+    if bytes.len() < 2 || bytes[0] != b'\'' {
+        return None;
+    }
+
+    let mut value = String::with_capacity(input.len());
+    let mut index = 1;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' => {
+                let next = *bytes.get(index + 1)?;
+                // Only the quote and the backslash are escaped on encode, so any
+                // other sequence is preserved verbatim rather than reinterpreted.
+                if next == b'\\' || next == b'\'' {
+                    value.push(next as char);
+                    index += 2;
+                } else {
+                    value.push('\\');
+                    index += 1;
+                }
+            }
+            b'\'' => {
+                // A literal is well formed only when its closing quote ends the
+                // input; an earlier close means this is not a single literal.
+                return (index + 1 == bytes.len()).then_some(value);
+            }
+            _ => {
+                let character = input[index..].chars().next()?;
+                value.push(character);
+                index += character.len_utf8();
+            }
+        }
+    }
+
+    None
+}
+
+/// Typed values bound to `$name` placeholders, keyed without the `$` prefix.
+///
+/// A binding is resolved into a typed AST leaf at the position where the
+/// placeholder appears, so a value can never contribute syntax to the query.
+pub type ParameterBindings = HashMap<String, LiteralValue>;
+
 // It intentionally performs lightweight normalization and feature gating first.
-/// Parse query.
+/// Parses a query that contains no `$name` placeholders.
+///
+/// A placeholder without a binding is a parse error, so this entry point is only
+/// appropriate for fully literal queries. Use [`parse_query_with_parameters`]
+/// whenever caller-supplied values are involved.
 pub fn parse_query(query_text: &str) -> Result<QueryAst, ParseError> {
+    parse_query_with_parameters(query_text, &ParameterBindings::new())
+}
+
+/// Parses a query, resolving each `$name` placeholder from `bindings`.
+///
+/// Resolution happens at the leaf where the placeholder sits and yields a typed
+/// [`LiteralValue`], never query text. That is what keeps a parameter value from
+/// being reinterpreted as Cypher: there is no stage at which it is text that
+/// could close a literal or introduce a clause.
+pub fn parse_query_with_parameters(
+    query_text: &str,
+    bindings: &ParameterBindings,
+) -> Result<QueryAst, ParseError> {
     let normalized_query = query_text.split_whitespace().collect::<Vec<_>>().join(" ");
 
     if normalized_query.is_empty() {
@@ -427,7 +555,14 @@ pub fn parse_query(query_text: &str) -> Result<QueryAst, ParseError> {
     }
 
     let kind = classify_query_kind(&clauses);
-    let query = parse_structured_query(&normalized_query, &clauses).ok();
+    let query = match parse_structured_query(&normalized_query, &clauses, bindings) {
+        Ok(parsed) => Some(parsed),
+        // Structured parsing stays best effort for shapes outside the supported
+        // subset, but a parameter problem is fatal: dropping it here would run a
+        // query whose predicate or bound silently went missing.
+        Err(error) if error.code == ParseErrorCode::InvalidParameter => return Err(error),
+        Err(_) => None,
+    };
     let aggregations = extract_basic_aggregations(&query, &normalized_query);
 
     Ok(QueryAst {
@@ -603,6 +738,7 @@ fn extract_supported_clauses(query_text: &str) -> Vec<ClauseKind> {
 fn parse_structured_query(
     query_text: &str,
     clauses: &[ClauseKind],
+    bindings: &ParameterBindings,
 ) -> Result<ParsedQuery, ParseError> {
     let has_match = clauses
         .iter()
@@ -643,7 +779,7 @@ fn parse_structured_query(
     }
 
     if has_mutation {
-        return parse_mutation_query(query_text, clauses);
+        return parse_mutation_query(query_text, clauses, bindings);
     }
 
     if !has_match || !has_return {
@@ -654,7 +790,7 @@ fn parse_structured_query(
         });
     }
 
-    parse_match_where_return_query(query_text)
+    parse_match_where_return_query(query_text, bindings)
 }
 
 /// Parse a mutation or mixed query into a `ParsedQuery` with mutation clause
@@ -669,6 +805,7 @@ fn parse_structured_query(
 fn parse_mutation_query(
     query_text: &str,
     clauses: &[ClauseKind],
+    bindings: &ParameterBindings,
 ) -> Result<ParsedQuery, ParseError> {
     let upper = query_text.to_ascii_uppercase();
     let has_match = clauses
@@ -709,7 +846,7 @@ fn parse_mutation_query(
         } else {
             query_text
         };
-        let match_result = parse_match_where_return_only_match(match_section)?;
+        let match_result = parse_match_where_return_only_match(match_section, bindings)?;
         parsed.match_clause = match_result.0;
         parsed.where_clause = match_result.1;
     }
@@ -723,7 +860,7 @@ fn parse_mutation_query(
             .min()
             .unwrap_or(query_text.len());
         let create_body = query_text[create_start..create_end].trim();
-        parsed.create_clause = Some(parse_create_clause(create_body)?);
+        parsed.create_clause = Some(parse_create_clause(create_body, bindings)?);
     }
 
     // Parse MERGE clause.
@@ -735,7 +872,7 @@ fn parse_mutation_query(
             .min()
             .unwrap_or(query_text.len());
         let merge_body = query_text[merge_start..merge_end].trim();
-        parsed.merge_clause = Some(parse_merge_clause(merge_body)?);
+        parsed.merge_clause = Some(parse_merge_clause(merge_body, bindings)?);
     }
 
     // Parse SET clause.
@@ -747,7 +884,7 @@ fn parse_mutation_query(
             .min()
             .unwrap_or(query_text.len());
         let set_body = query_text[set_start..set_end].trim();
-        parsed.set_clause = Some(parse_set_clause(set_body)?);
+        parsed.set_clause = Some(parse_set_clause(set_body, bindings)?);
     }
 
     // Parse DELETE clause.
@@ -769,7 +906,7 @@ fn parse_mutation_query(
     // Parse RETURN clause.
     if let Some(pos) = return_pos {
         let return_body = &query_text[pos + "RETURN".len()..];
-        parsed.return_clause = Some(parse_return_clause(return_body.trim())?);
+        parsed.return_clause = Some(parse_return_clause(return_body.trim(), bindings)?);
     }
 
     Ok(parsed)
@@ -779,6 +916,7 @@ fn parse_mutation_query(
 /// Returns the match clause and optional where clause.
 fn parse_match_where_return_only_match(
     query_text: &str,
+    bindings: &ParameterBindings,
 ) -> Result<(Option<MatchClause>, Option<WhereClause>), ParseError> {
     let upper = query_text.to_ascii_uppercase();
     let optional_prefix = "OPTIONAL MATCH ";
@@ -804,8 +942,10 @@ fn parse_match_where_return_only_match(
         (body.trim(), None)
     };
 
-    let match_clause = parse_match_clause(match_part, optional)?;
-    let where_clause = where_part.map(parse_where_clause).transpose()?;
+    let match_clause = parse_match_clause(match_part, optional, bindings)?;
+    let where_clause = where_part
+        .map(|part| parse_where_clause(part, bindings))
+        .transpose()?;
 
     Ok((Some(match_clause), where_clause))
 }
@@ -813,29 +953,36 @@ fn parse_match_where_return_only_match(
 /// Parse CREATE body — one or more node patterns.
 ///
 /// Expected input shape: `(n:Label {key: value})` (without the CREATE keyword).
-fn parse_create_clause(input: &str) -> Result<CreateClause, ParseError> {
-    let (node, rest) = parse_node_pattern(input)?;
+fn parse_create_clause(
+    input: &str,
+    bindings: &ParameterBindings,
+) -> Result<CreateClause, ParseError> {
+    let (node, rest) = parse_node_pattern(input, bindings)?;
     Ok(CreateClause {
         nodes: vec![node],
-        relationship: parse_create_relationship(rest)?,
+        relationship: parse_create_relationship(rest, bindings)?,
     })
 }
 
 // Retain and validate an optional directed edge and target node after CREATE.
 fn parse_create_relationship(
     input: &str,
+    bindings: &ParameterBindings,
 ) -> Result<Option<(RelationshipPattern, NodePattern)>, ParseError> {
-    parse_directed_relationship(input, "CREATE")
+    parse_directed_relationship(input, "CREATE", bindings)
 }
 
 /// Parse MERGE body — a single node pattern with optional relationship.
 ///
 /// Expected input shape: `(n:Label {key: value})` (without the MERGE keyword).
-fn parse_merge_clause(input: &str) -> Result<MergeClause, ParseError> {
-    let (pattern, rest) = parse_node_pattern(input)?;
+fn parse_merge_clause(
+    input: &str,
+    bindings: &ParameterBindings,
+) -> Result<MergeClause, ParseError> {
+    let (pattern, rest) = parse_node_pattern(input, bindings)?;
     Ok(MergeClause {
         pattern,
-        relationship: parse_directed_relationship(rest, "MERGE")?,
+        relationship: parse_directed_relationship(rest, "MERGE", bindings)?,
     })
 }
 
@@ -843,6 +990,7 @@ fn parse_merge_clause(input: &str) -> Result<MergeClause, ParseError> {
 fn parse_directed_relationship(
     input: &str,
     clause: &str,
+    bindings: &ParameterBindings,
 ) -> Result<Option<(RelationshipPattern, NodePattern)>, ParseError> {
     let rest = input.trim();
     if rest.is_empty() {
@@ -867,7 +1015,7 @@ fn parse_directed_relationship(
             message: format!("{clause} relationship must be directed with '->'"),
             suggestion: None,
         })?;
-    let (target, trailing) = parse_node_pattern(target_input)?;
+    let (target, trailing) = parse_node_pattern(target_input, bindings)?;
     if !trailing.trim().is_empty() {
         return Err(ParseError {
             code: ParseErrorCode::InvalidSyntax,
@@ -881,7 +1029,7 @@ fn parse_directed_relationship(
 /// Parse SET body — comma-separated property assignments.
 ///
 /// Expected input shape: `n.score = 20, n.active = true`
-fn parse_set_clause(input: &str) -> Result<SetClause, ParseError> {
+fn parse_set_clause(input: &str, bindings: &ParameterBindings) -> Result<SetClause, ParseError> {
     let assignments = input
         .split(',')
         .map(|pair| {
@@ -891,7 +1039,7 @@ fn parse_set_clause(input: &str) -> Result<SetClause, ParseError> {
                 suggestion: None,
             })?;
             let target = parse_property_ref(left.trim())?;
-            let value = parse_literal_value(right.trim())?;
+            let value = parse_literal_value(right.trim(), bindings)?;
             Ok(SetAssignment { target, value })
         })
         .collect::<Result<Vec<SetAssignment>, ParseError>>()?;
@@ -948,7 +1096,10 @@ fn parse_remove_clause(input: &str) -> Result<RemoveClause, ParseError> {
     Ok(RemoveClause { targets })
 }
 
-fn parse_match_where_return_query(query_text: &str) -> Result<ParsedQuery, ParseError> {
+fn parse_match_where_return_query(
+    query_text: &str,
+    bindings: &ParameterBindings,
+) -> Result<ParsedQuery, ParseError> {
     let upper = query_text.to_ascii_uppercase();
     let optional_prefix = "OPTIONAL MATCH ";
     let match_prefix = "MATCH ";
@@ -996,9 +1147,11 @@ fn parse_match_where_return_query(query_text: &str) -> Result<ParsedQuery, Parse
         )
     };
 
-    let match_clause = parse_match_clause(match_part, optional)?;
-    let where_clause = where_part.map(parse_where_clause).transpose()?;
-    let return_clause = parse_return_clause(return_part)?;
+    let match_clause = parse_match_clause(match_part, optional, bindings)?;
+    let where_clause = where_part
+        .map(|part| parse_where_clause(part, bindings))
+        .transpose()?;
+    let return_clause = parse_return_clause(return_part, bindings)?;
 
     Ok(ParsedQuery {
         match_clause: Some(match_clause),
@@ -1012,8 +1165,12 @@ fn parse_match_where_return_query(query_text: &str) -> Result<ParsedQuery, Parse
     })
 }
 
-fn parse_match_clause(input: &str, optional: bool) -> Result<MatchClause, ParseError> {
-    let (start, rest) = parse_node_pattern(input)?;
+fn parse_match_clause(
+    input: &str,
+    optional: bool,
+    bindings: &ParameterBindings,
+) -> Result<MatchClause, ParseError> {
+    let (start, rest) = parse_node_pattern(input, bindings)?;
     let rest = rest.trim();
 
     if rest.is_empty() {
@@ -1060,7 +1217,7 @@ fn parse_match_clause(input: &str, optional: bool) -> Result<MatchClause, ParseE
             suggestion: None,
         })?;
 
-    let (end, trailing) = parse_node_pattern(after_arrow.trim())?;
+    let (end, trailing) = parse_node_pattern(after_arrow.trim(), bindings)?;
     if !trailing.trim().is_empty() {
         return Err(ParseError {
             code: ParseErrorCode::InvalidSyntax,
@@ -1076,7 +1233,10 @@ fn parse_match_clause(input: &str, optional: bool) -> Result<MatchClause, ParseE
     })
 }
 
-fn parse_node_pattern(input: &str) -> Result<(NodePattern, &str), ParseError> {
+fn parse_node_pattern<'a>(
+    input: &'a str,
+    bindings: &ParameterBindings,
+) -> Result<(NodePattern, &'a str), ParseError> {
     let trimmed = input.trim();
     let left = trimmed.find('(').ok_or_else(|| ParseError {
         code: ParseErrorCode::InvalidSyntax,
@@ -1104,7 +1264,7 @@ fn parse_node_pattern(input: &str) -> Result<(NodePattern, &str), ParseError> {
     let (var_label_part, properties) = if let Some(brace_start) = inner.find('{') {
         let props_str = inner[brace_start..].trim();
         let var_label = inner[..brace_start].trim();
-        (var_label, parse_inline_properties(props_str)?)
+        (var_label, parse_inline_properties(props_str, bindings)?)
     } else {
         (inner, Vec::new())
     };
@@ -1160,7 +1320,10 @@ fn find_matching_close_paren(input: &str, open_pos: usize) -> Option<usize> {
 ///
 /// Expected input shape: `{name: 'alpha', score: 10}` (with braces).
 /// Returns an empty vec if the input is empty or contains only whitespace.
-fn parse_inline_properties(input: &str) -> Result<Vec<(String, LiteralValue)>, ParseError> {
+fn parse_inline_properties(
+    input: &str,
+    bindings: &ParameterBindings,
+) -> Result<Vec<(String, LiteralValue)>, ParseError> {
     let trimmed = input.trim();
     let body = trimmed
         .strip_prefix('{')
@@ -1184,7 +1347,7 @@ fn parse_inline_properties(input: &str) -> Result<Vec<(String, LiteralValue)>, P
                 suggestion: None,
             })?;
             let key = key.trim().to_owned();
-            let value = parse_literal_value(value.trim())?;
+            let value = parse_literal_value(value.trim(), bindings)?;
             Ok((key, value))
         })
         .collect()
@@ -1221,19 +1384,25 @@ fn parse_relationship_pattern(input: &str) -> RelationshipPattern {
     }
 }
 
-fn parse_where_clause(input: &str) -> Result<WhereClause, ParseError> {
+fn parse_where_clause(
+    input: &str,
+    bindings: &ParameterBindings,
+) -> Result<WhereClause, ParseError> {
     Ok(WhereClause {
-        expression: parse_where_expression(input.trim())?,
+        expression: parse_where_expression(input.trim(), bindings)?,
     })
 }
 
-fn parse_where_expression(input: &str) -> Result<WhereExpression, ParseError> {
+fn parse_where_expression(
+    input: &str,
+    bindings: &ParameterBindings,
+) -> Result<WhereExpression, ParseError> {
     let input = strip_outer_parentheses(input.trim());
     let or_parts = split_top_level_token(input, " OR ");
     if or_parts.len() > 1 {
         return or_parts
             .into_iter()
-            .map(parse_where_expression)
+            .map(|part| parse_where_expression(part, bindings))
             .collect::<Result<Vec<_>, _>>()
             .map(WhereExpression::Or);
     }
@@ -1241,7 +1410,7 @@ fn parse_where_expression(input: &str) -> Result<WhereExpression, ParseError> {
     if and_parts.len() > 1 {
         return and_parts
             .into_iter()
-            .map(parse_where_expression)
+            .map(|part| parse_where_expression(part, bindings))
             .collect::<Result<Vec<_>, _>>()
             .map(WhereExpression::And);
     }
@@ -1271,7 +1440,7 @@ fn parse_where_expression(input: &str) -> Result<WhereExpression, ParseError> {
             }
             let values = split_top_level_commas(&raw_values[1..raw_values.len() - 1])
                 .into_iter()
-                .map(parse_literal_value)
+                .map(|value| parse_literal_value(value, bindings))
                 .collect::<Result<Vec<_>, _>>()?;
             if values.is_empty() {
                 return Err(ParseError {
@@ -1299,7 +1468,7 @@ fn parse_where_expression(input: &str) -> Result<WhereExpression, ParseError> {
     for (token, operator) in operators {
         if let Some((left, right)) = split_once_operator(input, token) {
             let left = parse_property_ref(left.trim())?;
-            let right = parse_literal_value(right.trim())?;
+            let right = parse_literal_value(right.trim(), bindings)?;
             return Ok(WhereExpression::Comparison {
                 left,
                 operator,
@@ -1321,12 +1490,10 @@ fn strip_outer_parentheses(mut input: &str) -> &str {
             return input;
         }
         let mut depth = 0_i32;
-        let mut quoted = false;
+        let mut scanner = StringLiteralScanner::default();
         let mut encloses_all = true;
         for (index, byte) in input.bytes().enumerate() {
-            if byte == b'\'' {
-                quoted = !quoted;
-            } else if !quoted {
+            if !scanner.consume(byte) {
                 if byte == b'(' {
                     depth += 1;
                 } else if byte == b')' {
@@ -1363,18 +1530,20 @@ fn find_top_level_token(input: &str, token: &str) -> Option<usize> {
     let bytes = upper.as_bytes();
     let mut depth = 0_i32;
     let mut bracket_depth = 0_i32;
-    let mut quoted = false;
+    let mut scanner = StringLiteralScanner::default();
     let mut index = 0;
     while index + token.len() <= bytes.len() {
-        match bytes[index] {
-            b'\'' => quoted = !quoted,
-            b'(' if !quoted => depth += 1,
-            b')' if !quoted => depth -= 1,
-            b'[' if !quoted => bracket_depth += 1,
-            b']' if !quoted => bracket_depth -= 1,
-            _ => {}
+        let inside_literal = scanner.consume(bytes[index]);
+        if !inside_literal {
+            match bytes[index] {
+                b'(' => depth += 1,
+                b')' => depth -= 1,
+                b'[' => bracket_depth += 1,
+                b']' => bracket_depth -= 1,
+                _ => {}
+            }
         }
-        if !quoted
+        if !inside_literal
             && depth == 0
             && bracket_depth == 0
             && &bytes[index..index + token.len()] == token
@@ -1389,11 +1558,9 @@ fn find_top_level_token(input: &str, token: &str) -> Option<usize> {
 fn split_top_level_commas(input: &str) -> Vec<&str> {
     let mut values = Vec::new();
     let mut start = 0;
-    let mut quoted = false;
+    let mut scanner = StringLiteralScanner::default();
     for (index, byte) in input.bytes().enumerate() {
-        if byte == b'\'' {
-            quoted = !quoted;
-        } else if byte == b',' && !quoted {
+        if !scanner.consume(byte) && byte == b',' {
             let value = input[start..index].trim();
             if !value.is_empty() {
                 values.push(value);
@@ -1436,13 +1603,51 @@ fn parse_property_ref(input: &str) -> Result<PropertyRef, ParseError> {
     })
 }
 
-fn parse_literal_value(input: &str) -> Result<LiteralValue, ParseError> {
+/// Extracts a `$name` placeholder name, or `None` when `input` is not one.
+fn parameter_name(input: &str) -> Option<&str> {
+    let name = input.strip_prefix('$')?;
+    let valid = !name.is_empty()
+        && name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_');
+    valid.then_some(name)
+}
+
+/// Resolves a placeholder to its bound typed value.
+fn resolve_parameter(name: &str, bindings: &ParameterBindings) -> Result<LiteralValue, ParseError> {
+    bindings.get(name).cloned().ok_or_else(|| ParseError {
+        code: ParseErrorCode::InvalidParameter,
+        message: format!("query parameter ${name} has no bound value"),
+        suggestion: Some(format!(
+            "Supply {name:?} in the request parameters, or replace the placeholder with a literal."
+        )),
+    })
+}
+
+fn parse_literal_value(
+    input: &str,
+    bindings: &ParameterBindings,
+) -> Result<LiteralValue, ParseError> {
     let trimmed = input.trim();
 
-    if trimmed.starts_with('\'') && trimmed.ends_with('\'') && trimmed.len() >= 2 {
-        return Ok(LiteralValue::String(
-            trimmed[1..trimmed.len() - 1].to_owned(),
-        ));
+    // A placeholder resolves to an already-typed value. It is never re-parsed as
+    // query text, so its contents cannot become syntax.
+    if let Some(name) = parameter_name(trimmed) {
+        return resolve_parameter(name, bindings);
+    }
+
+    if trimmed.starts_with('\'') {
+        // Decoding reverses `escape_string_literal`, so an escaped quote becomes
+        // data instead of leaking the escape character into the stored value.
+        return decode_string_literal(trimmed)
+            .map(LiteralValue::String)
+            .ok_or(ParseError {
+                code: ParseErrorCode::InvalidSyntax,
+                message: "string literal is not terminated".to_owned(),
+                suggestion: Some(
+                    "Close the quoted value and escape any embedded quote as \\'.".to_owned(),
+                ),
+            });
     }
 
     if trimmed.eq_ignore_ascii_case("true") {
@@ -1469,7 +1674,10 @@ fn parse_literal_value(input: &str) -> Result<LiteralValue, ParseError> {
     })
 }
 
-fn parse_return_clause(input: &str) -> Result<ReturnClause, ParseError> {
+fn parse_return_clause(
+    input: &str,
+    bindings: &ParameterBindings,
+) -> Result<ReturnClause, ParseError> {
     let upper = input.to_ascii_uppercase();
     let mut cursor = input.trim();
     let distinct = upper.starts_with("DISTINCT ");
@@ -1493,7 +1701,7 @@ fn parse_return_clause(input: &str) -> Result<ReturnClause, ParseError> {
         });
     }
 
-    let (order_by, skip, limit) = parse_return_tail(tail_part)?;
+    let (order_by, skip, limit) = parse_return_tail(tail_part, bindings)?;
 
     Ok(ReturnClause {
         distinct,
@@ -1559,7 +1767,53 @@ fn parse_projection_item(input: &str) -> Result<ProjectionItem, ParseError> {
 
 type ReturnTail = (Vec<OrderBy>, Option<usize>, Option<usize>);
 
-fn parse_return_tail(input: &str) -> Result<ReturnTail, ParseError> {
+/// Parses a `SKIP`/`LIMIT` row count, which may be a literal or a placeholder.
+///
+/// A placeholder must resolve to a non-negative integer. Anything else is an
+/// error rather than a silently dropped bound: a `LIMIT` that quietly vanished
+/// would return a wrong row set instead of a diagnosable failure.
+fn parse_row_count(
+    value: &str,
+    clause: &str,
+    bindings: &ParameterBindings,
+) -> Result<usize, ParseError> {
+    let invalid = |detail: &str| ParseError {
+        code: if value.starts_with('$') {
+            ParseErrorCode::InvalidParameter
+        } else {
+            ParseErrorCode::InvalidSyntax
+        },
+        message: format!("{clause} expects a non-negative integer{detail}"),
+        suggestion: None,
+    };
+
+    if let Some(name) = parameter_name(value) {
+        return match resolve_parameter(name, bindings)? {
+            LiteralValue::Integer(bound) => {
+                usize::try_from(bound).map_err(|_| invalid(", but the bound value is negative"))
+            }
+            other => Err(invalid(&format!(
+                ", but ${name} is bound to {}",
+                literal_type_name(&other)
+            ))),
+        };
+    }
+
+    value.parse::<usize>().map_err(|_| invalid(""))
+}
+
+/// Names a literal's type for diagnostics.
+fn literal_type_name(value: &LiteralValue) -> &'static str {
+    match value {
+        LiteralValue::String(_) => "a string",
+        LiteralValue::Integer(_) => "an integer",
+        LiteralValue::Float(_) => "a decimal",
+        LiteralValue::Boolean(_) => "a boolean",
+        LiteralValue::Null => "null",
+    }
+}
+
+fn parse_return_tail(input: &str, bindings: &ParameterBindings) -> Result<ReturnTail, ParseError> {
     let mut order_by = Vec::new();
     let mut skip = None;
     let mut limit = None;
@@ -1579,11 +1833,7 @@ fn parse_return_tail(input: &str) -> Result<ReturnTail, ParseError> {
         if upper.starts_with("SKIP ") {
             let rest = &cursor["SKIP".len()..].trim_start();
             let (value, tail) = split_first_token(rest);
-            skip = Some(value.parse::<usize>().map_err(|_| ParseError {
-                code: ParseErrorCode::InvalidSyntax,
-                message: "SKIP expects a non-negative integer".to_owned(),
-                suggestion: None,
-            })?);
+            skip = Some(parse_row_count(value, "SKIP", bindings)?);
             cursor = tail.trim_start();
             continue;
         }
@@ -1591,11 +1841,7 @@ fn parse_return_tail(input: &str) -> Result<ReturnTail, ParseError> {
         if upper.starts_with("LIMIT ") {
             let rest = &cursor["LIMIT".len()..].trim_start();
             let (value, tail) = split_first_token(rest);
-            limit = Some(value.parse::<usize>().map_err(|_| ParseError {
-                code: ParseErrorCode::InvalidSyntax,
-                message: "LIMIT expects a non-negative integer".to_owned(),
-                suggestion: None,
-            })?);
+            limit = Some(parse_row_count(value, "LIMIT", bindings)?);
             cursor = tail.trim_start();
             continue;
         }
@@ -1705,6 +1951,18 @@ fn extract_basic_aggregations(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Bindings for the many cases that use literals only.
+    fn no_bindings() -> ParameterBindings {
+        ParameterBindings::new()
+    }
+
+    fn bindings(pairs: &[(&str, LiteralValue)]) -> ParameterBindings {
+        pairs
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), value.clone()))
+            .collect()
+    }
 
     #[test]
     fn parse_query_covers_empty_unsupported_and_no_supported_clause_errors() {
@@ -1822,19 +2080,22 @@ mod tests {
         let with_clause = parse_structured_query(
             "MATCH (n) WITH n RETURN n",
             &[ClauseKind::Match, ClauseKind::With, ClauseKind::Return],
+            &no_bindings(),
         )
         .expect_err("WITH clauses are outside the structured parser path");
         assert_eq!(with_clause.code, ParseErrorCode::InvalidSyntax);
 
-        let missing_return = parse_structured_query("MATCH (n)", &[ClauseKind::Match])
-            .expect_err("structured parser requires RETURN");
+        let missing_return =
+            parse_structured_query("MATCH (n)", &[ClauseKind::Match], &no_bindings())
+                .expect_err("structured parser requires RETURN");
         assert_eq!(missing_return.code, ParseErrorCode::InvalidSyntax);
     }
 
     #[test]
     fn parse_match_where_return_query_rejects_where_after_return() {
-        let error = parse_match_where_return_query("MATCH (n) RETURN n WHERE n.score = 1")
-            .expect_err("WHERE must appear before RETURN");
+        let error =
+            parse_match_where_return_query("MATCH (n) RETURN n WHERE n.score = 1", &no_bindings())
+                .expect_err("WHERE must appear before RETURN");
         assert_eq!(error.code, ParseErrorCode::InvalidSyntax);
         assert!(error.message.contains("WHERE must appear before RETURN"));
     }
@@ -1850,15 +2111,16 @@ mod tests {
             ("n.a < 1", ComparisonOperator::Lt),
         ];
         for (input, expected) in operators {
-            let clause = parse_where_clause(input).expect("supported operator should parse");
+            let clause =
+                parse_where_clause(input, &no_bindings()).expect("supported operator should parse");
             assert!(matches!(
                 clause.expression,
                 WhereExpression::Comparison { operator, .. } if operator == expected
             ));
         }
 
-        let invalid_operator =
-            parse_where_clause("n.a ~~ 1").expect_err("unsupported operator should be rejected");
+        let invalid_operator = parse_where_clause("n.a ~~ 1", &no_bindings())
+            .expect_err("unsupported operator should be rejected");
         assert_eq!(invalid_operator.code, ParseErrorCode::InvalidSyntax);
 
         assert!(matches!(
@@ -1879,9 +2141,11 @@ mod tests {
 
     #[test]
     fn return_clause_helpers_cover_projection_tail_and_literal_errors() {
-        let return_clause =
-            parse_return_clause("n, n.score, COUNT(r) ORDER BY n.score ASC SKIP 2 LIMIT 5")
-                .expect("return clause with tail should parse");
+        let return_clause = parse_return_clause(
+            "n, n.score, COUNT(r) ORDER BY n.score ASC SKIP 2 LIMIT 5",
+            &no_bindings(),
+        )
+        .expect("return clause with tail should parse");
         assert_eq!(return_clause.items.len(), 3);
         assert_eq!(return_clause.skip, Some(2));
         assert_eq!(return_clause.limit, Some(5));
@@ -1893,8 +2157,8 @@ mod tests {
             }]
         ));
 
-        let empty_projection =
-            parse_return_clause(" ").expect_err("empty return projection should be rejected");
+        let empty_projection = parse_return_clause(" ", &no_bindings())
+            .expect_err("empty return projection should be rejected");
         assert_eq!(empty_projection.code, ParseErrorCode::InvalidSyntax);
 
         assert_eq!(
@@ -1914,7 +2178,7 @@ mod tests {
         );
 
         assert_eq!(
-            parse_literal_value("3.14").expect("finite decimal should parse"),
+            parse_literal_value("3.14", &no_bindings()).expect("finite decimal should parse"),
             LiteralValue::Float("3.14".to_owned())
         );
     }
@@ -1962,19 +2226,19 @@ mod tests {
     #[test]
     fn parse_literal_value_accepts_string_integer_and_boolean_variants() {
         assert_eq!(
-            parse_literal_value("'alpha'").expect("string literal should parse"),
+            parse_literal_value("'alpha'", &no_bindings()).expect("string literal should parse"),
             LiteralValue::String("alpha".to_owned())
         );
         assert_eq!(
-            parse_literal_value("42").expect("integer literal should parse"),
+            parse_literal_value("42", &no_bindings()).expect("integer literal should parse"),
             LiteralValue::Integer(42)
         );
         assert_eq!(
-            parse_literal_value("TRUE").expect("boolean literal should parse"),
+            parse_literal_value("TRUE", &no_bindings()).expect("boolean literal should parse"),
             LiteralValue::Boolean(true)
         );
         assert_eq!(
-            parse_literal_value("false").expect("boolean literal should parse"),
+            parse_literal_value("false", &no_bindings()).expect("boolean literal should parse"),
             LiteralValue::Boolean(false)
         );
     }
@@ -1991,7 +2255,7 @@ mod tests {
 
     #[test]
     fn parse_return_tail_rejects_unsupported_tokens() {
-        let error = parse_return_tail("SKIP 2 OOPS")
+        let error = parse_return_tail("SKIP 2 OOPS", &no_bindings())
             .expect_err("unsupported tail token should be rejected");
 
         assert_eq!(error.code, ParseErrorCode::InvalidSyntax);
@@ -2019,7 +2283,7 @@ mod tests {
 
     #[test]
     fn parse_match_clause_rejects_incoming_relationship_direction() {
-        let error = parse_match_clause("(a)<-[:REL]-(b)", false)
+        let error = parse_match_clause("(a)<-[:REL]-(b)", false, &no_bindings())
             .expect_err("incoming direction should be rejected in MVP subset");
 
         assert_eq!(error.code, ParseErrorCode::InvalidSyntax);
@@ -2031,12 +2295,168 @@ mod tests {
     }
 
     #[test]
+    fn placeholder_resolves_to_the_bound_typed_value() {
+        let bound = bindings(&[
+            ("text", LiteralValue::String("alpha".to_owned())),
+            ("count", LiteralValue::Integer(7)),
+            ("ratio", LiteralValue::Float("1.5".to_owned())),
+            ("flag", LiteralValue::Boolean(true)),
+            ("nothing", LiteralValue::Null),
+        ]);
+
+        for (placeholder, expected) in [
+            ("$text", LiteralValue::String("alpha".to_owned())),
+            ("$count", LiteralValue::Integer(7)),
+            ("$ratio", LiteralValue::Float("1.5".to_owned())),
+            ("$flag", LiteralValue::Boolean(true)),
+            ("$nothing", LiteralValue::Null),
+        ] {
+            assert_eq!(
+                parse_literal_value(placeholder, &bound).expect("placeholder should resolve"),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn placeholder_value_is_never_reinterpreted_as_syntax() {
+        // The value closes a quote and appends a clause. As a typed binding it can
+        // only ever be the string it is.
+        let payload = "seed' CREATE (m:Pwned) RETURN m";
+        let bound = bindings(&[("x", LiteralValue::String(payload.to_owned()))]);
+
+        let ast = parse_query_with_parameters("MATCH (n) WHERE n.name = $x RETURN n", &bound)
+            .expect("query should parse");
+
+        assert_eq!(ast.kind, QueryKind::Read);
+        let where_clause = ast
+            .query
+            .as_ref()
+            .and_then(|query| query.where_clause.as_ref())
+            .expect("where clause should be structured");
+        match &where_clause.expression {
+            WhereExpression::Comparison { right, .. } => {
+                assert_eq!(right, &LiteralValue::String(payload.to_owned()));
+            }
+            other => panic!("expected a comparison, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unbound_placeholder_is_a_fatal_parameter_error() {
+        let error = parse_query_with_parameters(
+            "MATCH (n) WHERE n.name = $missing RETURN n",
+            &no_bindings(),
+        )
+        .expect_err("an unbound placeholder must not be silently dropped");
+
+        assert_eq!(error.code, ParseErrorCode::InvalidParameter);
+        assert!(error.message.contains("$missing"));
+    }
+
+    #[test]
+    fn row_count_placeholder_accepts_integers_and_rejects_other_types() {
+        let ast = parse_query_with_parameters(
+            "MATCH (n) RETURN n LIMIT $limit",
+            &bindings(&[("limit", LiteralValue::Integer(3))]),
+        )
+        .expect("integer bound should resolve");
+        assert_eq!(
+            ast.query
+                .and_then(|query| query.return_clause)
+                .and_then(|clause| clause.limit),
+            Some(3)
+        );
+
+        for bad in [
+            LiteralValue::String("3".to_owned()),
+            LiteralValue::Boolean(true),
+            LiteralValue::Null,
+            LiteralValue::Integer(-1),
+        ] {
+            let error = parse_query_with_parameters(
+                "MATCH (n) RETURN n LIMIT $limit",
+                &bindings(&[("limit", bad.clone())]),
+            )
+            .expect_err("LIMIT must reject a non-integer bound value");
+            assert_eq!(
+                error.code,
+                ParseErrorCode::InvalidParameter,
+                "unexpected code for {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_query_rejects_placeholders_without_bindings() {
+        let error = parse_query("MATCH (n) RETURN n LIMIT $limit")
+            .expect_err("the literal-only entry point must reject placeholders");
+        assert_eq!(error.code, ParseErrorCode::InvalidParameter);
+    }
+
+    #[test]
+    fn escape_and_decode_string_literal_round_trip_preserves_value() {
+        for value in [
+            "plain",
+            "O'Brien",
+            "back\\slash",
+            "both'\\mixed",
+            "trailing\\",
+            "quote'",
+            "",
+            "unicode-é-\u{1f600}",
+        ] {
+            let literal = escape_string_literal(value);
+            assert_eq!(
+                decode_string_literal(&literal).as_deref(),
+                Some(value),
+                "round trip must preserve {value:?} (literal {literal:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn decode_string_literal_rejects_text_that_is_not_a_single_literal() {
+        assert_eq!(decode_string_literal("'a' + 'b'"), None);
+        assert_eq!(decode_string_literal("'unterminated"), None);
+        assert_eq!(decode_string_literal("not-a-literal"), None);
+        // A trailing escaped quote leaves the literal open.
+        assert_eq!(decode_string_literal("'abc\\'"), None);
+    }
+
+    #[test]
+    fn escaped_quote_inside_literal_does_not_split_clauses() {
+        // The escaped quote must not terminate the literal, so no RETURN token is
+        // visible at top level inside the value.
+        let query = "MATCH (n) WHERE n.name = 'seed\\' RETURN x' RETURN n";
+        let literal_end = query.rfind("RETURN n").expect("tail RETURN exists");
+
+        assert_eq!(find_top_level_token(query, "RETURN"), Some(literal_end));
+        assert_eq!(
+            split_top_level_commas("'a\\', b', c"),
+            vec!["'a\\', b'", "c"]
+        );
+    }
+
+    #[test]
+    fn parse_literal_value_decodes_escapes_and_rejects_unterminated_strings() {
+        assert_eq!(
+            parse_literal_value("'O\\'Brien'", &no_bindings())
+                .expect("escaped quote should decode"),
+            LiteralValue::String("O'Brien".to_owned())
+        );
+        let error = parse_literal_value("'unterminated", &no_bindings())
+            .expect_err("unterminated literal is invalid");
+        assert_eq!(error.code, ParseErrorCode::InvalidSyntax);
+    }
+
+    #[test]
     fn parse_node_pattern_rejects_empty_variable_and_unexpected_prefix() {
-        let empty_variable =
-            parse_node_pattern("(:Indicator)").expect_err("empty node variable should be rejected");
+        let empty_variable = parse_node_pattern("(:Indicator)", &no_bindings())
+            .expect_err("empty node variable should be rejected");
         assert_eq!(empty_variable.code, ParseErrorCode::InvalidSyntax);
 
-        let prefixed = parse_node_pattern("x(n)")
+        let prefixed = parse_node_pattern("x(n)", &no_bindings())
             .expect_err("unexpected token before node pattern should be rejected");
         assert_eq!(prefixed.code, ParseErrorCode::InvalidSyntax);
     }

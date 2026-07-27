@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use axum::{Json, extract::State};
 use corrobore_engine::{
-    CypherResponse, CypherResponseData, EngineError, EngineRequest, EngineRequestMode,
+    CypherResponse, CypherResponseData, CypherValue, EngineError, EngineRequest, EngineRequestMode,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -308,7 +308,7 @@ fn to_engine_request(
 
     let mode = forced_mode.unwrap_or_else(|| parse_mode(payload.mode.as_deref(), &query));
     let mut request =
-        EngineRequest::new(query, mode).with_parameters(stringify_params(payload.params));
+        EngineRequest::new(query, mode).with_typed_parameters(typed_params(payload.params)?);
     if let Some(workspace_id) = payload.workspace_id {
         request = request.with_workspace_id(workspace_id);
     }
@@ -362,15 +362,38 @@ fn generate_rotating_session_id() -> String {
     format!("session--http-{}", Uuid::new_v4().simple())
 }
 
-fn stringify_params(params: HashMap<String, Value>) -> HashMap<String, String> {
+/// Converts JSON parameters into typed runtime values.
+///
+/// JSON already carries the scalar type the caller intended, so it is preserved
+/// instead of being flattened to text: a number stays a number all the way to the
+/// executor, which is what makes `LIMIT $n` and numeric comparisons behave.
+/// Composite values have no scalar equivalent in the supported Cypher subset and
+/// are rejected rather than stringified into something that would silently fail
+/// to match.
+fn typed_params(params: HashMap<String, Value>) -> Result<HashMap<String, CypherValue>, ApiError> {
     params
         .into_iter()
         .map(|(key, value)| {
             let converted = match value {
-                Value::String(inner) => inner,
-                _ => value.to_string(),
+                Value::String(inner) => CypherValue::String(inner),
+                Value::Bool(inner) => CypherValue::Boolean(inner),
+                Value::Null => CypherValue::Null,
+                Value::Number(number) => match number.as_i64() {
+                    Some(integer) => CypherValue::Integer(integer),
+                    // Decimals keep their source text so the value stays lossless.
+                    None => CypherValue::Float(number.to_string()),
+                },
+                Value::Array(_) | Value::Object(_) => {
+                    return Err(ApiError::bad_request(
+                        "UNSUPPORTED_PARAMETER_TYPE",
+                        format!(
+                            "parameter {key:?} must be a string, number, boolean, or null; \
+                             arrays and objects are not supported"
+                        ),
+                    ));
+                }
             };
-            (key, converted)
+            Ok((key, converted))
         })
         .collect()
 }

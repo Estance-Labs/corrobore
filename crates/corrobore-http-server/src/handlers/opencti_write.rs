@@ -163,6 +163,7 @@ async fn drain_reference_projection(state: &AppState) -> Result<(), ApiError> {
                 state.config.opencti_shadow.reference_auth_token.clone(),
                 reference_provider.clone(),
                 pending.request,
+                Duration::from_millis(state.config.opencti_shadow.timeout_ms),
             ),
         )
         .await;

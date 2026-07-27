@@ -14,6 +14,9 @@ path = "src/lib.rs"
 
 [dependencies]
 cypher-executor = { path = "../cypher-executor" }
+# The parser owns the string-literal grammar. Parameter binding depends on it
+# directly so quoting and escaping cannot drift from what the parser decodes.
+cypher-parser = { path = "../cypher-parser" }
 graph-core = { path = "../graph-core" }
 serde = { workspace = true }
 thiserror = { workspace = true }
