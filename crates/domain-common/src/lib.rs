@@ -442,7 +442,10 @@ mod tests {
         // A clinical trial typed by both packs is one node with two assertions.
         let result = validate_multi_typing(
             "study",
-            &[assertion("medical", "Study"), assertion("research", "Study")],
+            &[
+                assertion("medical", "Study"),
+                assertion("research", "Study"),
+            ],
             MultiTypingPolicy::default_bounded(),
         );
 
@@ -504,8 +507,7 @@ mod tests {
 
     #[test]
     fn multi_typing_policy_rejects_a_zero_ceiling() {
-        let error =
-            MultiTypingPolicy::new(0).expect_err("a zero ceiling should be rejected");
+        let error = MultiTypingPolicy::new(0).expect_err("a zero ceiling should be rejected");
         assert!(matches!(
             error,
             DomainValidationError::InvalidMultiTypingField(field) if field == "max_assertions"
