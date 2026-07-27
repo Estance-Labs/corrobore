@@ -18,6 +18,8 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
+use std::time::Duration;
+
 use opencti_adapter::{
     GraphDigest, OpenCtiSyncBatch, SyncBatchResult, SyncCheckpoint, SyncValidationReport,
 };
@@ -25,6 +27,23 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::IngestError;
+
+// `reqwest` applies no timeout of its own. An import posts a whole bundle, so the
+// bound is larger than a plain read but still finite: without it a stalled server
+// would hold the connector open indefinitely.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Builds the shared HTTP client with explicit transport bounds.
+fn build_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(REQUEST_TIMEOUT)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .build()
+        // Only the timeouts are configured here, so construction fails solely
+        // when the TLS backend cannot initialize, which is not recoverable.
+        .expect("Corrobore import HTTP client with timeouts must build")
+}
 
 /// Import outcome reported by the Corrobore HTTP server.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -79,7 +98,7 @@ impl CorroboreImportClient {
             base_url: base_url.into(),
             auth_token: auth_token.into(),
             workspace_id: workspace_id.into(),
-            http: reqwest::Client::new(),
+            http: build_http_client(),
         }
     }
 

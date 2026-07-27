@@ -119,6 +119,7 @@ pub async fn execute_opencti_shadow_read(
         state.config.opencti_shadow.reference_auth_token.clone(),
         reference_provider,
         request.clone(),
+        Duration::from_millis(state.config.opencti_shadow.timeout_ms),
     );
 
     let result = match admission {
@@ -207,10 +208,14 @@ pub(crate) async fn execute_reference(
     token: Option<String>,
     provider: ProviderDescriptor,
     request: KnowledgeDataRequest,
+    timeout: Duration,
 ) -> Result<ProviderExecution, String> {
     let started = Instant::now();
     let client = REFERENCE_CLIENT.get_or_init(reqwest::Client::new);
-    let mut call = client.post(endpoint).json(&request);
+    // The bound is applied here rather than at each call site: reqwest has no
+    // default timeout, so an unresponsive reference deployment would otherwise
+    // hold the request open indefinitely wherever a caller forgot to wrap it.
+    let mut call = client.post(endpoint).timeout(timeout).json(&request);
     if let Some(token) = token {
         call = call.bearer_auth(token);
     }

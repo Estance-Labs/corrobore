@@ -307,7 +307,11 @@ fn provider_future(
             };
             let token = state.config.opencti_shadow.reference_auth_token.clone();
             Ok(Box::pin(execute_reference(
-                endpoint, token, provider, request,
+                endpoint,
+                token,
+                provider,
+                request,
+                Duration::from_millis(state.config.opencti_shadow.timeout_ms),
             )))
         }
         ProviderTarget::Corrobore => {
