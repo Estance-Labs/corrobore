@@ -6,10 +6,7 @@
 //! providers must keep loading unchanged, and unknown names must still fail
 //! closed.
 
-use domain_provider_abi::{
-    CORROBORE_DOMAIN_PROVIDER_ABI_MAJOR_V1, CORROBORE_DOMAIN_PROVIDER_ABI_MINOR_V1, DomainName,
-    ProviderMetadata,
-};
+use domain_provider_abi::{CORROBORE_DOMAIN_PROVIDER_ABI_MAJOR_V1, DomainName, ProviderMetadata};
 use serde_json::json;
 
 fn metadata_json(domain: &str) -> serde_json::Value {
@@ -28,10 +25,10 @@ fn metadata_json(domain: &str) -> serde_json::Value {
 
 #[test]
 fn existing_domain_providers_load_unchanged_after_minor_bump() {
-    // The bump is additive: major is unchanged and the pre-existing names still
-    // deserialize to their original variants.
+    // The bump is additive: the major stays at 1, so a host built against an
+    // earlier minor keeps loading these providers. The exact minor value is
+    // asserted in `abi_contract`.
     assert_eq!(CORROBORE_DOMAIN_PROVIDER_ABI_MAJOR_V1, 1);
-    assert!(CORROBORE_DOMAIN_PROVIDER_ABI_MINOR_V1 >= 1);
 
     for (name, expected) in [
         ("cti", DomainName::Cti),
