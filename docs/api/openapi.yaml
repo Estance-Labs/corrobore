@@ -1080,13 +1080,13 @@ paths:
   /v1/domains/{domain}/validate:
     post:
       operationId: validateDomainNode
-      summary: Validate domain data through a licensed native provider
+      summary: Validate domain data through a native domain provider
       tags: [Domains]
       parameters:
         - name: domain
           in: path
           required: true
-          schema: {type: string, enum: [cti, fimi, crisis]}
+          schema: {type: string, enum: [cti, fimi, crisis, medical, research]}
       requestBody:
         required: true
         content:
@@ -1207,7 +1207,7 @@ paths:
                           properties:
                             provider_id: {type: string}
                             provider_version: {type: string}
-                            domain: {type: string, enum: [cti, fimi, crisis]}
+                            domain: {type: string, enum: [cti, fimi, crisis, medical, research]}
                             capabilities:
                               type: array
                               items: {$ref: '#/components/schemas/DomainProviderCapability'}

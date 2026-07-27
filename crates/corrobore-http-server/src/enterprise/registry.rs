@@ -595,8 +595,8 @@ mod tests {
 
     use super::{DomainProviderRegistry, abi_minor_is_compatible, validate_metadata};
     use domain_provider_abi::{
-        CapabilityDeclaration, DomainName, InvokeRequest, ProviderMetadata, ProviderResponseStatus,
-        SCHEMA_V1,
+        CORROBORE_DOMAIN_PROVIDER_ABI_MINOR_V1, CapabilityDeclaration, DomainName, InvokeRequest,
+        ProviderMetadata, ProviderResponseStatus, SCHEMA_V1,
     };
     use serde_json::json;
 
@@ -835,7 +835,12 @@ mod tests {
         }
     }
 
+    /// Builds a fake provider.
+    ///
+    /// `abi_minor` tracks the host constant rather than a literal, so bumping
+    /// the ABI minor does not silently invalidate every fixture built here.
     fn provider_source(abi_major: u16) -> String {
+        let abi_minor = CORROBORE_DOMAIN_PROVIDER_ABI_MINOR_V1;
         format!(
             r###"
 use std::ffi::c_void;
@@ -884,7 +889,7 @@ unsafe extern "C" fn free_buffer(buffer: Buffer) {{
     }}
 }}
 static API: Api = Api {{
-    abi_major: {abi_major}, abi_minor: 0, struct_size: std::mem::size_of::<Api>(),
+    abi_major: {abi_major}, abi_minor: {abi_minor}, struct_size: std::mem::size_of::<Api>(),
     metadata: Some(metadata), create: Some(create), invoke: Some(invoke),
     health: Some(health), destroy: Some(destroy), free_buffer: Some(free_buffer),
 }};

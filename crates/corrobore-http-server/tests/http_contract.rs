@@ -180,6 +180,77 @@ async fn domain_validation_contract_rejects_unknown_domain() {
     assert_eq!(payload["error"]["code"], "INVALID_DOMAIN");
 }
 
+/// The two MIT packs must reach the provider registry on a server holding no
+/// enterprise license bundle at all. Requiring a signed license to call an
+/// open-source pack would make it unusable without a commercial agreement.
+///
+/// `DOMAIN_PROVIDER_NOT_READY` is the expected outcome here, and it is the
+/// point: the request passed the domain, feature, and license stages and
+/// stopped at the registry, which is unconfigured in this fixture. Anything
+/// else — `INVALID_DOMAIN`, `FEATURE_NOT_AVAILABLE`, `LICENSE_MODULE_MISSING`,
+/// or a success — would be a defect.
+#[tokio::test]
+async fn domain_validation_contract_reaches_open_source_domains_without_a_license() {
+    for domain in ["medical", "research"] {
+        let app = test_app();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(format!("/v1/domains/{domain}/validate"))
+            .header(header::AUTHORIZATION, "Bearer token-123")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({"payload": {}}).to_string()))
+            .expect("request should build");
+
+        let response = app.oneshot(request).await.expect("request should respond");
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should be readable");
+        let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
+
+        assert_eq!(
+            status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{domain} must reach the registry, got {payload}"
+        );
+        assert_eq!(
+            payload["error"]["code"], "DOMAIN_PROVIDER_NOT_READY",
+            "{domain} must fail closed at the registry, not at a licence gate"
+        );
+    }
+}
+
+/// The unknown-domain message must name every accepted value, so a caller is
+/// not left guessing which packs the build exposes.
+#[tokio::test]
+async fn domain_validation_contract_lists_accepted_domains_when_rejecting() {
+    let app = test_app();
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/domains/astrology/validate")
+        .header(header::AUTHORIZATION, "Bearer token-123")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({"payload": {}}).to_string()))
+        .expect("request should build");
+
+    let response = app.oneshot(request).await.expect("request should respond");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body should be readable");
+    let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
+    assert_eq!(payload["error"]["code"], "INVALID_DOMAIN");
+    let message = payload["error"]["message"]
+        .as_str()
+        .expect("message should be a string");
+    for accepted in ["cti", "fimi", "crisis", "medical", "research"] {
+        assert!(
+            message.contains(accepted),
+            "message must name {accepted}: {message}"
+        );
+    }
+}
+
 #[cfg(feature = "enterprise-fimi")]
 #[tokio::test]
 async fn domain_validation_contract_rejects_unlicensed_module() {

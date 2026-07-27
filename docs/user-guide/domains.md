@@ -18,9 +18,9 @@ The normative cross-repository C contract is `crates/domain-provider-abi/include
 
 Set both `CORROBORE_DOMAIN_PROVIDER_DIR` and `CORROBORE_DOMAIN_PROVIDER_MANIFEST_FILE` to enable providers. The manifest uses relative library paths, lowercase SHA-256 digests, required/optional policy, and required capabilities; see [the production manifest shape](../examples/domain-providers.json). At startup the host confines canonical paths to the trusted root, verifies each digest, negotiates ABI v1, validates provider identity and limits, creates one instance, and requires a ready health response. Any failure for a required provider prevents the server from accepting traffic.
 
-Build availability, signed license claims, and provider readiness are independent gates. A licensed module is not usable unless its matching build feature and healthy provider are also present. Provider calls are serialized in ABI v1, bounded by declared request/response sizes, wrapped by the server request timeout, and correlated by `request_id`.
+Build availability, signed license claims, and provider readiness are independent gates. A licensed module is not usable unless its matching build feature and healthy provider are also present. The build and license gates apply to the enterprise domains only; the MIT `medical` and `research` packs ship with the open-source runtime and are gated by provider readiness and capability alone. Provider calls are serialized in ABI v1, bounded by declared request/response sizes, wrapped by the server request timeout, and correlated by `request_id`.
 
-Use `POST /v1/domains/{domain}/validate` for generic `cti`, `fimi`, or `crisis` validation. `GET /health` reports aggregate configured/ready counts; authenticated operators can inspect non-sensitive provider identity, version, capabilities, domain, and readiness through `GET /v1/admin/domain-providers/status`.
+Use `POST /v1/domains/{domain}/validate` for generic `cti`, `fimi`, `crisis`, `medical`, or `research` validation. `GET /health` reports aggregate configured/ready counts; authenticated operators can inspect non-sensitive provider identity, version, capabilities, domain, and readiness through `GET /v1/admin/domain-providers/status`.
 
 ## CTI model surface
 
