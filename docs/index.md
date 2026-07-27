@@ -68,4 +68,4 @@ Corrobore is not a distributed graph database and does not claim full openCypher
 - [Architecture](architecture.md) — crate and runtime boundaries.
 - [Interactive API reference](api/index.html) — browse HTTP API parameters and schemas.
 - [OpenAPI specification](api/openapi.yaml) — raw OpenAPI 3.1 contract.
-- [Release Notes](release-notes/v0.2.2.md) — current operational baseline and history.
+- [Release Notes](release-notes/v0.3.0.md) — current operational baseline and history.

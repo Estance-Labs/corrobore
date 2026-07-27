@@ -46,6 +46,11 @@ fn config(web_dir: Option<String>) -> ServerConfig {
         admin_auth_token_source: None,
         operational_endpoint_policy:
             corrobore_http_server::security::OperationalEndpointPolicy::Public,
+        memory_workspace_id: "workspace--standalone-default".to_owned(),
+        memory_actor_id: "actor--standalone-client".to_owned(),
+        memory_agent_id: None,
+        memory_session_id: "session--standalone-api".to_owned(),
+        memory_permissions: corrobore_engine::MemoryPermissions::all(),
         session_store_dir: web_root().to_string_lossy().into_owned(),
         log_dir: web_root().join("logs").to_string_lossy().into_owned(),
         request_timeout_ms: 1_000,

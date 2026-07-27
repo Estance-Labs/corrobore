@@ -187,6 +187,14 @@ remain environment-only:
 | `CORROBORE_HTTP_LICENSED_MODULES` | unset | Legacy compatibility fallback when no signed license is configured. |
 | `CORROBORE_DOMAIN_PROVIDER_DIR` | unset | Trusted root containing optional native domain providers. |
 | `CORROBORE_DOMAIN_PROVIDER_MANIFEST_FILE` | unset | Manifest pinning provider paths, hashes, policy, and capabilities. |
+| `CORROBORE_MEMORY_WORKSPACE_ID` | `workspace--standalone-default` | Trusted workspace for high-level memory operations. |
+| `CORROBORE_MEMORY_ACTOR_ID` | `actor--standalone-client` | Trusted actor attribution for high-level memory operations. |
+| `CORROBORE_MEMORY_AGENT_ID` | unset | Optional trusted agent attribution for high-level memory operations. |
+| `CORROBORE_MEMORY_SESSION_ID` | `session--standalone-api` | Trusted session attribution for high-level memory operations. |
+| `CORROBORE_MEMORY_PERMISSIONS` | `read,write,trace,forget,consolidate` | Independently enabled high-level memory capabilities. |
+| `CORROBORE_OPENCTI_ELASTIC_FREE` | `false` | Require final operation without the reference search provider. |
+| `CORROBORE_OPENCTI_RATE_LIMIT_PER_SECOND` | `200` | Sustained rate reserved for authenticated OpenCTI provider traffic. |
+| `CORROBORE_OPENCTI_RATE_LIMIT_BURST` | `1000` | Burst allowance reserved for authenticated OpenCTI provider traffic. |
 | `CORROBORE_S3_ACCESS_KEY` | unset | Access-key identifier required by `export-snapshot-s3`. |
 | `CORROBORE_S3_SECRET_KEY` | unset | Secret access key required by `export-snapshot-s3`; inject it through the process environment. |
 | `CORROBORE_S3_SESSION_TOKEN` | unset | Optional temporary-credential session token used by `export-snapshot-s3`. |

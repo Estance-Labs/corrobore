@@ -81,6 +81,7 @@ nav:
     - OpenCTI Harvester Agent: skills/corrobore/AGENT.md
   - Architecture: architecture.md
   - User Guide:
+    - High-level Memory Operations: user-guide/memory-operations.md
     - Cypher Support: user-guide/cypher.md
     - Intelligence Domains: user-guide/domains.md
     - Domain Provider Operations: user-guide/domain-provider-operations.md
@@ -108,6 +109,7 @@ nav:
     - Elastic-free OpenCTI Acceptance: acceptance/opencti-elastic-free.md
     - Release Notes Process: developer-guide/release-notes-process.md
   - Release Notes:
+    - v0.3.0: release-notes/v0.3.0.md
     - v0.2.2: release-notes/v0.2.2.md
     - v0.2.1: release-notes/v0.2.1.md
     - v0.2.0: release-notes/v0.2.0.md

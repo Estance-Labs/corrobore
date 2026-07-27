@@ -61,6 +61,7 @@
 //! ```
 
 mod knowledge_data;
+mod memory;
 mod opencti_routing;
 mod opencti_shadow;
 
@@ -87,6 +88,7 @@ pub use shared_runtime::{
 use thiserror::Error;
 
 pub use knowledge_data::*;
+pub use memory::*;
 pub use opencti_routing::*;
 pub use opencti_shadow::*;
 
@@ -283,6 +285,18 @@ pub trait EnginePersistence: std::fmt::Debug + Send {
             })
     }
 
+    /// Prepare the trusted workspace projection required by one high-level
+    /// memory operation. Snapshot adapters already carry the full graph and
+    /// return `None`; paged standalone adapters select workspace records and
+    /// their evidence-bearing relationships before any memory payload is read.
+    fn prepare_memory_operation(
+        &mut self,
+        _operation: &MemoryOperation,
+        _context: &MemoryServiceContext,
+    ) -> Result<Option<Graph>, String> {
+        Ok(None)
+    }
+
     /// Commit the changed record versions between two operational projections.
     ///
     /// The default preserves compatibility with snapshot-style embedded
@@ -457,6 +471,7 @@ impl CorroboreEngineBuilder {
             core_read_metrics: CoreReadMetrics::default(),
             security_audit_events: Vec::new(),
             advanced_query_cache: BTreeMap::new(),
+            memory_recall_traces: BTreeMap::new(),
         })
     }
 }
@@ -472,6 +487,7 @@ pub struct CorroboreEngine {
     core_read_metrics: CoreReadMetrics,
     security_audit_events: Vec<SecurityAuditEvent>,
     advanced_query_cache: BTreeMap<String, AggregationResult>,
+    memory_recall_traces: BTreeMap<String, RecallResult>,
 }
 
 impl CorroboreEngine {
