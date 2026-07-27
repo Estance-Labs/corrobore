@@ -19,7 +19,7 @@ pub use export::{
     EvidenceTableExport, EvidenceTableExporter, EvidenceTableRow, EvidenceTableStudy, ExportError,
     ExportMode,
 };
-pub use provider_abi::corrobore_domain_provider_get_api_v1;
+pub use provider_abi::medical_provider_api_v1;
 
 use domain_common::{
     ConfidencePolicy, DomainValidationIssue, DomainValidationResult, DomainValidationSeverity,

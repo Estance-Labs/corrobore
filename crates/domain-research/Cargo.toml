@@ -1,5 +1,5 @@
 [package]
-name = "domain-medical"
+name = "domain-research"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,9 +9,9 @@ homepage.workspace = true
 documentation.workspace = true
 
 [lib]
-name = "domain_medical"
+name = "domain_research"
 path = "src/lib.rs"
-# `rlib` only. The shared ABI symbol lives in the `domain-medical-provider`
+# `rlib` only. The shared ABI symbol lives in the `domain-research-provider`
 # cdylib so several packs can be linked into one binary.
 crate-type = ["rlib"]
 
@@ -24,6 +24,9 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+# Cross-domain composition contract: a clinical trial validated by both packs
+# must round-trip as one record.
+domain-medical = { path = "../domain-medical" }
 
 [lints]
 workspace = true
