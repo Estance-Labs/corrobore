@@ -5,6 +5,7 @@ members = [
     "crates/cypher-planner",
     "crates/domain-provider-abi",
     "crates/domain-common",
+    "crates/domain-medical",
     "crates/export-fimi",
     "crates/export-stix",
     "crates/function-registry",
