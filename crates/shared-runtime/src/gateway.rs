@@ -18,6 +18,8 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
+use std::time::Instant;
+
 use cypher_parser::{LiteralValue, ParameterBindings};
 
 use crate::*;
@@ -42,6 +44,70 @@ fn to_parser_bindings(parameters: &CypherParameters) -> ParameterBindings {
             (name.clone(), literal)
         })
         .collect()
+}
+
+/// Projects the runtime budget onto the bounds the executor enforces while a
+/// query runs.
+///
+/// `max_query_length`, `max_parameter_count` and `max_payload_bytes` are absent
+/// deliberately: the first two are validated before execution starts, and payload
+/// size is only knowable once records exist, so it stays a post-execution check.
+fn execution_limits(budget: &RuntimeBudget) -> ExecutionLimits {
+    ExecutionLimits {
+        max_loaded_records: budget.max_loaded_records,
+        max_returned_records: budget.max_returned_records,
+        max_mutation_count: budget.max_mutation_count,
+        max_execution_time_ms: budget.max_execution_time_ms,
+    }
+}
+
+/// Derives the budget dimensions consumed by one completed execution.
+///
+/// `loaded_record_count` mirrors the returned count because the executor does not
+/// yet report records it touched but did not project. That under-reports the
+/// dimension rather than inventing a value, so the limit can only fire on work
+/// that is genuinely observable.
+fn measure_budget_usage(
+    request: &CypherRequest,
+    result: &ExecutionResult,
+    execution_time_ms: u64,
+) -> RuntimeBudgetUsage {
+    let (returned_record_count, mutation_count, payload_bytes) = match &result.data {
+        ExecutionResultData::Records(records) => {
+            let payload_bytes = records
+                .iter()
+                .flat_map(|record| record.fields.iter())
+                .map(|(field, value)| field.len() + value.len())
+                .sum();
+            (records.len(), 0, payload_bytes)
+        }
+        ExecutionResultData::MutationSummary {
+            nodes_created,
+            relationships_created,
+            properties_set,
+            nodes_deleted,
+            relationships_deleted,
+        } => (
+            0,
+            nodes_created
+                + relationships_created
+                + properties_set
+                + nodes_deleted
+                + relationships_deleted,
+            0,
+        ),
+        ExecutionResultData::Empty => (0, 0, 0),
+    };
+
+    RuntimeBudgetUsage {
+        query_length: request.query_text.chars().count(),
+        parameter_count: request.parameters.values().len(),
+        loaded_record_count: returned_record_count,
+        returned_record_count,
+        mutation_count,
+        payload_bytes,
+        execution_time_ms,
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -139,12 +205,51 @@ impl CypherGateway {
             );
         }
 
-        let execution_result = self
-            .executor
-            .execute_with_parameters(&request.query_text, &bindings)
-            .map_err(execution_error_to_runtime_error)?;
+        let started = Instant::now();
+        let execution_result = match self.executor.execute_with_limits(
+            &request.query_text,
+            &bindings,
+            execution_limits(&self.budget),
+        ) {
+            Ok(result) => result,
+            // A bound reached mid-execution stopped the query before it could
+            // finish, and for a mutation before it wrote anything.
+            Err(error) => {
+                return Ok(runtime_error_to_rejected_response(
+                    execution_error_to_runtime_error(error),
+                ));
+            }
+        };
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
-        Ok(map_execution_result_to_response(execution_result))
+        let usage = measure_budget_usage(request, &execution_result, elapsed_ms);
+        let recorded = self
+            .validator
+            .record_budget_usage(&request.budget_ref, &self.budget, usage);
+
+        match recorded {
+            Ok(budget_usage) => {
+                let mut response = map_execution_result_to_response(execution_result);
+                response.budget_usage = Some(budget_usage);
+                Ok(response)
+            }
+            // The executor enforces the scan, mutation and deadline bounds while a
+            // query runs, so reaching this point means a dimension it does not
+            // track (payload bytes) went over. A read can be rejected outright; a
+            // mutation has already been applied and is reported instead, because
+            // claiming failure would leave the caller unable to reconcile a write
+            // the durable layer then skips.
+            Err(error) if request.mode != CypherRequestMode::Mutation => {
+                Ok(runtime_error_to_rejected_response(error))
+            }
+            Err(error) => {
+                let mut response = map_execution_result_to_response(execution_result);
+                response.warnings.push(format!(
+                    "mutation exceeded its runtime budget and was still applied: {error}"
+                ));
+                Ok(response)
+            }
+        }
     }
 
     /// Returns an immutable reference to the runtime graph.
@@ -160,6 +265,22 @@ impl CypherGateway {
 
 pub(crate) fn execution_error_to_runtime_error(error: ExecutionError) -> RuntimeError {
     match error {
+        // Surfaced as a budget overage so callers get the same code and fix hint
+        // whether the bound was reached mid-execution or measured afterwards.
+        ExecutionError::LimitExceeded {
+            dimension,
+            limit,
+            reached,
+        } => RuntimeError::QueryBudgetExceeded {
+            details: RuntimeBudgetExceeded {
+                dimension,
+                limit,
+                actual: reached,
+                fix_hint:
+                    "Narrow the pattern, add a LIMIT, or split the work into smaller requests."
+                        .to_owned(),
+            },
+        },
  ExecutionError::InvalidQuery(_) => RuntimeError::MalformedCypherRequest("query_text"),
  ExecutionError::FunctionInvocation(registry_error) => RuntimeError::UnsupportedCypherFeature {
  feature: format!("function invocation: {registry_error}"),

@@ -30,6 +30,7 @@ use std::collections::HashMap;
 use graph_core::{SessionId, WorkspaceId};
 use shared_runtime::{
     CypherBudgetRef, CypherGateway, CypherParameters, CypherRequest, CypherResponseData,
+    CypherResponseStatus,
 };
 
 fn workspace_id() -> WorkspaceId {
@@ -174,4 +175,27 @@ fn parameter_value_containing_a_quote_round_trips_without_the_escape_character()
 
     // The escape character must stay out of the stored data.
     assert_eq!(stored, "O'Brien");
+}
+
+#[test]
+fn read_only_response_reports_budget_usage() {
+    let mut gateway = CypherGateway::strict_default();
+    seed(&mut gateway);
+
+    let request = CypherRequest::build_read_only_request(
+        "MATCH (n) RETURN n",
+        CypherParameters::default(),
+        workspace_id(),
+        session_id(),
+        budget_ref(),
+    )
+    .expect("read request should be valid");
+
+    let response = gateway.execute(&request).expect("read should execute");
+
+    assert_eq!(response.status, CypherResponseStatus::Success);
+    let usage = response
+        .budget_usage
+        .expect("budget usage must be reported so limits are observable");
+    assert!(usage.remaining_units.is_some());
 }

@@ -26,7 +26,7 @@
 //! graph, enforcing execution policies (read-only, mutation, mixed) and
 //! collecting execution records for auditability.
 
-use std::{cmp::Ordering, collections::HashMap};
+use std::{cmp::Ordering, collections::HashMap, time::Instant};
 
 use cypher_parser::{
     ComparisonOperator, LiteralValue, ParameterBindings, ParseErrorCode, ParsedQuery,
@@ -146,6 +146,130 @@ pub enum ExecutionError {
     #[error("function invocation failed: {0}")]
     /// Function invocation.
     FunctionInvocation(#[from] RegistryError),
+    /// A bound declared in [`ExecutionLimits`] was reached while the query ran.
+    #[error("execution limit exceeded for {dimension}: limit {limit}, reached {reached}")]
+    LimitExceeded {
+        /// Bound that stopped execution.
+        dimension: &'static str,
+        /// Configured ceiling.
+        limit: usize,
+        /// Value observed when execution stopped.
+        reached: usize,
+    },
+}
+
+/// Bounds enforced cooperatively while a query runs.
+///
+/// Checking limits only after execution cannot stop expensive work, and for a
+/// mutation it would report failure for writes already applied. These bounds are
+/// therefore evaluated during execution: scan bounds while rows are built, and
+/// the mutation bound before any write is applied.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExecutionLimits {
+    /// Maximum rows materialized while matching, before `SKIP`/`LIMIT`.
+    pub max_loaded_records: usize,
+    /// Maximum rows projected into the response.
+    pub max_returned_records: usize,
+    /// Maximum graph operations one mutation may apply.
+    pub max_mutation_count: usize,
+    /// Wall-clock ceiling for the query, in milliseconds.
+    pub max_execution_time_ms: u64,
+}
+
+impl ExecutionLimits {
+    /// Limits that never trigger, for callers that impose their own bounds.
+    pub const fn unbounded() -> Self {
+        Self {
+            max_loaded_records: usize::MAX,
+            max_returned_records: usize::MAX,
+            max_mutation_count: usize::MAX,
+            max_execution_time_ms: u64::MAX,
+        }
+    }
+}
+
+// Reading the clock once per row would dominate a scan, so the deadline is
+// sampled every this many rows. The residual overshoot is bounded by the cost of
+// that many row materializations.
+const DEADLINE_SAMPLE_ROWS: usize = 1_024;
+
+/// Tracks consumption of [`ExecutionLimits`] across one query.
+#[derive(Clone, Debug)]
+struct ExecutionBudget {
+    limits: ExecutionLimits,
+    started: Instant,
+    loaded_records: usize,
+}
+
+impl ExecutionBudget {
+    fn new(limits: ExecutionLimits) -> Self {
+        Self {
+            limits,
+            started: Instant::now(),
+            loaded_records: 0,
+        }
+    }
+
+    fn elapsed_ms(&self) -> u64 {
+        u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    fn check_deadline(&self) -> Result<(), ExecutionError> {
+        let elapsed = self.elapsed_ms();
+        if elapsed > self.limits.max_execution_time_ms {
+            return Err(ExecutionError::LimitExceeded {
+                dimension: "execution_time_ms",
+                limit: usize::try_from(self.limits.max_execution_time_ms).unwrap_or(usize::MAX),
+                reached: usize::try_from(elapsed).unwrap_or(usize::MAX),
+            });
+        }
+        Ok(())
+    }
+
+    /// Accounts for one materialized row, stopping the scan when it runs past a
+    /// bound. Called before the row is pushed, so nothing is retained past the
+    /// ceiling.
+    fn charge_loaded_record(&mut self) -> Result<(), ExecutionError> {
+        self.loaded_records += 1;
+        if self.loaded_records > self.limits.max_loaded_records {
+            return Err(ExecutionError::LimitExceeded {
+                dimension: "loaded_records",
+                limit: self.limits.max_loaded_records,
+                reached: self.loaded_records,
+            });
+        }
+        if self.loaded_records.is_multiple_of(DEADLINE_SAMPLE_ROWS) {
+            self.check_deadline()?;
+        }
+        Ok(())
+    }
+
+    fn check_returned_records(&self, count: usize) -> Result<(), ExecutionError> {
+        if count > self.limits.max_returned_records {
+            return Err(ExecutionError::LimitExceeded {
+                dimension: "returned_records",
+                limit: self.limits.max_returned_records,
+                reached: count,
+            });
+        }
+        Ok(())
+    }
+
+    /// Rejects a mutation whose projected operation count exceeds the bound.
+    ///
+    /// The projection is an upper bound computed before any write, which is what
+    /// keeps the graph from being left partially mutated. A query rejected here
+    /// has changed nothing.
+    fn check_projected_mutations(&self, projected: usize) -> Result<(), ExecutionError> {
+        if projected > self.limits.max_mutation_count {
+            return Err(ExecutionError::LimitExceeded {
+                dimension: "mutation_count",
+                limit: self.limits.max_mutation_count,
+                reached: projected,
+            });
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -214,12 +338,27 @@ impl CypherPipelineExecutor {
     ///
     /// Values are handed to the parser as typed bindings rather than spliced into
     /// `query_text`, so a parameter can never contribute syntax.
-    #[instrument(skip(self, query_text, parameters), fields(query_len = query_text.len(), parameter_count = parameters.len()))]
     pub fn execute_with_parameters(
         &mut self,
         query_text: &str,
         parameters: &ParameterBindings,
     ) -> Result<ExecutionResult, ExecutionError> {
+        self.execute_with_limits(query_text, parameters, ExecutionLimits::unbounded())
+    }
+
+    /// Executes a query under bounds that are enforced while it runs.
+    ///
+    /// Scan bounds stop row materialization as it happens, and the mutation bound
+    /// is checked before any write, so exceeding a limit never leaves the graph
+    /// partially modified.
+    #[instrument(skip(self, query_text, parameters), fields(query_len = query_text.len(), parameter_count = parameters.len()))]
+    pub fn execute_with_limits(
+        &mut self,
+        query_text: &str,
+        parameters: &ParameterBindings,
+        limits: ExecutionLimits,
+    ) -> Result<ExecutionResult, ExecutionError> {
+        let mut budget = ExecutionBudget::new(limits);
         debug!(
             read_only_by_default = self.policy.read_only_by_default,
             "executing cypher query"
@@ -253,7 +392,7 @@ impl CypherPipelineExecutor {
         match ast.kind {
             QueryKind::Read => {
                 let records = match ast.query.as_ref() {
-                    Some(query) => self.execute_structured_read_query(query)?,
+                    Some(query) => self.execute_structured_read_query(query, &mut budget)?,
                     None => Vec::new(),
                 };
                 debug!(
@@ -268,7 +407,9 @@ impl CypherPipelineExecutor {
                     fix_hints: vec![],
                 })
             }
-            QueryKind::Mutation | QueryKind::Mixed => self.execute_mutation_query(&ast),
+            QueryKind::Mutation | QueryKind::Mixed => {
+                self.execute_mutation_query(&ast, &mut budget)
+            }
         }
     }
 
@@ -297,6 +438,7 @@ impl CypherPipelineExecutor {
     fn execute_mutation_query(
         &mut self,
         ast: &cypher_parser::QueryAst,
+        budget: &mut ExecutionBudget,
     ) -> Result<ExecutionResult, ExecutionError> {
         let query = match ast.query.as_ref() {
             Some(q) => q,
@@ -319,7 +461,7 @@ impl CypherPipelineExecutor {
 
         // Build rows from MATCH if present (for mixed queries).
         let mut rows: Vec<ExecutionRow> = if let Some(match_clause) = &query.match_clause {
-            let mut matched = self.build_rows_from_match(match_clause)?;
+            let mut matched = self.build_rows_from_match(match_clause, budget)?;
             if let Some(where_clause) = &query.where_clause {
                 matched.retain(|row| evaluate_where(row, where_clause));
             }
@@ -327,6 +469,11 @@ impl CypherPipelineExecutor {
         } else {
             Vec::new()
         };
+
+        // Matching is complete and nothing has been written yet, so this is the
+        // last point at which the mutation bound can be enforced without leaving
+        // the graph half-modified. Everything below is bounded by this check.
+        budget.check_projected_mutations(projected_mutation_count(query, rows.len()))?;
 
         // --- CREATE ---
         if let Some(create_clause) = &query.create_clause {
@@ -713,13 +860,14 @@ impl CypherPipelineExecutor {
     fn execute_structured_read_query(
         &self,
         query: &ParsedQuery,
+        budget: &mut ExecutionBudget,
     ) -> Result<Vec<ExecutionRecord>, ExecutionError> {
         let match_clause = match &query.match_clause {
             Some(clause) => clause,
             None => return Ok(Vec::new()),
         };
 
-        let mut rows = self.build_rows_from_match(match_clause)?;
+        let mut rows = self.build_rows_from_match(match_clause, budget)?;
 
         if let Some(where_clause) = &query.where_clause {
             rows.retain(|row| evaluate_where(row, where_clause));
@@ -765,6 +913,8 @@ impl CypherPipelineExecutor {
                 .collect()
         };
 
+        budget.check_returned_records(records.len())?;
+
         if return_clause.distinct {
             let mut seen = std::collections::HashSet::new();
             records.retain(|record| {
@@ -785,6 +935,7 @@ impl CypherPipelineExecutor {
     fn build_rows_from_match(
         &self,
         match_clause: &cypher_parser::MatchClause,
+        budget: &mut ExecutionBudget,
     ) -> Result<Vec<ExecutionRow>, ExecutionError> {
         if let Some((relationship_pattern, end_pattern)) = &match_clause.relationship {
             let relationships = self.graph.list_relationships().map_err(|error| {
@@ -827,6 +978,10 @@ impl CypherPipelineExecutor {
                     continue;
                 }
 
+                // Charged before the row is retained, so the scan stops at the
+                // ceiling instead of materializing past it.
+                budget.charge_loaded_record()?;
+
                 let mut row = ExecutionRow::new();
                 row.bindings.insert(
                     match_clause.start.variable.clone(),
@@ -852,6 +1007,9 @@ impl CypherPipelineExecutor {
             if !node_pattern_matches(&node, &match_clause.start) {
                 continue;
             }
+            // Charged before the row is retained, so the scan stops at the
+            // ceiling instead of materializing past it.
+            budget.charge_loaded_record()?;
             let mut row = ExecutionRow::new();
             row.bindings.insert(
                 match_clause.start.variable.clone(),
@@ -884,6 +1042,52 @@ enum BindingValue {
     Node(Node),
     /// Relationship.
     Relationship(Relationship),
+}
+
+/// Upper bound on the graph operations a mutation query will apply.
+///
+/// Deliberately an over-estimate: a `SET` only writes for rows whose variable is
+/// actually bound, and `MERGE` writes nothing when it finds a match. Rejecting on
+/// the upper bound can refuse a query that would have stayed just under the
+/// ceiling, which is the conservative direction — the alternative is discovering
+/// the overage after writes have landed.
+fn projected_mutation_count(query: &ParsedQuery, matched_rows: usize) -> usize {
+    let mut created_rows = 0_usize;
+    let mut projected = 0_usize;
+
+    if let Some(create_clause) = &query.create_clause {
+        created_rows += create_clause.nodes.len();
+        projected += create_clause.nodes.len();
+        if create_clause.relationship.is_some() {
+            // A created relationship also creates its target node.
+            projected += 2;
+            created_rows += 1;
+        }
+    }
+
+    if let Some(merge_clause) = &query.merge_clause {
+        // MERGE either matches or creates: at most one node, plus its edge.
+        created_rows += 1;
+        projected += 1;
+        if merge_clause.relationship.is_some() {
+            projected += 2;
+        }
+    }
+
+    // CREATE and MERGE append rows that later clauses then act on.
+    let rows = matched_rows.saturating_add(created_rows);
+
+    if let Some(set_clause) = &query.set_clause {
+        projected = projected.saturating_add(rows.saturating_mul(set_clause.assignments.len()));
+    }
+    if let Some(remove_clause) = &query.remove_clause {
+        projected = projected.saturating_add(rows.saturating_mul(remove_clause.targets.len()));
+    }
+    if let Some(delete_clause) = &query.delete_clause {
+        projected = projected.saturating_add(rows.saturating_mul(delete_clause.variables.len()));
+    }
+
+    projected
 }
 
 fn node_label_matches(node: &Node, expected_label: Option<&str>) -> bool {
@@ -1469,13 +1673,19 @@ mod tests {
 
         assert!(
             executor
-                .execute_structured_read_query(&no_match)
+                .execute_structured_read_query(
+                    &no_match,
+                    &mut ExecutionBudget::new(ExecutionLimits::unbounded()),
+                )
                 .expect("no match should return empty vector")
                 .is_empty()
         );
         assert!(
             executor
-                .execute_structured_read_query(&no_return)
+                .execute_structured_read_query(
+                    &no_return,
+                    &mut ExecutionBudget::new(ExecutionLimits::unbounded()),
+                )
                 .expect("no return should return empty vector")
                 .is_empty()
         );

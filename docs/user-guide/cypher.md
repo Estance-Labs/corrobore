@@ -85,6 +85,41 @@ Because types are preserved, a placeholder must match its position: `LIMIT $n` r
 
 `POST /v1/cypher/execute` accepts `mode` values `read`, `write`, `validate`, or `auto`. `auto` detects mutation keywords. Validate-only mode currently has a known defect tracked in issue #228 and must not be relied on for mutation safety; use the explicit read route or a read-only policy.
 
+## Runtime budgets
+
+Every request runs under a budget. Most dimensions are enforced *while the query
+runs* rather than measured afterwards, so an expensive query is stopped instead
+of merely reported.
+
+| Dimension | Default | Enforced |
+| :--- | ---: | :--- |
+| `max_query_length` | 8192 | before execution |
+| `max_parameter_count` | 128 | before execution |
+| `max_loaded_records` | 50000 | during matching, as rows are materialized |
+| `max_returned_records` | 10000 | when the projection is built |
+| `max_mutation_count` | 5000 | before any write is applied |
+| `max_execution_time_ms` | 20000 | sampled during matching |
+| `max_payload_bytes` | 4 MiB | after execution |
+
+Two consequences are worth knowing:
+
+- **A rejected mutation has changed nothing.** The mutation bound is checked
+  against a projected upper bound once matching is complete and before the first
+  write, so exceeding it can never leave the graph partially modified. Because
+  the projection is an upper bound, a query close to the ceiling may be refused
+  even though it would have stayed just under it.
+- **`max_loaded_records` counts matched rows, not returned rows.** Matching
+  materializes rows before `SKIP`/`LIMIT` applies, so a broad pattern with a
+  small `LIMIT` is still charged for everything it matched. Narrow the pattern
+  rather than relying on `LIMIT` to stay within the bound.
+
+The execution-time bound is deliberately lower than
+`CORROBORE_HTTP_REQUEST_TIMEOUT_MS` (20s against 30s by default) so a runaway
+query stops itself before the transport gives up on it.
+
+Exceeding a bound returns `QUERY_BUDGET_EXCEEDED` naming the dimension, the limit
+and the value reached.
+
 ## Safety guidance
 
 - Bound result sets and avoid broad traversals.
