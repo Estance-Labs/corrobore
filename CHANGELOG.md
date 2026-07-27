@@ -9,19 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Changes on `main` that have not yet been tagged in a release.
-
-- Added a versioned, domain-neutral high-level memory service with seven typed
-  operations, trusted context, idempotent durability-gated receipts, bounded
-  explainable recall, non-destructive consolidation, and a matching standalone
-  HTTP adapter.
+Changes on `main` after `v0.3.0` that have not yet been tagged in a release.
 
 ## Releases
 
+- **[v0.3.0]** — see [docs/release-notes/v0.3.0.md](docs/release-notes/v0.3.0.md).
 - **v0.2.2** — see [docs/release-notes/v0.2.2.md](docs/release-notes/v0.2.2.md).
 - **v0.2.1** — see [docs/release-notes/v0.2.1.md](docs/release-notes/v0.2.1.md).
 - **v0.2.0** — see [docs/release-notes/v0.2.0.md](docs/release-notes/v0.2.0.md).
 - **v0.1.0** — see [docs/release-notes/v0.1.0.md](docs/release-notes/v0.1.0.md).
 - **v0.0.1** — see [docs/release-notes/v0.0.1.md](docs/release-notes/v0.0.1.md) (historical foundation milestone).
 
-[Unreleased]: https://github.com/Estance-Labs/corrobore/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/Estance-Labs/corrobore/compare/v0.3.0...HEAD
+[v0.3.0]: https://github.com/Estance-Labs/corrobore/compare/v0.2.2...v0.3.0
