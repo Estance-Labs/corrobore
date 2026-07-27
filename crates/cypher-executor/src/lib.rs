@@ -29,8 +29,8 @@
 use std::{cmp::Ordering, collections::HashMap};
 
 use cypher_parser::{
-    ComparisonOperator, LiteralValue, ParseErrorCode, ParsedQuery, ProjectionItem, PropertyRef,
-    QueryAst, QueryKind, WhereExpression, parse_query,
+    ComparisonOperator, LiteralValue, ParameterBindings, ParseErrorCode, ParsedQuery,
+    ProjectionItem, PropertyRef, QueryAst, QueryKind, WhereExpression, parse_query_with_parameters,
 };
 use cypher_planner::{build_function_call_plan, build_logical_plan};
 use function_registry::{FunctionRegistry, FunctionValue, ModelFunctionAdapter, RegistryError};
@@ -182,7 +182,16 @@ impl CypherPipelineExecutor {
 
     /// Validates and plans a query without evaluating it against graph state.
     pub fn validate(&self, query_text: &str) -> Result<ExecutionResult, ExecutionError> {
-        let _ast = parse_and_plan_query(query_text)?;
+        self.validate_with_parameters(query_text, &ParameterBindings::new())
+    }
+
+    /// Validates and plans a parameterized query without evaluating it.
+    pub fn validate_with_parameters(
+        &self,
+        query_text: &str,
+        parameters: &ParameterBindings,
+    ) -> Result<ExecutionResult, ExecutionError> {
+        let _ast = parse_and_plan_query(query_text, parameters)?;
 
         Ok(ExecutionResult {
             status: ExecutionStatus::Success,
@@ -196,14 +205,26 @@ impl CypherPipelineExecutor {
     //
     // The executor keeps the parser->planner->execution flow explicit and
     // deterministic so gateway integration can rely on stable contracts.
-    /// Execute.
-    #[instrument(skip(self, query_text), fields(query_len = query_text.len()))]
+    /// Executes a query that carries no parameters.
     pub fn execute(&mut self, query_text: &str) -> Result<ExecutionResult, ExecutionError> {
+        self.execute_with_parameters(query_text, &ParameterBindings::new())
+    }
+
+    /// Executes a query, resolving `$name` placeholders from `parameters`.
+    ///
+    /// Values are handed to the parser as typed bindings rather than spliced into
+    /// `query_text`, so a parameter can never contribute syntax.
+    #[instrument(skip(self, query_text, parameters), fields(query_len = query_text.len(), parameter_count = parameters.len()))]
+    pub fn execute_with_parameters(
+        &mut self,
+        query_text: &str,
+        parameters: &ParameterBindings,
+    ) -> Result<ExecutionResult, ExecutionError> {
         debug!(
             read_only_by_default = self.policy.read_only_by_default,
             "executing cypher query"
         );
-        let ast = parse_and_plan_query(query_text)?;
+        let ast = parse_and_plan_query(query_text, parameters)?;
         trace!(query_kind = ?ast.kind, "parsed cypher query");
 
         // Reject any query with write semantics under read-only policy.
@@ -826,18 +847,18 @@ impl CypherPipelineExecutor {
         let nodes = self.graph.list_nodes().map_err(|error| {
             ExecutionError::InvalidQuery(format!("graph traversal failed: {error}"))
         })?;
-        let rows = nodes
-            .into_iter()
-            .filter(|node| node_pattern_matches(node, &match_clause.start))
-            .map(|node| {
-                let mut row = ExecutionRow::new();
-                row.bindings.insert(
-                    match_clause.start.variable.clone(),
-                    BindingValue::Node(node),
-                );
-                row
-            })
-            .collect::<Vec<ExecutionRow>>();
+        let mut rows = Vec::new();
+        for node in nodes {
+            if !node_pattern_matches(&node, &match_clause.start) {
+                continue;
+            }
+            let mut row = ExecutionRow::new();
+            row.bindings.insert(
+                match_clause.start.variable.clone(),
+                BindingValue::Node(node),
+            );
+            rows.push(row);
+        }
 
         Ok(rows)
     }
@@ -1234,15 +1255,23 @@ fn literal_to_property_value(literal: &LiteralValue) -> PropertyValue {
     }
 }
 
-fn parse_and_plan_query(query_text: &str) -> Result<QueryAst, ExecutionError> {
-    let ast = parse_query(query_text).map_err(|parse_error| match parse_error.code {
-        ParseErrorCode::EmptyQuery => {
-            ExecutionError::InvalidQuery("query text must not be empty".to_owned())
-        }
-        ParseErrorCode::UnsupportedFeature | ParseErrorCode::InvalidSyntax => {
-            ExecutionError::InvalidQuery(parse_error.message)
-        }
-    })?;
+fn parse_and_plan_query(
+    query_text: &str,
+    parameters: &ParameterBindings,
+) -> Result<QueryAst, ExecutionError> {
+    let ast =
+        parse_query_with_parameters(query_text, parameters).map_err(
+            |parse_error| match parse_error.code {
+                ParseErrorCode::EmptyQuery => {
+                    ExecutionError::InvalidQuery("query text must not be empty".to_owned())
+                }
+                ParseErrorCode::UnsupportedFeature
+                | ParseErrorCode::InvalidSyntax
+                | ParseErrorCode::InvalidParameter => {
+                    ExecutionError::InvalidQuery(parse_error.message)
+                }
+            },
+        )?;
     let _plan = build_logical_plan(&ast);
     Ok(ast)
 }

@@ -24,7 +24,7 @@ use graph_core::{SessionId, WorkspaceId};
 use shared_runtime::{
     CypherAuditReference, CypherBudgetRef, CypherFixHint, CypherMutationSummary, CypherParameters,
     CypherRequest, CypherRequestMode, CypherResponse, CypherResponseData, CypherResponseStatus,
-    CypherValidationError, RuntimeError,
+    CypherValidationError, CypherValue, RuntimeError,
 };
 
 fn workspace_id() -> WorkspaceId {
@@ -41,12 +41,14 @@ fn budget_ref() -> CypherBudgetRef {
 
 #[test]
 fn build_read_only_request_sets_expected_mode_and_context() {
+    // `LIMIT` takes a row count, so the binding carries an integer rather than
+    // text: the type survives all the way to the executor.
     let mut params = HashMap::new();
-    params.insert("limit".to_owned(), "25".to_owned());
+    params.insert("limit".to_owned(), CypherValue::Integer(25));
 
     let request = CypherRequest::build_read_only_request(
         "MATCH (n) RETURN n LIMIT $limit",
-        CypherParameters::new(params.clone()),
+        CypherParameters::typed(params.clone()),
         workspace_id(),
         session_id(),
         budget_ref(),

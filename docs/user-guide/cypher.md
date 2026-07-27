@@ -67,7 +67,21 @@ Use `/v1/cypher/write` or `CorroboreEngine::write`. A write route does not overr
 
 ## Parameters and modes
 
-HTTP requests accept a `params` JSON object alongside `query`. The shared runtime binds string-valued parameters outside quoted literals and escapes them as Cypher string literals; an undeclared placeholder rejects the request. The HTTP adapter validates JSON values before conversion.
+HTTP requests accept a `params` JSON object alongside `query`. Each `$name` placeholder is resolved into a typed value at the position where it appears, so a parameter is never assembled into the query text and cannot contribute syntax.
+
+JSON scalar types are preserved end to end:
+
+| JSON value | Bound as | Usable where |
+| :--- | :--- | :--- |
+| string | text | property values, comparisons |
+| integer number | integer | comparisons, `SKIP`, `LIMIT` |
+| fractional number | decimal (lossless source text) | comparisons |
+| boolean | boolean | comparisons |
+| `null` | null | comparisons, `IS NULL` checks |
+
+Arrays and objects have no scalar equivalent in the supported subset and are rejected with `UNSUPPORTED_PARAMETER_TYPE`.
+
+Because types are preserved, a placeholder must match its position: `LIMIT $n` requires an integer, and binding the string `"10"` there is a rejected request rather than a query that silently returns the wrong rows. An undeclared placeholder is also rejected rather than dropped.
 
 `POST /v1/cypher/execute` accepts `mode` values `read`, `write`, `validate`, or `auto`. `auto` detects mutation keywords. Validate-only mode currently has a known defect tracked in issue #228 and must not be relied on for mutation safety; use the explicit read route or a read-only policy.
 

@@ -3100,6 +3100,7 @@ name = "shared-runtime"
 version = "0.3.0"
 dependencies = [
  "cypher-executor",
+ "cypher-parser",
  "graph-core",
  "serde",
  "thiserror 2.0.18",
