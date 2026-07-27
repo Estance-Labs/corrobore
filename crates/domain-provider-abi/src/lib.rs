@@ -12,7 +12,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const CORROBORE_DOMAIN_PROVIDER_ABI_MAJOR_V1: u16 = 1;
-pub const CORROBORE_DOMAIN_PROVIDER_ABI_MINOR_V1: u16 = 0;
+// Minor 1 adds the `medical` and `research` domain names. The change is purely
+// additive: every field layout, function pointer, and status code is unchanged,
+// so a host built against minor 0 keeps loading existing providers.
+pub const CORROBORE_DOMAIN_PROVIDER_ABI_MINOR_V1: u16 = 1;
 pub const CORROBORE_DOMAIN_PROVIDER_ENTRYPOINT_V1: &[u8] =
     b"corrobore_domain_provider_get_api_v1\0";
 pub const SCHEMA_V1: &str = "1";
@@ -75,6 +78,10 @@ pub enum DomainName {
     Cti,
     Fimi,
     Crisis,
+    /// Clinical and biomedical evidence pack (open source, MIT).
+    Medical,
+    /// Academic and scientific research pack (open source, MIT).
+    Research,
 }
 
 impl DomainName {
@@ -84,6 +91,8 @@ impl DomainName {
             Self::Cti => "cti",
             Self::Fimi => "fimi",
             Self::Crisis => "crisis",
+            Self::Medical => "medical",
+            Self::Research => "research",
         }
     }
 }

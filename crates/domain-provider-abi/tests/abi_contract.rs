@@ -15,7 +15,7 @@ use serde_json::json;
 #[test]
 fn abi_v1_contract_has_stable_version_and_entrypoint() {
     assert_eq!(CORROBORE_DOMAIN_PROVIDER_ABI_MAJOR_V1, 1);
-    assert_eq!(CORROBORE_DOMAIN_PROVIDER_ABI_MINOR_V1, 0);
+    assert_eq!(CORROBORE_DOMAIN_PROVIDER_ABI_MINOR_V1, 1);
     assert_eq!(
         CORROBORE_DOMAIN_PROVIDER_ENTRYPOINT_V1,
         b"corrobore_domain_provider_get_api_v1\0"
