@@ -30,7 +30,7 @@ enterprise-fimi = []
 [dependencies]
 axum = { workspace = true }
 axum-server = { workspace = true }
-base64 = "0.22"
+base64 = "0.23"
 chrono = { workspace = true }
 clap = { workspace = true }
 corrobore-engine = { path = "../corrobore-engine" }
