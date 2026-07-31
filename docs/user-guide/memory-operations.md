@@ -182,5 +182,6 @@ unknown optional response fields. The shared machine-readable fixtures live in
 `compatibility/memory/v1/conformance.json` and are exercised for both embedded
 and standalone adapters.
 
-See also [HTTP Server](http-server.md), [Embedded Engine](embedded-engine.md),
-and [Cypher Support](cypher.md).
+See also [Agent Memory Lifecycle](agent-memory-lifecycle.md),
+[HTTP Server](http-server.md), [Embedded Engine](embedded-engine.md), and
+[Cypher Support](cypher.md).
