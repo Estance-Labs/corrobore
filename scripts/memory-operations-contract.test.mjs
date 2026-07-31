@@ -58,6 +58,37 @@ test('standalone route, OpenAPI, guide, and trusted configuration stay aligned',
   }
 });
 
+test('agent lifecycle guide keeps memory governance explicit and navigable', () => {
+  const guide = read('docs/user-guide/agent-memory-lifecycle.md');
+  const navigation = read('mkdocs.yml');
+
+  assert.match(navigation, /Agent Memory Lifecycle: user-guide\/agent-memory-lifecycle\.md/);
+  for (const operation of [
+    'remember',
+    'relate',
+    'recall',
+    'update',
+    'forget',
+    'consolidate',
+    'trace',
+  ]) {
+    assert.match(guide, new RegExp(`\\b${operation}\\b`));
+  }
+  for (const kind of ['working_state', 'episode', 'claim', 'fact', 'procedure', 'source']) {
+    assert.match(guide, new RegExp(`\\b${kind}\\b`));
+  }
+  for (const status of ['candidate', 'validated', 'contested', 'rejected']) {
+    assert.match(guide, new RegExp(`\\b${status}\\b`));
+  }
+  assert.match(guide, /application-owned conventions/i);
+  assert.match(guide, /confidence is not proof/i);
+  assert.match(guide, /never silently (?:delete|overwrite)/i);
+  assert.match(guide, /hot.*warm.*cold/is);
+  assert.match(guide, /canonical.*shadow.*quarantine.*hypothesis/is);
+  assert.match(guide, /\[High-level Memory Operations\]\(memory-operations\.md\)/);
+  assert.match(guide, /\[For LLM Agents\]\(\.\.\/for-llms\.md\)/);
+});
+
 test('shared v1 conformance corpus covers every operation without Cypher', () => {
   const corpus = JSON.parse(read('compatibility/memory/v1/conformance.json'));
   assert.equal(corpus.contract_version, 'v1');

@@ -82,6 +82,7 @@ nav:
   - Architecture: architecture.md
   - User Guide:
     - High-level Memory Operations: user-guide/memory-operations.md
+    - Agent Memory Lifecycle: user-guide/agent-memory-lifecycle.md
     - Cypher Support: user-guide/cypher.md
     - Intelligence Domains: user-guide/domains.md
     - Domain Provider Operations: user-guide/domain-provider-operations.md
