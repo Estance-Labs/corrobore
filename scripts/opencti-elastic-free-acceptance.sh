@@ -44,7 +44,9 @@ trap cleanup EXIT
 run_contracts() {
   note "validating distribution contracts"
   node --test scripts/opencti-elastic-free-contract.test.mjs
-  bash -n scripts/opencti-elastic-free-migrate.sh scripts/opencti-elastic-free-acceptance.sh
+  bash -n scripts/opencti-elastic-free-migrate.sh scripts/opencti-elastic-free-acceptance.sh scripts/opencti-elastic-free-demo-data.sh
+  sh -n packaging/opencti-elastic-free/opencti-demo-data-entrypoint.sh
+  python3 -c 'compile(open("packaging/opencti-elastic-free/opencti-demo-data-loader.py", encoding="utf-8").read(), "opencti-demo-data-loader.py", "exec")'
   compose config --quiet
   local rendered="${ARTIFACT_DIR}/compose-rendered.yml"
   compose config >"${rendered}"
@@ -157,6 +159,10 @@ run_stack() {
   compose up -d --wait
   local startup_seconds=$((SECONDS - started))
   wait_for_opencti
+  OPENCTI_CORROBORE_COMPOSE_FILE="${COMPOSE_FILE}" \
+    OPENCTI_CORROBORE_ENV_FILE="${COMPOSE_ENV_FILE}" \
+    OPENCTI_CORROBORE_PROJECT_NAME="${PROJECT_NAME}" \
+    scripts/opencti-elastic-free-demo-data.sh
   compose ps --services --status running >"${ARTIFACT_DIR}/running-services.txt"
   [[ "$(grep -Ec '^(opencti|worker|corrobore|file-worker|redis|rabbitmq|minio)$' "${ARTIFACT_DIR}/running-services.txt")" -eq 7 ]] ||
     fail "not every supported service is running"

@@ -3,7 +3,7 @@
   "database_engine": "corrobore",
   "opencti": {
     "version": "7.260722.0",
-    "commit": "df63a5107602a41aa8259e1d566532e36218c2a0",
+    "commit": "cba9785b6b32093cfa645a1bacc9243c0d771260",
     "upstream_commit": "e41adc1c3fd98a849602db33dbe550f689fe6d83",
     "repository": "https://github.com/Estance-Labs/opencti.git",
     "provider_branch": "rds/corrobore-provider-7.260722.0",

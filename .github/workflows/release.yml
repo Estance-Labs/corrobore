@@ -153,6 +153,7 @@ jobs:
             packaging/opencti-elastic-free \
             scripts/opencti-elastic-free-migrate.sh \
             scripts/opencti-elastic-free-acceptance.sh \
+            scripts/opencti-elastic-free-demo-data.sh \
             docs/user-guide/opencti-elastic-free-operations.md \
             docs/acceptance/opencti-elastic-free.md
           sha256sum opencti-elastic-free-${{ github.ref_name }}.tar.gz > opencti-elastic-free-${{ github.ref_name }}.sha256

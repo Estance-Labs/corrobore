@@ -40,7 +40,9 @@ jobs:
       - name: Validate distribution and migration contracts
         run: |
           node --test scripts/opencti-elastic-free-contract.test.mjs
-          bash -n scripts/opencti-elastic-free-migrate.sh scripts/opencti-elastic-free-acceptance.sh
+          bash -n scripts/opencti-elastic-free-migrate.sh scripts/opencti-elastic-free-acceptance.sh scripts/opencti-elastic-free-demo-data.sh
+          sh -n packaging/opencti-elastic-free/opencti-demo-data-entrypoint.sh
+          python3 -c 'compile(open("packaging/opencti-elastic-free/opencti-demo-data-loader.py", encoding="utf-8").read(), "opencti-demo-data-loader.py", "exec")'
 
       - name: Use Node.js 22 for the pinned OpenCTI provider
         uses: actions/setup-node@v6
@@ -50,8 +52,8 @@ jobs:
       - name: Verify the provider from the pinned Estance OpenCTI fork
         run: |
           git clone --filter=blob:none --no-checkout https://github.com/Estance-Labs/opencti.git /tmp/opencti
-          git -C /tmp/opencti fetch --depth 1 origin df63a5107602a41aa8259e1d566532e36218c2a0
-          git -C /tmp/opencti checkout --detach df63a5107602a41aa8259e1d566532e36218c2a0
+          git -C /tmp/opencti fetch --depth 1 origin cba9785b6b32093cfa645a1bacc9243c0d771260
+          git -C /tmp/opencti checkout --detach cba9785b6b32093cfa645a1bacc9243c0d771260
           cd /tmp/opencti/opencti-platform/opencti-graphql
           corepack enable
           yarn install --immutable

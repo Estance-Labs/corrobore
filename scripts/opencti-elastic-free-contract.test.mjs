@@ -41,7 +41,7 @@ test("the shipped OpenCTI stack is pinned, Corrobore-backed, and Elastic-free", 
 
   const compatibility = JSON.parse(manifest);
   assert.equal(compatibility.opencti.version, "7.260722.0");
-  assert.equal(compatibility.opencti.commit, "df63a5107602a41aa8259e1d566532e36218c2a0");
+  assert.equal(compatibility.opencti.commit, "cba9785b6b32093cfa645a1bacc9243c0d771260");
   assert.equal(compatibility.opencti.upstream_commit, "e41adc1c3fd98a849602db33dbe550f689fe6d83");
   assert.equal(compatibility.opencti.repository, "https://github.com/Estance-Labs/opencti.git");
   assert.equal(compatibility.opencti.base_image, "docker.io/opencti/platform@sha256:636bbb791c512cfa4c55be3d934622c2996db7edc841e3391c9428752009a7ee");
@@ -65,7 +65,7 @@ test("the native OpenCTI provider is source-locked to the Estance fork", async (
 
   for (const expected of [
     "https://github.com/Estance-Labs/opencti.git",
-    "df63a5107602a41aa8259e1d566532e36218c2a0",
+    "cba9785b6b32093cfa645a1bacc9243c0d771260",
     "docker.io/opencti/platform@sha256:636bbb791c512cfa4c55be3d934622c2996db7edc841e3391c9428752009a7ee",
     "corrobore-provider-test.ts",
     "DATABASE_ENGINE",
@@ -74,7 +74,7 @@ test("the native OpenCTI provider is source-locked to the Estance fork", async (
   }
   for (const expected of [
     "https://github.com/Estance-Labs/opencti.git",
-    "df63a5107602a41aa8259e1d566532e36218c2a0",
+    "cba9785b6b32093cfa645a1bacc9243c0d771260",
     "corrobore-provider-test.ts",
     "yarn get-connectors-manifest",
     "yarn check-ts",
@@ -85,6 +85,299 @@ test("the native OpenCTI provider is source-locked to the Estance fork", async (
     workflow.indexOf("yarn get-connectors-manifest") < workflow.indexOf("yarn check-ts"),
     "source verification should generate the OpenCTI manifest before type-checking",
   );
+});
+
+test("the source-locked OpenCTI image ships only the approved versioned demo inputs", async () => {
+  const [dockerfile, containerLoader, pythonLoader] = await Promise.all([
+    read("packaging/opencti-elastic-free/Dockerfile.opencti"),
+    read("packaging/opencti-elastic-free/opencti-demo-data-entrypoint.sh"),
+    read("packaging/opencti-elastic-free/opencti-demo-data-loader.py"),
+  ]);
+
+  for (const expected of [
+    "/opt/opencti/src/python/testing/local_importer.py",
+    "/opt/opencti/tests/data/corrobore-demo.json",
+    "/usr/local/bin/opencti-load-demo-data",
+    "/usr/local/lib/opencti-demo-data-loader.py",
+  ]) {
+    assert.ok(dockerfile.includes(expected), `OpenCTI image should include ${expected}`);
+  }
+  assert.doesNotMatch(dockerfile, /DATA-TEST-STIX2_v2\.json/);
+  assert.ok(containerLoader.includes('DEFAULT_DATASETS="corrobore-demo"'));
+  assert.ok(containerLoader.includes("/usr/local/lib/opencti-demo-data-loader.py"));
+  assert.ok(containerLoader.includes("/run/secrets/opencti-admin-token"));
+  assert.doesNotMatch(containerLoader, /local_importer\.py.*APP__ADMIN__TOKEN/);
+  assert.ok(pythonLoader.includes("from local_importer import TestLocalImporter"));
+  assert.ok(pythonLoader.includes("corrobore-demo"));
+  assert.doesNotMatch(pythonLoader, /DATA-TEST-STIX2_v2/);
+  assert.ok(pythonLoader.includes('os.environ["APP__ADMIN__TOKEN"]'));
+});
+
+test("the Python demo loader bootstraps identity references before the full bundle", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "corrobore-opencti-demo-identities-"));
+  const importer = join(temporary, "importer");
+  const data = join(temporary, "data");
+  const pycti = join(temporary, "pycti");
+  const events = join(temporary, "events");
+  await mkdir(importer);
+  await mkdir(data);
+  await mkdir(pycti);
+  await writeFile(join(importer, "local_importer.py"), `import os
+from pathlib import Path
+class TestLocalImporter:
+    def __init__(self, *_args):
+        pass
+    def inject(self):
+        path = Path(os.environ["OPENCTI_DEMO_TEST_EVENTS"])
+        with path.open("a") as handle:
+            handle.write("bundle\\n")
+`);
+  await writeFile(join(pycti, "__init__.py"), `import os
+from pathlib import Path
+class Identity:
+    def import_from_stix2(self, *, stixObject, extras, update):
+        path = Path(os.environ["OPENCTI_DEMO_TEST_EVENTS"])
+        with path.open("a") as handle:
+            handle.write("identity:" + stixObject["id"] + "\\n")
+        return {"id": "internal--1"}
+class OpenCTIApiClient:
+    def __init__(self, *_args):
+        self.identity = Identity()
+`);
+  await writeFile(join(data, "corrobore-demo.json"), JSON.stringify({
+    type: "bundle",
+    objects: [
+      { type: "malware", id: "malware--1", name: "Demo" },
+      { type: "identity", id: "identity--1", identity_class: "organization", name: "Demo Org" },
+    ],
+  }));
+  try {
+    await execute("python3", [
+      "packaging/opencti-elastic-free/opencti-demo-data-loader.py",
+      "corrobore-demo",
+    ], {
+      cwd: fileURLToPath(root),
+      env: {
+        ...process.env,
+        APP__ADMIN__TOKEN: "test-token",
+        OPENCTI_DEMO_IMPORTER_DIR: importer,
+        OPENCTI_DEMO_DATA_DIR: data,
+        OPENCTI_DEMO_TEST_EVENTS: events,
+        PYTHONPATH: temporary,
+      },
+    });
+    assert.equal(await readFile(events, "utf8"), "identity:identity--1\nbundle\n");
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test("the versioned demo bundle contains only independently importable CTI entities", async () => {
+  const bundle = JSON.parse(await read("packaging/opencti-elastic-free/demo-data/corrobore-demo.json"));
+  assert.equal(bundle.type, "bundle");
+  assert.deepEqual(bundle.objects.map(({ type }) => type).sort(), ["identity", "indicator", "malware"]);
+  assert.ok(bundle.objects.every(({ type }) => type !== "relationship" && type !== "report"));
+});
+
+test("the Python demo loader reconciles a transient partial import with a clean pass", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "corrobore-opencti-demo-reconcile-"));
+  const importer = join(temporary, "importer");
+  const data = join(temporary, "data");
+  const calls = join(temporary, "calls");
+  await mkdir(importer);
+  await mkdir(data);
+  await writeFile(join(importer, "local_importer.py"), `import logging
+import os
+from pathlib import Path
+class TestLocalImporter:
+    def __init__(self, *_args):
+        pass
+    def inject(self):
+        calls = Path(os.environ["OPENCTI_DEMO_TEST_CALLS"])
+        count = int(calls.read_text() if calls.exists() else "0") + 1
+        calls.write_text(str(count))
+        if count == 1:
+            logging.getLogger("worker").error("dependency not imported yet")
+`);
+  await writeFile(join(data, "corrobore-demo.json"), "{}\n");
+  try {
+    const result = await execute("python3", [
+      "packaging/opencti-elastic-free/opencti-demo-data-loader.py",
+      "corrobore-demo",
+    ], {
+      cwd: fileURLToPath(root),
+      env: {
+        ...process.env,
+        APP__ADMIN__TOKEN: "test-token",
+        OPENCTI_DEMO_IMPORTER_DIR: importer,
+        OPENCTI_DEMO_DATA_DIR: data,
+        OPENCTI_DEMO_TEST_CALLS: calls,
+      },
+    });
+    assert.equal(await readFile(calls, "utf8"), "2");
+    assert.match(result.stdout, /succeeded/);
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test("the Python demo loader fails when the upstream importer reports persistent partial errors", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "corrobore-opencti-demo-python-"));
+  const importer = join(temporary, "importer");
+  const data = join(temporary, "data");
+  await mkdir(importer);
+  await mkdir(data);
+  await writeFile(join(importer, "local_importer.py"), `import logging
+class TestLocalImporter:
+    def __init__(self, *_args):
+        pass
+    def inject(self):
+        logging.getLogger("worker").error("partial object import failed")
+`);
+  await writeFile(join(data, "corrobore-demo.json"), "{}\n");
+  try {
+    await assert.rejects(
+      execute("python3", [
+        "packaging/opencti-elastic-free/opencti-demo-data-loader.py",
+        "corrobore-demo",
+      ], {
+        cwd: fileURLToPath(root),
+        env: {
+          ...process.env,
+          APP__ADMIN__TOKEN: "test-token",
+          OPENCTI_DEMO_IMPORTER_DIR: importer,
+          OPENCTI_DEMO_DATA_DIR: data,
+        },
+      }),
+      (error) => {
+        assert.match(error.stderr, /failed after 3 passes.*1 error/i);
+        return true;
+      },
+    );
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test("the demo loader defaults to the pinned datasets without exposing a secret", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "corrobore-opencti-demo-loader-"));
+  const bin = join(temporary, "bin");
+  const calls = join(temporary, "docker-calls");
+  await mkdir(bin);
+  await writeFile(join(bin, "docker"), `#!/usr/bin/env bash
+printf 'CALL' >>"\${DOCKER_CALLS}"
+printf '\\t%s' "$@" >>"\${DOCKER_CALLS}"
+printf '\\n' >>"\${DOCKER_CALLS}"
+exit 0
+`, { mode: 0o700 });
+  try {
+    const { stdout, stderr } = await execute("bash", ["scripts/opencti-elastic-free-demo-data.sh"], {
+      cwd: fileURLToPath(root),
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        DOCKER_CALLS: calls,
+        OPENCTI_CORROBORE_COMPOSE_FILE: "/distribution/compose.yml",
+        OPENCTI_CORROBORE_ENV_FILE: "/distribution/runtime.env",
+        OPENCTI_CORROBORE_PROJECT_NAME: "demo-acceptance",
+        OPENCTI_ADMIN_TOKEN: "must-not-leak",
+      },
+    });
+    const invocations = await readFile(calls, "utf8");
+    assert.match(invocations, /--project-name\tdemo-acceptance/);
+    assert.match(invocations, /--env-file\t\/distribution\/runtime\.env/);
+    assert.match(invocations, /-f\t\/distribution\/compose\.yml/);
+    assert.match(invocations, /exec\t-T\topencti\tnode\t-e/);
+    assert.match(invocations, /exec\t-T\topencti\t\/usr\/local\/bin\/opencti-load-demo-data\tcorrobore-demo/);
+    assert.doesNotMatch(`${stdout}${stderr}${invocations}`, /must-not-leak/);
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test("the demo loader rejects unsafe dataset names before invoking Docker", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "corrobore-opencti-demo-rejection-"));
+  const bin = join(temporary, "bin");
+  const called = join(temporary, "docker-was-called");
+  await mkdir(bin);
+  await writeFile(join(bin, "docker"), `#!/usr/bin/env bash
+touch "\${DOCKER_WAS_CALLED}"
+exit 99
+`, { mode: 0o700 });
+  try {
+    await assert.rejects(
+      execute("bash", ["scripts/opencti-elastic-free-demo-data.sh", "../customer-export"], {
+        cwd: fileURLToPath(root),
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH}`,
+          DOCKER_WAS_CALLED: called,
+        },
+      }),
+      (error) => {
+        assert.match(error.stderr, /unsupported demo dataset/);
+        return true;
+      },
+    );
+    await assert.rejects(readFile(called), { code: "ENOENT" });
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test("the in-container demo loader propagates import failures and keeps the token out of arguments", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "corrobore-opencti-demo-container-"));
+  const bin = join(temporary, "bin");
+  const token = join(temporary, "admin-token");
+  const calls = join(temporary, "python-calls");
+  await mkdir(bin);
+  await writeFile(token, "container-secret\n");
+  await writeFile(join(bin, "python3"), `#!/usr/bin/env sh
+test "\${APP__ADMIN__TOKEN}" = "container-secret" || exit 90
+printf '%s\\n' "$*" >"\${NODE_CALLS}"
+`, { mode: 0o700 });
+  const environment = {
+    ...process.env,
+    PATH: `${bin}:${process.env.PATH}`,
+    NODE_CALLS: calls,
+    OPENCTI_ADMIN_TOKEN_FILE: token,
+  };
+  try {
+    const success = await execute("sh", [
+      "packaging/opencti-elastic-free/opencti-demo-data-entrypoint.sh",
+      "corrobore-demo",
+    ], { cwd: fileURLToPath(root), env: environment });
+    assert.match(await readFile(calls, "utf8"), /\/usr\/local\/lib\/opencti-demo-data-loader\.py corrobore-demo/);
+    assert.doesNotMatch(`${success.stdout}${success.stderr}${await readFile(calls, "utf8")}`, /container-secret/);
+
+    await assert.rejects(
+      execute("sh", ["packaging/opencti-elastic-free/opencti-demo-data-entrypoint.sh", "corrobore-demo,"], {
+        cwd: fileURLToPath(root),
+        env: environment,
+      }),
+      (error) => {
+        assert.match(error.stderr, /unsupported demo dataset/);
+        return true;
+      },
+    );
+
+    await writeFile(join(bin, "python3"), `#!/usr/bin/env sh
+printf '%s\\n' 'pinned importer failed' >&2
+exit 42
+`, { mode: 0o700 });
+    await assert.rejects(
+      execute("sh", ["packaging/opencti-elastic-free/opencti-demo-data-entrypoint.sh"], {
+        cwd: fileURLToPath(root),
+        env: environment,
+      }),
+      (error) => {
+        assert.match(error.stderr, /OpenCTI demo data import failed/);
+        return true;
+      },
+    );
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
 });
 
 test("OpenCTI runtime secrets include the mandatory encryption key", async () => {
@@ -235,6 +528,7 @@ test("acceptance, operations, and release automation cover the exact distributio
   assert.ok(harness.includes("memory_reduction_lower_bound_bytes"));
   assert.ok(harness.includes("comparison"));
   assert.ok(harness.includes("OPENCTI_CORROBORE_ENV_FILE"));
+  assert.ok(harness.includes("scripts/opencti-elastic-free-demo-data.sh"));
   assert.ok(harness.includes("matrix-evidence.json"));
   assert.doesNotMatch(harness, /OPENCTI_UPSTREAM_ACCEPTANCE_COMMAND/);
   assert.ok(harness.includes('if type == "number" then .'));
@@ -259,6 +553,8 @@ test("acceptance, operations, and release automation cover the exact distributio
   ]) {
     assert.ok(operations.includes(signal), `operations guide should cover ${signal}`);
   }
+  assert.ok(operations.includes("The default selection is `corrobore-demo`"));
+  assert.match(operations, /demonstration data is for disposable evaluation environments only/i);
   assert.doesNotMatch(matrix, /Supplying a stub|\/opt\/opencti-tests\/run/);
   for (const expected of [
     "timeout-minutes:",
@@ -272,4 +568,5 @@ test("acceptance, operations, and release automation cover the exact distributio
     assert.ok(workflow.includes(expected), `workflow should include ${expected}`);
   }
   assert.ok(release.includes("opencti-elastic-free"));
+  assert.ok(release.includes("scripts/opencti-elastic-free-demo-data.sh"));
 });
