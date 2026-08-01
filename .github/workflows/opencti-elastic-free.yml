@@ -43,7 +43,7 @@ jobs:
           bash -n scripts/opencti-elastic-free-migrate.sh scripts/opencti-elastic-free-acceptance.sh
 
       - name: Use Node.js 22 for the pinned OpenCTI provider
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
