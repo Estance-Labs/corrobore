@@ -13,7 +13,7 @@ name = "opencti_search"
 path = "src/lib.rs"
 
 [dependencies]
-base64 = "0.22"
+base64 = "0.23"
 graph-core = { path = "../graph-core" }
 hmac = { workspace = true }
 opencti-access = { path = "../opencti-access" }
