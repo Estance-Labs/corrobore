@@ -55,7 +55,7 @@ criterion = { version = "0.5", default-features = false, features = ["cargo_benc
 dotenvy = "0.15"
 fs4 = "0.13"
 getrandom = "0.4"
-hmac = "0.12"
+hmac = "0.13"
 http-body-util = "0.1"
 nom = "8"
 lopdf = "0.44"
