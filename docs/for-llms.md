@@ -93,7 +93,7 @@ authorization.
 
 `POST /v1/stix/validate` accepts either an explicit bundle or current graph CTI nodes. For explicit bundles, built-in playbooks may correct supported missing fields; corrected objects are imported whenever at least one playbook runs. `valid` reports whether the validation pass found an error, not a second verdict after fixes. Inspect `issues`, `playbooks_applied`, `corrections_summary`, and `persistence`, then revalidate when you need a post-correction verdict.
 
-Use `GET /v1/export/stix` for deterministic STIX projection after validation. Logical export metadata identifies the snapshot and transaction, but the current HTTP export does not roll the graph back in time.
+Use `GET /v1/export/stix` for deterministic, CTI-scoped STIX projection after validation. The route fails closed unless the licensed CTI provider is ready. Strict mode returns named readiness failures; permissive mode returns bounded `export_diagnostics.exclusions`. Preserve the returned object identities and `x_corrobore_evidence_refs` instead of inventing replacements. Logical export metadata identifies the snapshot and transaction, but the current HTTP export does not roll the graph back in time.
 
 ## Recover safely
 

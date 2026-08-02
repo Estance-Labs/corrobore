@@ -231,6 +231,7 @@ pub use expansion_budget::{
 pub use export_metadata::{ExportMetadata, ExportMode, ExportProfile, ValidationReportRef};
 pub use export_plan::{
     DeterministicExportPlan, ExportRecord, ExportRecordKind, build_deterministic_export_plan,
+    node_eligible_for_export_profile,
 };
 pub use graph::{Graph, GraphPersistenceSnapshot, GraphSequenceFloor};
 pub use graph_pager::{

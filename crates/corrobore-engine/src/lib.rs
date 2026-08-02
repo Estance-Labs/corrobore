@@ -69,8 +69,8 @@ use std::collections::{BTreeMap, HashMap};
 
 use export_stix::{StixExportBundle, export_stix_subset_bundle};
 use graph_core::{
-    ExportMetadata, Graph, GraphSemanticSeedResolver, SessionId, TransactionId, WorkspaceId,
-    build_deterministic_export_plan,
+    ExportMetadata, Graph, GraphSemanticSeedResolver, SessionId, TransactionId,
+    ValidationErrorRecord, WorkspaceId, build_deterministic_export_plan,
 };
 pub use graph_core::{
     ExportMode, ExportProfile, GraphError, SemanticDomainProfile, SemanticSeedCandidate,
@@ -799,6 +799,20 @@ impl CorroboreEngine {
         &self,
         options: &StixExportOptions,
     ) -> Result<StixExportBundle, EngineError> {
+        self.export_stix_bundle_with_findings(options, &[])
+    }
+
+    /// Exports the current graph after applying caller-supplied, graph-addressed
+    /// validation findings to the deterministic CTI selection.
+    ///
+    /// HTTP hosts use this boundary to pass the verdict of their licensed CTI
+    /// provider. Embedded callers that operate their own provider can do the
+    /// same without coupling the engine crate to one provider deployment.
+    pub fn export_stix_bundle_with_findings(
+        &self,
+        options: &StixExportOptions,
+        findings: &[ValidationErrorRecord],
+    ) -> Result<StixExportBundle, EngineError> {
         let transaction_id =
             TransactionId::new(options.transaction_id.clone()).map_err(|error| {
                 EngineError::InvalidConfiguration {
@@ -817,7 +831,7 @@ impl CorroboreEngine {
         )
         .map_err(|error| EngineError::Export(error.to_string()))?;
 
-        let plan = build_deterministic_export_plan(self.gateway.graph(), metadata, &[])
+        let plan = build_deterministic_export_plan(self.gateway.graph(), metadata, findings)
             .map_err(|error| EngineError::Export(error.to_string()))?;
 
         Ok(export_stix_subset_bundle(self.gateway.graph(), &plan))

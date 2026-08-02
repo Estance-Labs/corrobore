@@ -18,11 +18,12 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
-    EvidenceId, ExportMetadata, ExportMode, Graph, GraphError, RecordStatus, ValidationErrorRecord,
-    ValidationErrorSeverity, ValidationTarget,
+    Confidence, EvidenceId, ExportMetadata, ExportMode, ExportProfile, Graph, GraphError, Node,
+    PropertyValue, RecordStatus, Relationship, ValidationErrorRecord, ValidationErrorSeverity,
+    ValidationTarget,
 };
 
 /// Deterministic export record category.
@@ -121,12 +122,56 @@ pub fn build_deterministic_export_plan(
     let mut warnings = Vec::new();
     let mut strict_reasons = Vec::new();
 
-    for node in graph.list_nodes()? {
-        let node_id = node.id().as_str();
-        let readiness = export_readiness(node.status());
-        let has_blocking_finding = blocking_by_record_id.contains_key(node_id);
+    // Profile selection is resolved before readiness. This ordering is the
+    // contract that prevents unrelated domain records from becoming strict
+    // export failures for a profile they do not belong to.
+    let nodes = graph.list_nodes()?;
+    let selected_node_ids = nodes
+        .iter()
+        .filter(|node| node_eligible_for_export_profile(metadata.profile(), node))
+        .map(|node| node.id().as_str().to_owned())
+        .collect::<HashSet<_>>();
+    if metadata.profile() == &ExportProfile::StixMvp && mode == ExportMode::Permissive {
+        warnings.extend(nodes.iter().filter_map(|node| {
+            let family = canonical_family(node.property("opencti.family"))?;
+            (!selected_node_ids.contains(node.id().as_str())).then(|| {
+                ValidationErrorRecord::new(
+                    "CTI_PROFILE_UNSUPPORTED_RECORD",
+                    ValidationErrorSeverity::Warning,
+                    format!(
+                        "OpenCTI node {} with family {family} is outside the supported STIX export profile",
+                        node.id().as_str()
+                    ),
+                    ValidationTarget::node(node.id().as_str()),
+                )
+            })
+        }));
+    }
 
-        if readiness && !has_blocking_finding {
+    let mut exported_node_ids = HashSet::new();
+
+    for node in nodes {
+        if !selected_node_ids.contains(node.id().as_str()) {
+            continue;
+        }
+        let node_id = node.id().as_str();
+        let mut record_findings = profile_readiness_findings(
+            graph,
+            metadata.profile(),
+            mode,
+            node_id,
+            node.status(),
+            node.confidence(),
+            node.evidence_refs(),
+            ValidationTarget::node(node_id),
+        );
+        record_findings.extend(canonical_node_identity_findings(metadata.profile(), &node));
+        if let Some(blocking_findings) = blocking_by_record_id.get(node_id) {
+            record_findings.extend(blocking_findings.iter().map(|finding| (*finding).clone()));
+        }
+
+        if record_findings.is_empty() {
+            exported_node_ids.insert(node_id.to_owned());
             records.push(ExportRecord {
                 record_id: node_id.to_owned(),
                 export_record_id: deterministic_export_record_id(ExportRecordKind::Node, node_id),
@@ -135,38 +180,74 @@ pub fn build_deterministic_export_plan(
             });
             continue;
         }
-
-        if !readiness {
-            let warning = ValidationErrorRecord::new(
-                "EXPORT_STATUS_NOT_READY",
-                ValidationErrorSeverity::Warning,
-                format!(
-                    "record {} is not export-ready for mode {}",
-                    node_id,
-                    mode_label(mode)
-                ),
-                ValidationTarget::node(node_id),
-            );
-            match mode {
-                ExportMode::Strict => strict_reasons.push(warning.message().to_owned()),
-                ExportMode::Permissive => warnings.push(warning),
-            }
-        }
-
-        if let Some(blocking_finding) = blocking_by_record_id.get(node_id) {
-            match mode {
-                ExportMode::Strict => strict_reasons.push(blocking_finding.message().to_owned()),
-                ExportMode::Permissive => warnings.push((*blocking_finding).clone()),
-            }
-        }
+        collect_mode_findings(mode, record_findings, &mut warnings, &mut strict_reasons);
     }
 
-    for relationship in graph.list_relationships()? {
-        let relationship_id = relationship.id().as_str();
-        let readiness = export_readiness(relationship.status());
-        let has_blocking_finding = blocking_by_record_id.contains_key(relationship_id);
+    let relationships = graph.list_relationships()?;
+    if metadata.profile() == &ExportProfile::StixMvp && mode == ExportMode::Permissive {
+        warnings.extend(relationships.iter().filter_map(|relationship| {
+            let family = canonical_family(relationship.property("opencti.family"))?;
+            (!relationship_selected_for_profile(
+                metadata.profile(),
+                relationship,
+                &selected_node_ids,
+            ))
+            .then(|| {
+                ValidationErrorRecord::new(
+                    "CTI_PROFILE_UNSUPPORTED_RECORD",
+                    ValidationErrorSeverity::Warning,
+                    format!(
+                        "OpenCTI relationship {} with family {family} is outside the supported STIX export profile",
+                        relationship.id().as_str()
+                    ),
+                    ValidationTarget::relationship(relationship.id().as_str()),
+                )
+            })
+        }));
+    }
 
-        if readiness && !has_blocking_finding {
+    for relationship in relationships {
+        if !relationship_selected_for_profile(metadata.profile(), &relationship, &selected_node_ids)
+        {
+            continue;
+        }
+        let relationship_id = relationship.id().as_str();
+        let mut record_findings = profile_readiness_findings(
+            graph,
+            metadata.profile(),
+            mode,
+            relationship_id,
+            relationship.status(),
+            relationship.confidence(),
+            relationship.evidence_refs(),
+            ValidationTarget::relationship(relationship_id),
+        );
+        record_findings.extend(canonical_relationship_identity_findings(
+            metadata.profile(),
+            &relationship,
+        ));
+        if metadata.profile() == &ExportProfile::StixMvp {
+            for (endpoint_role, endpoint_id) in [
+                ("source", relationship.source().as_str()),
+                ("target", relationship.target().as_str()),
+            ] {
+                if !exported_node_ids.contains(endpoint_id) {
+                    record_findings.push(ValidationErrorRecord::new(
+                        "CTI_ENDPOINT_EXCLUDED",
+                        ValidationErrorSeverity::Error,
+                        format!(
+                            "CTI relationship {relationship_id} {endpoint_role} endpoint {endpoint_id} is not exportable"
+                        ),
+                        ValidationTarget::relationship(relationship_id),
+                    ));
+                }
+            }
+        }
+        if let Some(blocking_findings) = blocking_by_record_id.get(relationship_id) {
+            record_findings.extend(blocking_findings.iter().map(|finding| (*finding).clone()));
+        }
+
+        if record_findings.is_empty() {
             records.push(ExportRecord {
                 record_id: relationship_id.to_owned(),
                 export_record_id: deterministic_export_record_id(
@@ -178,30 +259,7 @@ pub fn build_deterministic_export_plan(
             });
             continue;
         }
-
-        if !readiness {
-            let warning = ValidationErrorRecord::new(
-                "EXPORT_STATUS_NOT_READY",
-                ValidationErrorSeverity::Warning,
-                format!(
-                    "record {} is not export-ready for mode {}",
-                    relationship_id,
-                    mode_label(mode)
-                ),
-                ValidationTarget::relationship(relationship_id),
-            );
-            match mode {
-                ExportMode::Strict => strict_reasons.push(warning.message().to_owned()),
-                ExportMode::Permissive => warnings.push(warning),
-            }
-        }
-
-        if let Some(blocking_finding) = blocking_by_record_id.get(relationship_id) {
-            match mode {
-                ExportMode::Strict => strict_reasons.push(blocking_finding.message().to_owned()),
-                ExportMode::Permissive => warnings.push((*blocking_finding).clone()),
-            }
-        }
+        collect_mode_findings(mode, record_findings, &mut warnings, &mut strict_reasons);
     }
 
     if mode == ExportMode::Strict && !strict_reasons.is_empty() {
@@ -217,6 +275,269 @@ pub fn build_deterministic_export_plan(
     })
 }
 
+/// Returns whether a graph node belongs to the requested deterministic export
+/// profile before lifecycle, confidence, evidence, or provider readiness is
+/// evaluated.
+pub fn node_eligible_for_export_profile(profile: &ExportProfile, node: &Node) -> bool {
+    match profile {
+        ExportProfile::FimiJsonMvp => true,
+        ExportProfile::StixMvp => {
+            canonical_family(node.property("opencti.family")).is_some_and(is_stix_object_family)
+                || graph_native_stix_type(node).is_some()
+        }
+    }
+}
+
+fn relationship_selected_for_profile(
+    profile: &ExportProfile,
+    relationship: &Relationship,
+    selected_node_ids: &HashSet<String>,
+) -> bool {
+    match profile {
+        ExportProfile::FimiJsonMvp => true,
+        ExportProfile::StixMvp => {
+            canonical_family(relationship.property("opencti.family"))
+                .is_some_and(is_stix_relationship_family)
+                || (selected_node_ids.contains(relationship.source().as_str())
+                    && selected_node_ids.contains(relationship.target().as_str()))
+        }
+    }
+}
+
+fn canonical_family(value: Option<&PropertyValue>) -> Option<&str> {
+    match value {
+        Some(PropertyValue::String(value)) => Some(value.as_str()),
+        _ => None,
+    }
+}
+
+fn is_stix_object_family(family: &str) -> bool {
+    matches!(
+        family,
+        "stix_domain_object" | "stix_cyber_observable" | "stix_meta_object"
+    )
+}
+
+fn is_stix_relationship_family(family: &str) -> bool {
+    matches!(
+        family,
+        "stix_core_relationship" | "stix_ref_relationship" | "stix_sighting_relationship"
+    )
+}
+
+fn graph_native_stix_type(node: &Node) -> Option<&'static str> {
+    const TYPES: &[(&str, &str)] = &[
+        ("AttackPattern", "attack-pattern"),
+        ("Campaign", "campaign"),
+        ("CourseOfAction", "course-of-action"),
+        ("Grouping", "grouping"),
+        ("Identity", "identity"),
+        ("Incident", "incident"),
+        ("Indicator", "indicator"),
+        ("Infrastructure", "infrastructure"),
+        ("IntrusionSet", "intrusion-set"),
+        ("Location", "location"),
+        ("Malware", "malware"),
+        ("MalwareAnalysis", "malware-analysis"),
+        ("Note", "note"),
+        ("ObservedData", "observed-data"),
+        ("Opinion", "opinion"),
+        ("Report", "report"),
+        ("ThreatActor", "threat-actor"),
+        ("Tool", "tool"),
+        ("Vulnerability", "vulnerability"),
+        ("Artifact", "artifact"),
+        ("AutonomousSystem", "autonomous-system"),
+        ("Directory", "directory"),
+        ("DomainName", "domain-name"),
+        ("EmailAddress", "email-addr"),
+        ("EmailMessage", "email-message"),
+        ("File", "file"),
+        ("Ipv4Addr", "ipv4-addr"),
+        ("Ipv6Addr", "ipv6-addr"),
+        ("MacAddress", "mac-addr"),
+        ("Mutex", "mutex"),
+        ("NetworkTraffic", "network-traffic"),
+        ("Process", "process"),
+        ("Software", "software"),
+        ("Url", "url"),
+        ("UserAccount", "user-account"),
+        ("X509Certificate", "x509-certificate"),
+    ];
+    TYPES
+        .iter()
+        .find_map(|(label, object_type)| node.has_label(label).then_some(*object_type))
+}
+
+fn canonical_node_identity_findings(
+    profile: &ExportProfile,
+    node: &Node,
+) -> Vec<ValidationErrorRecord> {
+    if profile != &ExportProfile::StixMvp
+        || !canonical_family(node.property("opencti.family")).is_some_and(is_stix_object_family)
+    {
+        return Vec::new();
+    }
+    canonical_identity_findings(
+        node.property("opencti.raw"),
+        ValidationTarget::node(node.id().as_str()),
+        node.id().as_str(),
+    )
+}
+
+fn canonical_relationship_identity_findings(
+    profile: &ExportProfile,
+    relationship: &Relationship,
+) -> Vec<ValidationErrorRecord> {
+    if profile != &ExportProfile::StixMvp
+        || !canonical_family(relationship.property("opencti.family"))
+            .is_some_and(is_stix_relationship_family)
+    {
+        return Vec::new();
+    }
+    canonical_identity_findings(
+        relationship.property("opencti.raw"),
+        ValidationTarget::relationship(relationship.id().as_str()),
+        relationship.id().as_str(),
+    )
+}
+
+fn canonical_identity_findings(
+    raw: Option<&PropertyValue>,
+    target: ValidationTarget,
+    record_id: &str,
+) -> Vec<ValidationErrorRecord> {
+    let Some(PropertyValue::Json(serde_json::Value::Object(raw))) = raw else {
+        return vec![ValidationErrorRecord::new(
+            "STIX_RAW_REQUIRED",
+            ValidationErrorSeverity::Error,
+            format!("imported CTI record {record_id} requires canonical opencti.raw content"),
+            target,
+        )];
+    };
+    let object_type = raw.get("type").and_then(serde_json::Value::as_str);
+    let stix_id = raw.get("id").and_then(serde_json::Value::as_str);
+    let mut findings = Vec::new();
+    if object_type.is_none_or(str::is_empty) {
+        findings.push(ValidationErrorRecord::new(
+            "STIX_TYPE_REQUIRED",
+            ValidationErrorSeverity::Error,
+            format!("imported CTI record {record_id} requires its original STIX type"),
+            target.clone(),
+        ));
+    }
+    if stix_id.is_none_or(str::is_empty) {
+        findings.push(ValidationErrorRecord::new(
+            "STIX_ID_REQUIRED",
+            ValidationErrorSeverity::Error,
+            format!("imported CTI record {record_id} requires its original STIX id"),
+            target.clone(),
+        ));
+    }
+    if let (Some(object_type), Some(stix_id)) = (object_type, stix_id)
+        && !stix_id.starts_with(&format!("{object_type}--"))
+    {
+        findings.push(ValidationErrorRecord::new(
+            "STIX_IDENTITY_INVALID",
+            ValidationErrorSeverity::Error,
+            format!(
+                "imported CTI record {record_id} id {stix_id} does not match type {object_type}"
+            ),
+            target,
+        ));
+    }
+    findings
+}
+
+#[allow(clippy::too_many_arguments)]
+fn profile_readiness_findings(
+    graph: &Graph,
+    profile: &ExportProfile,
+    mode: ExportMode,
+    record_id: &str,
+    status: RecordStatus,
+    confidence: Option<Confidence>,
+    evidence_refs: &[EvidenceId],
+    target: ValidationTarget,
+) -> Vec<ValidationErrorRecord> {
+    let mut findings = Vec::new();
+    if !export_readiness(status) {
+        findings.push(ValidationErrorRecord::new(
+            "EXPORT_STATUS_NOT_READY",
+            ValidationErrorSeverity::Warning,
+            format!(
+                "record {record_id} is not export-ready for mode {}",
+                mode_label(mode)
+            ),
+            target.clone(),
+        ));
+    }
+    if profile != &ExportProfile::StixMvp {
+        return findings;
+    }
+    match confidence {
+        None => findings.push(ValidationErrorRecord::new(
+            "CTI_CONFIDENCE_REQUIRED",
+            ValidationErrorSeverity::Error,
+            format!("CTI record {record_id} requires native confidence"),
+            target.clone(),
+        )),
+        Some(value) if value.value() < 0.8 => findings.push(ValidationErrorRecord::new(
+            "CTI_CONFIDENCE_TOO_LOW",
+            ValidationErrorSeverity::Error,
+            format!("CTI record {record_id} confidence is below 0.8"),
+            target.clone(),
+        )),
+        Some(_) => {}
+    }
+    if evidence_refs.is_empty() {
+        findings.push(ValidationErrorRecord::new(
+            "CTI_EVIDENCE_REQUIRED",
+            ValidationErrorSeverity::Error,
+            format!("CTI record {record_id} requires native evidence"),
+            target,
+        ));
+    } else {
+        for evidence_id in evidence_refs {
+            if graph.evidence_by_id(evidence_id).is_none() {
+                findings.push(ValidationErrorRecord::new(
+                    "CTI_EVIDENCE_NOT_FOUND",
+                    ValidationErrorSeverity::Error,
+                    format!(
+                        "CTI record {record_id} references missing evidence {}",
+                        evidence_id.as_str()
+                    ),
+                    target.clone(),
+                ));
+            }
+        }
+    }
+    findings
+}
+
+fn mode_label(mode: ExportMode) -> &'static str {
+    match mode {
+        ExportMode::Strict => "strict",
+        ExportMode::Permissive => "permissive",
+    }
+}
+
+fn collect_mode_findings(
+    mode: ExportMode,
+    findings: Vec<ValidationErrorRecord>,
+    warnings: &mut Vec<ValidationErrorRecord>,
+    strict_reasons: &mut Vec<String>,
+) {
+    match mode {
+        ExportMode::Strict => strict_reasons.extend(
+            findings
+                .iter()
+                .map(|finding| format!("{}: {}", finding.code(), finding.message())),
+        ),
+        ExportMode::Permissive => warnings.extend(findings),
+    }
+}
+
 impl ExportRecordKind {
     fn as_str(self) -> &'static str {
         match self {
@@ -230,16 +551,9 @@ fn export_readiness(status: RecordStatus) -> bool {
     matches!(status, RecordStatus::Exportable | RecordStatus::Exported)
 }
 
-fn mode_label(mode: ExportMode) -> &'static str {
-    match mode {
-        ExportMode::Strict => "strict",
-        ExportMode::Permissive => "permissive",
-    }
-}
-
 fn collect_blocking_findings(
     findings: &[ValidationErrorRecord],
-) -> HashMap<&str, &ValidationErrorRecord> {
+) -> HashMap<&str, Vec<&ValidationErrorRecord>> {
     let mut by_record_id = HashMap::new();
 
     for finding in findings {
@@ -249,7 +563,10 @@ fn collect_blocking_findings(
 
         match finding.target() {
             ValidationTarget::Node(record_id) | ValidationTarget::Relationship(record_id) => {
-                by_record_id.insert(record_id.as_str(), finding);
+                by_record_id
+                    .entry(record_id.as_str())
+                    .or_insert_with(Vec::new)
+                    .push(finding);
             }
             ValidationTarget::Claim(_)
             | ValidationTarget::ExportRecord(_)
@@ -275,7 +592,7 @@ mod tests {
             TransactionId::new("transaction--unit-export-plan")
                 .expect("transaction ID should be valid"),
             "stix-mvp-v1",
-            ExportProfile::StixMvp,
+            ExportProfile::FimiJsonMvp,
             mode,
             None,
         )
@@ -287,9 +604,6 @@ mod tests {
         assert!(export_readiness(RecordStatus::Exportable));
         assert!(export_readiness(RecordStatus::Exported));
         assert!(!export_readiness(RecordStatus::Candidate));
-
-        assert_eq!(mode_label(ExportMode::Strict), "strict");
-        assert_eq!(mode_label(ExportMode::Permissive), "permissive");
 
         let warning_node = ValidationErrorRecord::new(
             "WARN_NODE",
@@ -324,6 +638,8 @@ mod tests {
             blocking
                 .get("node--blocked")
                 .expect("node blocking finding should be present")
+                .first()
+                .expect("node blocking finding list should not be empty")
                 .code(),
             "ERR_NODE"
         );
@@ -331,6 +647,8 @@ mod tests {
             blocking
                 .get("relationship--blocked")
                 .expect("relationship blocking finding should be present")
+                .first()
+                .expect("relationship blocking finding list should not be empty")
                 .code(),
             "ERR_REL"
         );

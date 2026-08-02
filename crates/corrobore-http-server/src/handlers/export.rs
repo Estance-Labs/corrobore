@@ -28,7 +28,7 @@ use corrobore_engine::{EngineError, ExportMode, ExportProfile, StixExportOptions
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::{app::AppState, error::ApiError};
+use crate::{app::AppState, error::ApiError, handlers::stix_validate::collect_cti_export_findings};
 
 #[derive(Debug, Deserialize)]
 pub struct ExportQuery {
@@ -45,6 +45,7 @@ pub async fn export_stix(
 ) -> Result<Json<Value>, ApiError> {
     let timeout = Duration::from_millis(state.config.request_timeout_ms);
     let engine = state.engine.clone();
+    let validation_state = state.clone();
 
     let bundle = tokio::time::timeout(
         timeout,
@@ -79,8 +80,9 @@ pub async fn export_stix(
                 mode,
             };
 
+            let findings = collect_cti_export_findings(&validation_state, engine.graph())?;
             engine
-                .export_stix_bundle(&options)
+                .export_stix_bundle_with_findings(&options, &findings)
                 .map_err(map_engine_export_error)
         }),
     )

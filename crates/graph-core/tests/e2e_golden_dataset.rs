@@ -191,7 +191,9 @@ fn e2e_golden_graph_core_ingest_and_export() {
         "snapshot--e2e-golden",
         tx_id,
         "e2e-test-v1",
-        ExportProfile::StixMvp,
+        // This legacy fixture validates profile-neutral deterministic planning;
+        // CTI readiness and projection are covered by export-stix contracts.
+        ExportProfile::FimiJsonMvp,
         ExportMode::Permissive,
         None,
     )
@@ -212,7 +214,7 @@ fn e2e_golden_graph_core_ingest_and_export() {
         "snapshot--e2e-golden",
         tx_id_2,
         "e2e-test-v1",
-        ExportProfile::StixMvp,
+        ExportProfile::FimiJsonMvp,
         ExportMode::Permissive,
         None,
     )
@@ -349,7 +351,9 @@ fn e2e_golden_graph_multi_bundle_ingest() {
         "snapshot--e2e-multi",
         tx_id,
         "e2e-test-v1",
-        ExportProfile::StixMvp,
+        // The multi-bundle fixture has no native CTI confidence or evidence.
+        // Use the domain-neutral plan contract rather than weakening STIX scope.
+        ExportProfile::FimiJsonMvp,
         ExportMode::Permissive,
         None,
     )
