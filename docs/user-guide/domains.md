@@ -2,7 +2,7 @@
 
 Corrobore keeps shared evidence primitives in-workspace and consumes enterprise domain logic through dedicated binary providers.
 
-This guide targets the current `0.1.x` runtime baseline.
+This guide targets the current `0.3.x` runtime baseline.
 
 ## Distribution model
 

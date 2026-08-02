@@ -154,7 +154,7 @@ to `/health/ready`.
 {
   "status": "ok",
   "service": "corrobore-http-server",
-  "version": "0.1.0",
+  "version": "0.3.1",
   "lifecycle_state": "ready",
   "storage_mode": "ephemeral",
   "uptime_ms": 1200,
@@ -510,15 +510,6 @@ Original idempotency keys and tokens are excluded. During projection lag,
 Operators use the admin-token routes below after an outage or rollback trigger.
 See [OpenCTI transactional writes](../developer-guide/opencti-transactional-writes.md)
 for the complete rollback runbook.
-
-## `POST /v1/opencti/files`
-
-In persistent mode, accepts an `enqueue` command carrying an immutable file
-descriptor or a `delete` command carrying one or more file IDs. Enqueue returns
-202 with a stable extraction job ID (or a duplicate acknowledgement); deletion
-removes file-content projections synchronously. The route never returns file
-content or authorization metadata and returns `OPENCTI_FILE_STORAGE_REQUIRED`
-when canonical persistent storage is unavailable.
 
 ## `POST /v1/admin/opencti/projection/drain`
 

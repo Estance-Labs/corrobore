@@ -115,6 +115,7 @@ jobs:
       - name: Validate docs contracts against runtime code
         run: |
           node --test scripts/docs-contract-guard.test.mjs
+          node --test scripts/release-notes-contract.test.mjs
           node scripts/docs-contract-guard.mjs
 
       - name: Validate open-source readiness contracts

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Corrobore HTTP API
-  version: 0.1.0
+  version: 0.3.1
   description: |
     Agent-facing Corrobore API. `/health/live`, `/health/ready`, `/version`,
     legacy `/health`, and `/metrics` are public; every `/v1/*` operation
@@ -1525,30 +1525,24 @@ paths:
               oneOf:
                 - type: object
                   title: Enqueue
-                  required: [enqueue]
+                  required: [operation, descriptor]
                   properties:
-                    enqueue:
+                    operation: {type: string, const: enqueue}
+                    descriptor:
                       type: object
-                      required: [descriptor]
-                      properties:
-                        descriptor:
-                          type: object
-                          description: >-
-                            Canonical file identity, provenance, digest, and access
-                            metadata for one immutable object-storage version.
+                      description: >-
+                        Canonical file identity, provenance, digest, and access
+                        metadata for one immutable object-storage version.
                 - type: object
                   title: Delete
-                  required: [delete]
+                  required: [operation, file_ids]
                   properties:
-                    delete:
-                      type: object
-                      required: [file_ids]
-                      properties:
-                        file_ids:
-                          type: array
-                          minItems: 1
-                          items: {type: string}
-                          description: Stable OpenCTI file identifiers.
+                    operation: {type: string, const: delete}
+                    file_ids:
+                      type: array
+                      minItems: 1
+                      items: {type: string}
+                      description: Stable OpenCTI file identifiers.
       responses:
         '200':
           description: File-content projections deleted
@@ -1599,29 +1593,6 @@ paths:
                   projections: {type: array, items: {type: object}}
                   audits: {type: array, items: {type: object}}
         '401': {$ref: '#/components/responses/Unauthorized'}
-
-  /v1/opencti/files:
-    post:
-      operationId: executeOpenCtiFileCommand
-      summary: Enqueue immutable file extraction or delete file-content projections
-      tags: [OpenCTI]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [operation]
-              properties:
-                operation: {type: string, enum: [enqueue, delete]}
-                descriptor: {type: object}
-                file_ids: {type: array, minItems: 1, items: {type: string}}
-      responses:
-        '200': {description: File-content projections deleted}
-        '202': {description: Extraction work accepted or deduplicated}
-        '400': {$ref: '#/components/responses/BadRequest'}
-        '401': {$ref: '#/components/responses/Unauthorized'}
-        '503': {description: Persistent file-content storage unavailable}
 
   /v1/admin/opencti/projection/drain:
     post:

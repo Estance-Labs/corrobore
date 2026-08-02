@@ -5,6 +5,7 @@ import {
   extractEnvVarsFromConfig,
   extractEnvVarsFromHttpGuide,
   extractPathsFromOpenApi,
+  findDuplicateOpenApiPaths,
   extractRoutesFromApp,
   extractRoutesFromHttpGuide,
   runChecks,
@@ -29,6 +30,23 @@ paths:
     post: {}
 `;
   assert.deepEqual(extractPathsFromOpenApi(input), ['/health', '/v1/cypher/read']);
+});
+
+test('findDuplicateOpenApiPaths reports repeated path keys with every source line', () => {
+  const input = `
+openapi: 3.1.0
+paths:
+  /health:
+    get: {}
+  /v1/items/{item_id}:
+    get: {}
+  /health:
+    post: {}
+`;
+
+  assert.deepEqual(findDuplicateOpenApiPaths(input), [
+    { path: '/health', lines: [4, 8] },
+  ]);
 });
 
 test('extractRoutesFromHttpGuide reads endpoint headings', () => {
