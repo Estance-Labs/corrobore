@@ -1,5 +1,6 @@
 #include "corrobore_domain_provider.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -53,13 +54,51 @@ static int32_t provider_invoke(
     struct corrobore_domain_provider_slice_v1 request_json,
     struct corrobore_domain_provider_buffer_v1 *response_json)
 {
-    (void)request_json;
+    static const char request_id_key[] = "\"request_id\":\"";
+    char request_id[129];
+    char response[512];
+    size_t request_id_key_len = sizeof(request_id_key) - 1;
+    size_t request_id_start = request_json.len;
+    size_t request_id_end;
+    size_t index;
+    int written;
+
     if (provider_handle == NULL) {
         return CORROBORE_DOMAIN_PROVIDER_STATUS_INVALID_ARGUMENT;
     }
-    return write_json(
-        "{\"schema_version\":\"1\",\"request_id\":\"http-c-provider\",\"status\":\"accepted\",\"issues\":[],\"diagnostics\":null}",
-        response_json);
+    for (index = 0; index + request_id_key_len <= request_json.len; index++) {
+        if (memcmp(request_json.ptr + index, request_id_key, request_id_key_len) == 0) {
+            request_id_start = index + request_id_key_len;
+            break;
+        }
+    }
+    if (request_id_start == request_json.len) {
+        return CORROBORE_DOMAIN_PROVIDER_STATUS_INVALID_ARGUMENT;
+    }
+    request_id_end = request_id_start;
+    while (request_id_end < request_json.len && request_json.ptr[request_id_end] != '"') {
+        request_id_end++;
+    }
+    if (request_id_end == request_json.len
+        || request_id_end == request_id_start
+        || request_id_end - request_id_start >= sizeof(request_id)) {
+        return CORROBORE_DOMAIN_PROVIDER_STATUS_INVALID_ARGUMENT;
+    }
+    memcpy(
+        request_id,
+        request_json.ptr + request_id_start,
+        request_id_end - request_id_start);
+    request_id[request_id_end - request_id_start] = '\0';
+
+    written = snprintf(
+        response,
+        sizeof(response),
+        "{\"schema_version\":\"1\",\"request_id\":\"%s\",\"status\":\"accepted\",\"issues\":[],\"diagnostics\":null}",
+        request_id);
+    if (written < 0 || (size_t)written >= sizeof(response)) {
+        return CORROBORE_DOMAIN_PROVIDER_STATUS_PROVIDER_ERROR;
+    }
+    return write_json(response, response_json);
 }
 
 static int32_t provider_health(

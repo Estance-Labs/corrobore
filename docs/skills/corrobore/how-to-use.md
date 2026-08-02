@@ -43,7 +43,7 @@ executable correction and export flow.
 - `POST /v1/cypher/execute`: compatibility route with explicit or automatic mode.
 - `POST /v1/import/stix` and `/v1/import/stix/file`: STIX import.
 - `POST /v1/stix/validate`: native STIX validation and supported corrections.
-- `GET /v1/export/stix`: deterministic STIX projection.
+- `GET /v1/export/stix`: deterministic STIX projection; `force=true` is an explicit audited override for semantic validation only.
 - `POST /v1/sessions/start`, `GET /v1/sessions/{session_id}/health`, `GET /v1/sessions/{session_id}/logs`, `POST /v1/sessions/{session_id}/stop`: durable session lifecycle and audit.
 
 Protected routes require `Authorization: Bearer <token>`.

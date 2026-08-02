@@ -1885,14 +1885,18 @@ paths:
         - {name: exporter_version, in: query, schema: {type: string, default: corrobore-http-server-v0}}
         - {name: mode, in: query, schema: {type: string, enum: [strict, permissive], default: strict}}
         - {name: profile, in: query, schema: {type: string, enum: [stix-mvp], default: stix-mvp}}
+        - name: force
+          in: query
+          description: Preserve overridable semantic CTI validation findings as diagnostics and include otherwise eligible records; structural and provider/license gates remain enforced.
+          schema: {type: boolean, default: false}
       responses:
         '200':
-          description: CTI-scoped raw STIX bundle with preserved canonical identities and evidence links
+          description: CTI-scoped raw STIX bundle with preserved canonical identities, evidence links, and bounded forced-validation diagnostics
           content:
             application/json:
               schema: {$ref: '#/components/schemas/StixBundle'}
         '400':
-          description: Strict export rejected named CTI readiness, identity, evidence, or endpoint findings
+          description: Strict export rejected named non-overridden CTI readiness, identity, evidence-integrity, or endpoint findings
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ErrorEnvelope'}

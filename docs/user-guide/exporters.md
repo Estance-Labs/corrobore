@@ -35,6 +35,14 @@ endpoint. Permissive mode omits those records and returns at most 256
 machine-readable entries in `export_diagnostics.exclusions`; it never creates a
 fallback STIX identity for an unsupported record.
 
+Exceptional operator-driven exports can set `StixExportOptions::force` in the
+embedded API or pass `force=true` to the HTTP route. Force keeps semantic
+confidence, missing-evidence, and provider findings as bounded deterministic
+diagnostics while including the otherwise eligible record. It does not bypass
+export status, unsupported profile selection, malformed canonical identities,
+dangling evidence references, excluded relationship endpoints, licensing, or
+provider readiness. The default is `false`.
+
 The HTTP route is fail-closed: it requires enterprise CTI support, a valid
 `cti` license claim, and a ready provider exposing `node.validate/v1`. Missing
 license, provider readiness, and provider capability have distinct error codes.

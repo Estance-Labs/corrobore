@@ -805,32 +805,38 @@ async fn cypher_contract_restores_session_idle_when_request_is_invalid() {
 #[tokio::test]
 async fn export_contract_fails_closed_when_cti_provider_is_unavailable() {
     let app = test_app();
-    let request = Request::builder()
-        .method(Method::GET)
-        .uri("/v1/export/stix")
-        .header(header::AUTHORIZATION, "Bearer token-123")
-        .body(Body::empty())
-        .expect("request should build");
+    for uri in ["/v1/export/stix", "/v1/export/stix?force=true"] {
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri(uri)
+            .header(header::AUTHORIZATION, "Bearer token-123")
+            .body(Body::empty())
+            .expect("request should build");
 
-    let response = app.oneshot(request).await.expect("request should respond");
-    let expected_status = if cfg!(feature = "enterprise-cti") {
-        StatusCode::SERVICE_UNAVAILABLE
-    } else {
-        StatusCode::FORBIDDEN
-    };
-    assert_eq!(response.status(), expected_status);
+        let response = app
+            .clone()
+            .oneshot(request)
+            .await
+            .expect("request should respond");
+        let expected_status = if cfg!(feature = "enterprise-cti") {
+            StatusCode::SERVICE_UNAVAILABLE
+        } else {
+            StatusCode::FORBIDDEN
+        };
+        assert_eq!(response.status(), expected_status);
 
-    let body = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("body should be readable");
-    let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should be readable");
+        let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
 
-    let expected_code = if cfg!(feature = "enterprise-cti") {
-        "DOMAIN_PROVIDER_NOT_READY"
-    } else {
-        "FEATURE_NOT_AVAILABLE"
-    };
-    assert_eq!(payload["error"]["code"], expected_code);
+        let expected_code = if cfg!(feature = "enterprise-cti") {
+            "DOMAIN_PROVIDER_NOT_READY"
+        } else {
+            "FEATURE_NOT_AVAILABLE"
+        };
+        assert_eq!(payload["error"]["code"], expected_code);
+    }
 }
 
 #[cfg(all(unix, feature = "enterprise-cti"))]
@@ -871,9 +877,155 @@ async fn export_contract_uses_default_snapshot_with_ready_cti_provider() {
     );
 }
 
+#[cfg(all(unix, feature = "enterprise-cti"))]
+#[tokio::test]
+async fn export_contract_force_includes_low_confidence_record_with_diagnostic() {
+    let (provider_dir, manifest_file) = compile_c_provider_fixture();
+    let app = test_app_with_store_dir_and_extra_env(
+        unique_store_dir("export-force-low-confidence"),
+        HashMap::from([
+            (
+                "CORROBORE_DOMAIN_PROVIDER_DIR".to_owned(),
+                provider_dir.display().to_string(),
+            ),
+            (
+                "CORROBORE_DOMAIN_PROVIDER_MANIFEST_FILE".to_owned(),
+                manifest_file.display().to_string(),
+            ),
+        ]),
+    );
+    let import_request = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/import/stix")
+        .header(header::AUTHORIZATION, "Bearer token-123")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({
+                "bundle": {
+                    "type": "bundle",
+                    "objects": [{
+                        "type": "indicator",
+                        "spec_version": "2.1",
+                        "id": "indicator--13131313-1313-4131-8131-131313131313",
+                        "pattern": "[domain-name:value = 'forced.example']",
+                        "pattern_type": "stix",
+                        "valid_from": "2026-08-02T00:00:00.000Z"
+                    }]
+                },
+                "evidence": {
+                    "schema_version": "1.0",
+                    "records": [{
+                        "id": "evidence--force-http-131",
+                        "source_id": "document--force-http-131",
+                        "content_sha256": "1313131313131313131313131313131313131313131313131313131313131313",
+                        "payload": "forced.example",
+                        "locator": {"type": "page", "page": 1}
+                    }],
+                    "annotations": {
+                        "indicator--13131313-1313-4131-8131-131313131313": {
+                            "evidence_refs": ["evidence--force-http-131"],
+                            "confidence": 0.79,
+                            "status": "candidate"
+                        }
+                    }
+                }
+            })
+            .to_string(),
+        ))
+        .expect("import request should build");
+    let import_response = app
+        .clone()
+        .oneshot(import_request)
+        .await
+        .expect("import should respond");
+    let import_status = import_response.status();
+    let import_body = to_bytes(import_response.into_body(), usize::MAX)
+        .await
+        .expect("import response body should be readable");
+    let import_payload: Value =
+        serde_json::from_slice(&import_body).expect("import response should be json");
+    assert_eq!(import_status, StatusCode::OK, "{import_payload}");
+
+    let promote_request = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/cypher/write")
+        .header(header::AUTHORIZATION, "Bearer token-123")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({
+                "query": "MATCH (n) SET n.status = 'exportable' RETURN n.status"
+            })
+            .to_string(),
+        ))
+        .expect("promotion request should build");
+    let promote_response = app
+        .clone()
+        .oneshot(promote_request)
+        .await
+        .expect("promotion should respond");
+    assert_eq!(promote_response.status(), StatusCode::OK);
+
+    let strict_request = Request::builder()
+        .method(Method::GET)
+        .uri("/v1/export/stix")
+        .header(header::AUTHORIZATION, "Bearer token-123")
+        .body(Body::empty())
+        .expect("strict export request should build");
+    let strict_response = app
+        .clone()
+        .oneshot(strict_request)
+        .await
+        .expect("strict export should respond");
+    let strict_status = strict_response.status();
+    let strict_body = to_bytes(strict_response.into_body(), usize::MAX)
+        .await
+        .expect("strict response body should be readable");
+    let strict_payload: Value =
+        serde_json::from_slice(&strict_body).expect("strict response should be json");
+    assert_eq!(strict_status, StatusCode::BAD_REQUEST, "{strict_payload}");
+    assert_eq!(strict_payload["error"]["code"], "EXPORT_PLAN_FAILED");
+    assert!(
+        strict_payload["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("CTI_CONFIDENCE_TOO_LOW"))
+    );
+
+    let forced_request = Request::builder()
+        .method(Method::GET)
+        .uri("/v1/export/stix?force=true")
+        .header(header::AUTHORIZATION, "Bearer token-123")
+        .body(Body::empty())
+        .expect("forced export request should build");
+    let forced_response = app
+        .oneshot(forced_request)
+        .await
+        .expect("forced export should respond");
+    let forced_status = forced_response.status();
+    let forced_body = to_bytes(forced_response.into_body(), usize::MAX)
+        .await
+        .expect("forced response body should be readable");
+    let forced_payload: Value =
+        serde_json::from_slice(&forced_body).expect("forced response should be json");
+    assert_eq!(forced_status, StatusCode::OK, "{forced_payload}");
+    assert!(
+        forced_payload["objects"]
+            .as_array()
+            .expect("forced objects should be an array")
+            .iter()
+            .any(|object| { object["id"] == "indicator--13131313-1313-4131-8131-131313131313" })
+    );
+    assert!(
+        forced_payload["export_diagnostics"]["exclusions"]
+            .as_array()
+            .expect("forced diagnostics should be an array")
+            .iter()
+            .any(|finding| finding["code"] == "CTI_CONFIDENCE_TOO_LOW")
+    );
+}
+
 #[cfg(feature = "enterprise-cti")]
 #[tokio::test]
-async fn export_contract_distinguishes_missing_cti_license() {
+async fn forced_export_contract_does_not_bypass_missing_cti_license() {
     let app = test_app_with_store_dir_and_extra_env(
         unique_store_dir("export-license-missing"),
         HashMap::from([(
@@ -883,7 +1035,7 @@ async fn export_contract_distinguishes_missing_cti_license() {
     );
     let request = Request::builder()
         .method(Method::GET)
-        .uri("/v1/export/stix")
+        .uri("/v1/export/stix?force=true")
         .header(header::AUTHORIZATION, "Bearer token-123")
         .body(Body::empty())
         .expect("request should build");
@@ -899,7 +1051,7 @@ async fn export_contract_distinguishes_missing_cti_license() {
 
 #[cfg(all(unix, feature = "enterprise-cti"))]
 #[tokio::test]
-async fn export_contract_distinguishes_missing_provider_capability() {
+async fn forced_export_contract_does_not_bypass_missing_provider_capability() {
     let (provider_dir, manifest_file) = compile_c_provider_fixture_with_capability("node.inspect");
     let app = test_app_with_store_dir_and_extra_env(
         unique_store_dir("export-provider-capability-missing"),
@@ -916,7 +1068,7 @@ async fn export_contract_distinguishes_missing_provider_capability() {
     );
     let request = Request::builder()
         .method(Method::GET)
-        .uri("/v1/export/stix")
+        .uri("/v1/export/stix?force=true")
         .header(header::AUTHORIZATION, "Bearer token-123")
         .body(Body::empty())
         .expect("request should build");

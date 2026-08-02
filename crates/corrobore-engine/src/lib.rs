@@ -69,8 +69,8 @@ use std::collections::{BTreeMap, HashMap};
 
 use export_stix::{StixExportBundle, export_stix_subset_bundle};
 use graph_core::{
-    ExportMetadata, Graph, GraphSemanticSeedResolver, SessionId, TransactionId,
-    ValidationErrorRecord, WorkspaceId, build_deterministic_export_plan,
+    ExportMetadata, ExportPlanOptions, Graph, GraphSemanticSeedResolver, SessionId, TransactionId,
+    ValidationErrorRecord, WorkspaceId, build_deterministic_export_plan_with_options,
 };
 pub use graph_core::{
     ExportMode, ExportProfile, GraphError, SemanticDomainProfile, SemanticSeedCandidate,
@@ -359,6 +359,9 @@ pub struct StixExportOptions {
     pub profile: ExportProfile,
     /// Export strictness mode.
     pub mode: ExportMode,
+    /// Explicitly retain overridable CTI validation findings as diagnostics
+    /// while exporting records that pass lifecycle and structural checks.
+    pub force: bool,
 }
 
 impl Default for StixExportOptions {
@@ -369,6 +372,7 @@ impl Default for StixExportOptions {
             exporter_version: "corrobore-engine-v0".to_owned(),
             profile: ExportProfile::StixMvp,
             mode: ExportMode::Strict,
+            force: false,
         }
     }
 }
@@ -841,8 +845,13 @@ impl CorroboreEngine {
         )
         .map_err(|error| EngineError::Export(error.to_string()))?;
 
-        let plan = build_deterministic_export_plan(self.gateway.graph(), metadata, findings)
-            .map_err(|error| EngineError::Export(error.to_string()))?;
+        let plan = build_deterministic_export_plan_with_options(
+            self.gateway.graph(),
+            metadata,
+            findings,
+            export_plan_options(options),
+        )
+        .map_err(|error| EngineError::Export(error.to_string()))?;
 
         Ok(export_stix_subset_bundle(self.gateway.graph(), &plan))
     }
@@ -899,4 +908,11 @@ impl CorroboreEngine {
     pub fn session_id(&self) -> &str {
         self.session_id.as_str()
     }
+}
+
+fn export_plan_options(options: &StixExportOptions) -> ExportPlanOptions {
+    // Map `force` only to semantic validation override behavior. Lifecycle,
+    // identity, evidence-integrity, and endpoint findings remain enforced by
+    // the planner regardless of this option.
+    ExportPlanOptions::default().with_force_validation(options.force)
 }

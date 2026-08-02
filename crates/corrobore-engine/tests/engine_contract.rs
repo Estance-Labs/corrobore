@@ -290,6 +290,11 @@ fn engine_contract_graph_accessor_reflects_mutations() {
 fn engine_contract_exports_stix_bundle_from_embedded_graph() {
     let mut engine = CorroboreEngine::strict_default();
 
+    assert!(
+        !StixExportOptions::default().force,
+        "forced validation override must remain opt-in"
+    );
+
     engine
         .write("CREATE (n:Indicator {name: 'export-me'})")
         .expect("write should execute");

@@ -685,6 +685,7 @@ Exports a raw STIX bundle (not the standard envelope). Query parameters:
 | `exporter_version` | `corrobore-http-server-v0` |
 | `mode` | `strict` (`permissive` is also accepted) |
 | `profile` | `stix-mvp` |
+| `force` | `false` |
 
 The route exports only eligible CTI records. Imported OpenCTI objects and
 relationships preserve their original STIX identity and fields; unrelated
@@ -697,6 +698,15 @@ identity, evidence, provider-validation, or endpoint issue codes. Permissive
 mode omits failing records and returns bounded machine-readable details in
 `export_diagnostics.exclusions`. Retained evidence referenced by exported
 objects is included in `x_corrobore_evidence`.
+
+`force=true` is an explicit operator override for semantic CTI validation. The
+server still runs built-in confidence/evidence rules and the licensed CTI
+provider, but it includes otherwise eligible, export-ready records whose
+confidence policy or provider finding would normally block them. Every
+bypassed finding remains in the bounded `export_diagnostics.exclusions` array
+for audit. Force never bypasses the CTI license/provider gates, export status,
+profile selection, canonical STIX identity, missing retained-evidence targets,
+or relationship endpoint integrity.
 
 | Error code | HTTP | Meaning |
 | :--- | :---: | :--- |

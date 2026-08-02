@@ -791,6 +791,7 @@ pub async fn build_bundle_from_graph(
                 exporter_version: "corrobore-http-server-validate-v0".to_owned(),
                 profile: ExportProfile::StixMvp,
                 mode: ExportMode::Strict,
+                force: false,
             };
 
             let bundle = engine
