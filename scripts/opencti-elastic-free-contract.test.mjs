@@ -558,7 +558,6 @@ test("acceptance, operations, and release automation cover the exact distributio
   assert.doesNotMatch(matrix, /Supplying a stub|\/opt\/opencti-tests\/run/);
   for (const expected of [
     "timeout-minutes:",
-    "github.event_name == 'pull_request'",
     "opencti-elastic-free-contract.test.mjs",
     "opencti-elastic-free-acceptance.sh",
     "packaging/opencti-elastic-free/compose.yml",
@@ -569,4 +568,20 @@ test("acceptance, operations, and release automation cover the exact distributio
   }
   assert.ok(release.includes("opencti-elastic-free"));
   assert.ok(release.includes("scripts/opencti-elastic-free-demo-data.sh"));
+});
+
+test("product-specific OpenCTI acceptance runs only by manual dispatch", async () => {
+  const workflow = await read(".github/workflows/opencti-elastic-free.yml");
+  const localMatrix = workflow.match(/\n  local-matrix:\n([\s\S]*?)\n  exact-stack:/)?.[1];
+  const exactStack = workflow.match(/\n  exact-stack:\n([\s\S]*)$/)?.[1];
+
+  assert.ok(localMatrix, "local OpenCTI matrix job should remain available");
+  assert.ok(exactStack, "exact OpenCTI stack job should remain available");
+  assert.match(localMatrix, /if: github\.event_name == 'workflow_dispatch'/);
+  assert.doesNotMatch(localMatrix, /github\.event_name == 'pull_request'/);
+  assert.match(
+    exactStack,
+    /if: github\.event_name == 'workflow_dispatch' && inputs\.full_stack/,
+  );
+  assert.doesNotMatch(exactStack, /github\.event_name == 'pull_request'/);
 });
