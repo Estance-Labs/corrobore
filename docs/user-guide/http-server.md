@@ -344,7 +344,10 @@ index-rebuild operations without exposing credentials or record payloads.
 
 ## `POST /v1/import/stix`
 
-Imports a STIX 2.1 bundle through one runtime mutation per object.
+Imports a STIX 2.1 bundle as one atomic typed graph mutation. Plain bundles
+remain lossless and candidate-only. A STIX `confidence` value is normalized
+from `0..=100` to native `0..=1` (for example, `50` becomes `0.5`), but it is
+not evidence.
 
 ```json
 {
@@ -360,9 +363,57 @@ Imports a STIX 2.1 bundle through one runtime mutation per object.
 
 The result reports `processed_objects`, `applied_mutations`, `rejected_mutations`, and `errors`.
 
+Extraction agents can add the optional versioned `evidence` envelope. Evidence
+IDs are caller-owned and stable; every annotation key must be a STIX ID in the
+same bundle. Only `candidate` may be requested. Workspace, session, actor,
+permissions and export authority remain controlled by the authenticated runtime
+boundary, never by fields inside the bundle.
+
+```json
+{
+  "bundle": {
+    "type": "bundle",
+    "objects": [{
+      "type": "threat-actor",
+      "id": "threat-actor--demo",
+      "name": "Grounded candidate"
+    }]
+  },
+  "evidence": {
+    "schema_version": "1.0",
+    "records": [{
+      "id": "evidence--report-p7-p2",
+      "source_id": "document--report",
+      "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "payload": "Exact supporting excerpt",
+      "locator": {"type": "paragraph", "page": 7, "paragraph": 2}
+    }],
+    "annotations": {
+      "threat-actor--demo": {
+        "evidence_refs": ["evidence--report-p7-p2"],
+        "confidence": 50,
+        "status": "candidate"
+      }
+    }
+  },
+  "workspace_id": "workspace--demo",
+  "session_id": "session--import",
+  "budget_ref": "budget--import"
+}
+```
+
+The complete raw STIX object remains available in `opencti.raw`, while scalar,
+homogeneous string lists and nested values are stored as graph-native typed
+properties. Missing evidence, conflicting evidence IDs, invalid locators,
+out-of-range confidence and authoritative statuses fail before any state is
+committed.
+
 ## `POST /v1/import/stix/file`
 
-Multipart import. `file` is required and its filename must end in `.json` or `.stix`. Optional text parts are `workspace_id`, `session_id`, and `budget_ref`.
+Multipart import for plain candidate-only bundles. `file` is required and its
+filename must end in `.json` or `.stix`. Optional text parts are `workspace_id`,
+`session_id`, and `budget_ref`. Use the JSON endpoint when attaching the
+versioned evidence envelope.
 
 ```bash
 curl -X POST http://127.0.0.1:8080/v1/import/stix/file \

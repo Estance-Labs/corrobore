@@ -2187,6 +2187,87 @@ async fn import_stix_contract_imports_bundle_with_auth() {
 }
 
 #[tokio::test]
+async fn import_stix_http_contract_accepts_versioned_evidence_and_returns_stable_errors() {
+    let app = test_app();
+    let request_body = json!({
+        "bundle": {
+            "type": "bundle",
+            "objects": [{
+                "type": "indicator",
+                "id": "indicator--http-evidence-1",
+                "name": "Grounded HTTP indicator",
+                "confidence": 80,
+                "pattern": "[domain-name:value = 'example.test']"
+            }]
+        },
+        "evidence": {
+            "schema_version": "1.0",
+            "records": [{
+                "id": "evidence--http-import-1",
+                "source_id": "document--http-import-1",
+                "content_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "payload": "example.test",
+                "locator": {"type": "page", "page": 4}
+            }],
+            "annotations": {
+                "indicator--http-evidence-1": {
+                    "evidence_refs": ["evidence--http-import-1"],
+                    "confidence": 50,
+                    "status": "candidate"
+                }
+            }
+        }
+    });
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/import/stix")
+        .header(header::AUTHORIZATION, "Bearer token-123")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(request_body.to_string()))
+        .expect("request should build");
+    let response = app
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("import should respond");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body should be readable");
+    let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
+    assert_eq!(payload["result"]["processed_objects"], 1);
+    assert_eq!(payload["result"]["applied_mutations"], 1);
+
+    let mut invalid = request_body;
+    invalid["bundle"]["objects"][0]["id"] = json!("indicator--http-evidence-2");
+    let annotation = invalid["evidence"]["annotations"]
+        .as_object_mut()
+        .expect("annotations should be an object")
+        .remove("indicator--http-evidence-1")
+        .expect("annotation should exist");
+    invalid["evidence"]["annotations"]["indicator--http-evidence-2"] = annotation;
+    invalid["evidence"]["annotations"]["indicator--http-evidence-2"]["evidence_refs"] =
+        json!(["evidence--missing"]);
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/import/stix")
+        .header(header::AUTHORIZATION, "Bearer token-123")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(invalid.to_string()))
+        .expect("request should build");
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("invalid import should respond");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body should be readable");
+    let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
+    assert_eq!(payload["error"]["code"], "EVIDENCE_NOT_FOUND");
+}
+
+#[tokio::test]
 async fn import_stix_preserves_unknown_opencti_types_without_identity_fallback() {
     let app = test_app();
     let stix_id = "future-opencti-type--00000000-0000-4000-8000-000000000999";

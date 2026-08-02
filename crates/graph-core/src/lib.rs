@@ -218,7 +218,7 @@ pub use epistemic_vocabulary::{
 };
 pub use error::GraphError;
 pub use evidence::{
-    EvidenceAttachment, EvidenceAttachmentTarget, EvidenceInput, EvidenceRecord,
+    EvidenceAttachment, EvidenceAttachmentTarget, EvidenceInput, EvidenceLocator, EvidenceRecord,
     EvidenceRecordStore, EvidenceSourceType,
 };
 pub use execution_status::{

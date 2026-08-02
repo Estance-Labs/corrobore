@@ -23,9 +23,9 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    GraphError, Node, NodeId, NodeInput, NodePatch, NodeVersionId, RecordStatus, Relationship,
-    RelationshipId, RelationshipInput, RelationshipPatch, RelationshipVersionId,
-    adjacency::AdjacencyIndexes,
+    EvidenceId, EvidenceInput, EvidenceRecord, EvidenceRecordStore, GraphError, Node, NodeId,
+    NodeInput, NodePatch, NodeVersionId, RecordStatus, Relationship, RelationshipId,
+    RelationshipInput, RelationshipPatch, RelationshipVersionId, adjacency::AdjacencyIndexes,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -40,6 +40,7 @@ pub struct Graph {
     adjacency: AdjacencyIndexes,
     next_relationship_sequence: u64,
     next_relationship_version_sequence: u64,
+    evidence: EvidenceRecordStore,
 }
 
 /// Serializable, version-preserving snapshot of one in-memory graph.
@@ -54,6 +55,8 @@ pub struct GraphPersistenceSnapshot {
     next_node_version_sequence: u64,
     next_relationship_sequence: u64,
     next_relationship_version_sequence: u64,
+    #[serde(default)]
+    evidence: EvidenceRecordStore,
 }
 
 /// Global identifier sequence floors carried by a paged graph projection.
@@ -104,6 +107,7 @@ impl Graph {
             next_node_version_sequence: self.next_node_version_sequence,
             next_relationship_sequence: self.next_relationship_sequence,
             next_relationship_version_sequence: self.next_relationship_version_sequence,
+            evidence: self.evidence.clone(),
         }
     }
 
@@ -116,6 +120,7 @@ impl Graph {
             next_node_version_sequence: snapshot.next_node_version_sequence,
             next_relationship_sequence: snapshot.next_relationship_sequence,
             next_relationship_version_sequence: snapshot.next_relationship_version_sequence,
+            evidence: snapshot.evidence,
             ..Graph::default()
         };
 
@@ -206,6 +211,7 @@ impl Graph {
             next_node_version_sequence: sequence_floor.node_version,
             next_relationship_sequence: sequence_floor.relationship,
             next_relationship_version_sequence: sequence_floor.relationship_version,
+            evidence: EvidenceRecordStore::new(),
         };
         Self::from_persistence_snapshot(snapshot)
     }
@@ -258,6 +264,31 @@ impl Graph {
                 .then(left.version().cmp(&right.version()))
         });
         records
+    }
+
+    /// Creates one durable first-class evidence record.
+    pub fn create_evidence(&mut self, input: EvidenceInput) -> Result<EvidenceId, GraphError> {
+        self.evidence.create_evidence(input)
+    }
+
+    /// Returns one durable evidence record by its caller-owned identifier.
+    pub fn evidence_by_id(&self, evidence_id: &EvidenceId) -> Option<&EvidenceRecord> {
+        self.evidence.evidence_by_id(evidence_id)
+    }
+
+    /// Returns the number of unique durable evidence records.
+    pub fn evidence_count(&self) -> usize {
+        self.evidence.len()
+    }
+
+    /// Returns the complete first-class evidence store for durable adapters.
+    pub fn evidence_store(&self) -> &EvidenceRecordStore {
+        &self.evidence
+    }
+
+    /// Replaces the evidence projection loaded by a durable adapter.
+    pub fn replace_evidence_store(&mut self, evidence: EvidenceRecordStore) {
+        self.evidence = evidence;
     }
 
     /// Creates the node.
@@ -836,7 +867,7 @@ impl Graph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::PropertyValue;
+    use crate::{EvidenceLocator, PropertyValue};
 
     fn setup_graph_with_relationship() -> (Graph, NodeId, NodeId, RelationshipId) {
         let mut graph = Graph::new();
@@ -1231,6 +1262,41 @@ mod tests {
                 .get_relationship_version(&relationship_id, &missing_relationship_version)
                 .expect("relationship version lookup should succeed")
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn persistence_snapshot_preserves_evidence_records() {
+        let mut graph = Graph::new();
+        let evidence_id =
+            EvidenceId::new("evidence--snapshot-1").expect("evidence id should be valid");
+        graph
+            .create_evidence(
+                EvidenceInput::new(evidence_id.clone(), "document--snapshot", "payload")
+                    .with_content_sha256(
+                        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                    )
+                    .with_locator(EvidenceLocator::ByteRange { start: 10, end: 20 }),
+            )
+            .expect("evidence should be created");
+        graph
+            .create_node(NodeInput::new(["OpenCtiObject"]).with_evidence_ref(evidence_id.clone()))
+            .expect("node should be created");
+
+        let restored = Graph::from_persistence_snapshot(graph.persistence_snapshot())
+            .expect("snapshot should restore");
+
+        assert_eq!(restored.evidence_count(), 1);
+        assert_eq!(
+            restored
+                .evidence_by_id(&evidence_id)
+                .expect("evidence should survive snapshot")
+                .source_ref(),
+            "document--snapshot"
+        );
+        assert_eq!(
+            restored.list_nodes().expect("nodes should load")[0].evidence_refs(),
+            &[evidence_id]
         );
     }
 }

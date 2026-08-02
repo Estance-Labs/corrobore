@@ -292,3 +292,25 @@ fn openapi_documents_all_operational_surfaces_and_correlation_header() {
         "legacy /health should be explicitly deprecated"
     );
 }
+
+#[test]
+fn openapi_versions_the_evidence_aware_stix_import_contract() {
+    let openapi = include_str!("../../../docs/api/openapi.yaml");
+
+    for contract in [
+        "StixImportRequest:",
+        "StixEvidenceEnvelopeV1:",
+        "StixEvidenceRecordV1:",
+        "StixEvidenceLocatorV1:",
+        "StixRecordAnnotationV1:",
+        "const: '1.0'",
+        "content_sha256:",
+        "const: candidate",
+        "STIX 0-100 confidence normalized deterministically to native 0-1",
+    ] {
+        assert!(
+            openapi.contains(contract),
+            "OpenAPI is missing evidence import contract fragment: {contract}"
+        );
+    }
+}

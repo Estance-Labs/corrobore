@@ -18,7 +18,9 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
+
+use serde::{Deserialize, Serialize};
 
 use crate::{
     ClaimId, Confidence, EvidenceId, ExtractionRunId, GraphError, NodeId, RelationshipId,
@@ -29,7 +31,7 @@ use crate::{
 ///
 /// Classifies the origin of an evidence record to support provenance tracking
 /// and downstream trust evaluation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EvidenceSourceType {
     /// Evidence extracted from a structured or unstructured document.
     Document,
@@ -43,13 +45,49 @@ pub enum EvidenceSourceType {
     Other,
 }
 
+/// Bounded location of an evidence excerpt inside its source document.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum EvidenceLocator {
+    /// One one-based document page.
+    Page {
+        /// One-based page number.
+        page: u32,
+    },
+    /// One one-based paragraph, optionally scoped to a page.
+    Paragraph {
+        /// Optional one-based page number.
+        page: Option<u32>,
+        /// One-based paragraph number.
+        paragraph: u32,
+    },
+    /// One table cell, using one-based table, row and column coordinates.
+    TableCell {
+        /// Optional one-based page number.
+        page: Option<u32>,
+        /// One-based table number.
+        table: u32,
+        /// One-based row number.
+        row: u32,
+        /// One-based column number.
+        column: u32,
+    },
+    /// Half-open byte range in the source content.
+    ByteRange {
+        /// Inclusive byte offset.
+        start: u64,
+        /// Exclusive byte offset.
+        end: u64,
+    },
+}
+
 /// First-class evidence record with full provenance metadata.
 ///
 /// Captures the raw payload, source classification, extraction lineage, and
 /// reliability assessments for a single piece of evidence. Evidence records
 /// are attached to graph elements (nodes, relationships, claims) through
 /// [`EvidenceAttachment`].
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EvidenceRecord {
     id: EvidenceId,
     source_ref: String,
@@ -66,6 +104,8 @@ pub struct EvidenceRecord {
     language: Option<String>,
     source_reliability: Option<Confidence>,
     information_credibility: Option<Confidence>,
+    content_sha256: Option<String>,
+    locator: Option<EvidenceLocator>,
 }
 
 impl EvidenceRecord {
@@ -143,6 +183,16 @@ impl EvidenceRecord {
     pub fn information_credibility(&self) -> Option<Confidence> {
         self.information_credibility
     }
+
+    /// Returns the lowercase SHA-256 digest of the complete source content.
+    pub fn content_sha256(&self) -> Option<&str> {
+        self.content_sha256.as_deref()
+    }
+
+    /// Returns the bounded locator for this excerpt.
+    pub const fn locator(&self) -> Option<&EvidenceLocator> {
+        self.locator.as_ref()
+    }
 }
 
 /// Input contract for creating an explicit evidence record.
@@ -150,7 +200,7 @@ impl EvidenceRecord {
 /// Uses a builder pattern: construct with [`EvidenceInput::new`] and chain
 /// optional `with_*` methods to set provenance metadata before passing to
 /// [`EvidenceRecordStore::create_evidence`].
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EvidenceInput {
     id: EvidenceId,
     source_ref: String,
@@ -167,6 +217,8 @@ pub struct EvidenceInput {
     language: Option<String>,
     source_reliability: Option<Confidence>,
     information_credibility: Option<Confidence>,
+    content_sha256: Option<String>,
+    locator: Option<EvidenceLocator>,
 }
 
 impl EvidenceInput {
@@ -201,6 +253,8 @@ impl EvidenceInput {
             source_reliability: None,
             // Information credibility.
             information_credibility: None,
+            content_sha256: None,
+            locator: None,
         }
     }
 
@@ -268,6 +322,18 @@ impl EvidenceInput {
     /// Sets the information credibility confidence score.
     pub fn with_information_credibility(mut self, information_credibility: Confidence) -> Self {
         self.information_credibility = Some(information_credibility);
+        self
+    }
+
+    /// Sets the lowercase SHA-256 digest of the complete source content.
+    pub fn with_content_sha256(mut self, content_sha256: impl Into<String>) -> Self {
+        self.content_sha256 = Some(content_sha256.into());
+        self
+    }
+
+    /// Sets the bounded source locator.
+    pub fn with_locator(mut self, locator: EvidenceLocator) -> Self {
+        self.locator = Some(locator);
         self
     }
 
@@ -341,12 +407,60 @@ impl EvidenceInput {
             ));
         }
 
+        self.validate_evidence_contract()?;
+
+        Ok(())
+    }
+
+    fn validate_evidence_contract(&self) -> Result<(), GraphError> {
+        if let Some(digest) = self.content_sha256.as_deref()
+            && (digest.len() != 64
+                || !digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
+        {
+            return Err(GraphError::InvalidPropertyValue(
+                "evidence content_sha256 must be 64 lowercase hexadecimal characters".to_owned(),
+            ));
+        }
+
+        let Some(locator) = self.locator.as_ref() else {
+            return Ok(());
+        };
+        const MAX_PAGE: u32 = 1_000_000;
+        const MAX_ORDINAL: u32 = 1_000_000;
+        let valid_ordinal = |value: u32| (1..=MAX_ORDINAL).contains(&value);
+        let valid_page = |value: u32| (1..=MAX_PAGE).contains(&value);
+        let valid = match locator {
+            EvidenceLocator::Page { page } => valid_page(*page),
+            EvidenceLocator::Paragraph { page, paragraph } => {
+                page.is_none_or(valid_page) && valid_ordinal(*paragraph)
+            }
+            EvidenceLocator::TableCell {
+                page,
+                table,
+                row,
+                column,
+            } => {
+                page.is_none_or(valid_page)
+                    && valid_ordinal(*table)
+                    && valid_ordinal(*row)
+                    && valid_ordinal(*column)
+            }
+            EvidenceLocator::ByteRange { start, end } => start < end,
+        };
+        if !valid {
+            return Err(GraphError::InvalidPropertyValue(
+                "evidence locator must use positive bounded ordinals or a non-empty byte range"
+                    .to_owned(),
+            ));
+        }
         Ok(())
     }
 }
 
 /// Graph element that can be the target of an evidence attachment.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EvidenceAttachmentTarget {
     /// A graph node.
     Node(NodeId),
@@ -381,7 +495,7 @@ impl EvidenceAttachmentTarget {
 }
 
 /// Links an evidence record to a specific graph element.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvidenceAttachment {
     evidence_id: EvidenceId,
     target: EvidenceAttachmentTarget,
@@ -403,9 +517,9 @@ impl EvidenceAttachment {
 ///
 /// Manages the lifecycle of [`EvidenceRecord`] instances and validates that
 /// attachment targets are registered before allowing an evidence link.
-#[derive(Default)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct EvidenceRecordStore {
-    records: HashMap<EvidenceId, EvidenceRecord>,
+    records: Vec<EvidenceRecord>,
     attachments: Vec<EvidenceAttachment>,
     known_node_targets: HashSet<NodeId>,
     known_relationship_targets: HashSet<RelationshipId>,
@@ -444,15 +558,41 @@ impl EvidenceRecordStore {
             language: input.language,
             source_reliability: input.source_reliability,
             information_credibility: input.information_credibility,
+            content_sha256: input.content_sha256,
+            locator: input.locator,
         };
 
-        self.records.insert(evidence_id.clone(), record);
+        if let Some(existing) = self
+            .records
+            .iter()
+            .find(|existing| existing.id == evidence_id)
+        {
+            if existing == &record {
+                return Ok(evidence_id);
+            }
+            return Err(GraphError::InvalidPropertyValue(format!(
+                "conflicting evidence record for {}",
+                evidence_id.as_str()
+            )));
+        }
+
+        self.records.push(record);
         Ok(evidence_id)
     }
 
     /// Returns the evidence record for the given ID, if it exists.
     pub fn evidence_by_id(&self, evidence_id: &EvidenceId) -> Option<&EvidenceRecord> {
-        self.records.get(evidence_id)
+        self.records.iter().find(|record| &record.id == evidence_id)
+    }
+
+    /// Returns the number of unique durable evidence records.
+    pub fn len(&self) -> usize {
+        self.records.len()
+    }
+
+    /// Returns whether the store contains no evidence records.
+    pub fn is_empty(&self) -> bool {
+        self.records.is_empty()
     }
 
     /// Registers a node as a valid attachment target.
@@ -488,7 +628,7 @@ impl EvidenceRecordStore {
         evidence_id: EvidenceId,
         target: EvidenceAttachmentTarget,
     ) -> Result<(), GraphError> {
-        if !self.records.contains_key(&evidence_id) {
+        if self.evidence_by_id(&evidence_id).is_none() {
             return Err(GraphError::EvidenceNotFound(evidence_id));
         }
 
@@ -518,10 +658,13 @@ impl EvidenceRecordStore {
             }
         }
 
-        self.attachments.push(EvidenceAttachment {
+        let attachment = EvidenceAttachment {
             evidence_id,
             target,
-        });
+        };
+        if !self.attachments.contains(&attachment) {
+            self.attachments.push(attachment);
+        }
 
         Ok(())
     }
@@ -589,5 +732,104 @@ mod tests {
         error,
         GraphError::NodeNotFound(node_id) if node_id == missing_node
         ));
+    }
+
+    #[test]
+    fn evidence_replay_is_idempotent_but_conflicting_duplicates_are_rejected() {
+        let mut store = EvidenceRecordStore::new();
+        let id = evidence_id("evidence--stable-1");
+        let input = EvidenceInput::new(id.clone(), "document--1", "payload")
+            .with_content_sha256("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            .with_locator(EvidenceLocator::Paragraph {
+                page: Some(7),
+                paragraph: 2,
+            });
+
+        store
+            .create_evidence(input.clone())
+            .expect("first evidence write should succeed");
+        store
+            .create_evidence(input)
+            .expect("identical evidence replay should be idempotent");
+        assert_eq!(store.len(), 1);
+
+        let error = store
+            .create_evidence(
+                EvidenceInput::new(id, "document--1", "conflicting payload")
+                    .with_content_sha256(
+                        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    )
+                    .with_locator(EvidenceLocator::Paragraph {
+                        page: Some(7),
+                        paragraph: 2,
+                    }),
+            )
+            .expect_err("conflicting duplicate evidence should fail");
+        assert!(matches!(
+            error,
+            GraphError::InvalidPropertyValue(message)
+                if message == "conflicting evidence record for evidence--stable-1"
+        ));
+        assert_eq!(store.len(), 1);
+    }
+
+    #[test]
+    fn evidence_locator_and_digest_validate_at_the_core_boundary() {
+        let mut store = EvidenceRecordStore::new();
+        let invalid_page = store
+            .create_evidence(
+                EvidenceInput::new(evidence_id("evidence--invalid-page"), "document--1", "x")
+                    .with_content_sha256(
+                        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    )
+                    .with_locator(EvidenceLocator::Page { page: 0 }),
+            )
+            .expect_err("page zero should fail");
+        assert!(matches!(invalid_page, GraphError::InvalidPropertyValue(_)));
+
+        let invalid_digest = store
+            .create_evidence(
+                EvidenceInput::new(evidence_id("evidence--invalid-digest"), "document--1", "x")
+                    .with_content_sha256("not-a-sha256")
+                    .with_locator(EvidenceLocator::Page { page: 1 }),
+            )
+            .expect_err("invalid digest should fail");
+        assert!(matches!(
+            invalid_digest,
+            GraphError::InvalidPropertyValue(_)
+        ));
+    }
+
+    #[test]
+    fn evidence_store_round_trips_through_serde() {
+        let mut store = EvidenceRecordStore::new();
+        let id = evidence_id("evidence--persisted-1");
+        store
+            .create_evidence(
+                EvidenceInput::new(id.clone(), "document--persisted", "payload")
+                    .with_content_sha256(
+                        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    )
+                    .with_locator(EvidenceLocator::TableCell {
+                        page: Some(9),
+                        table: 1,
+                        row: 3,
+                        column: 2,
+                    }),
+            )
+            .expect("evidence should be created");
+
+        let encoded = serde_json::to_vec(&store).expect("store should serialize");
+        let restored: EvidenceRecordStore =
+            serde_json::from_slice(&encoded).expect("store should deserialize");
+
+        assert_eq!(restored.len(), 1);
+        assert_eq!(
+            restored
+                .evidence_by_id(&id)
+                .expect("evidence should survive")
+                .source_ref(),
+            "document--persisted"
+        );
     }
 }
