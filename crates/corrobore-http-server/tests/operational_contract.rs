@@ -314,3 +314,21 @@ fn openapi_versions_the_evidence_aware_stix_import_contract() {
         );
     }
 }
+
+#[test]
+fn openapi_documents_accountable_dependency_safe_stix_receipts() {
+    let openapi = include_str!("../../../docs/api/openapi.yaml");
+
+    for contract in [
+        "StixImportObjectOutcome:",
+        "StixImportMutationMetrics:",
+        "enum: [created, updated, duplicate, rejected, unresolved_reference, failed]",
+        "applied mutations.",
+    ] {
+        assert!(
+            openapi.contains(contract)
+                || include_str!("../../../docs/user-guide/http-server.md").contains(contract),
+            "documentation is missing accountable STIX import contract: {contract}"
+        );
+    }
+}
