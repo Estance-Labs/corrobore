@@ -247,6 +247,12 @@ impl NodeInput {
         self
     }
 
+    /// Attaches one first-class evidence record by stable identifier.
+    pub fn with_evidence_ref(mut self, evidence_id: EvidenceId) -> Self {
+        self.evidence_refs.push(evidence_id);
+        self
+    }
+
     /// Validate.
     pub fn validate(&self) -> Result<(), GraphError> {
         if self.labels.is_empty() {

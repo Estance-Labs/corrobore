@@ -124,6 +124,29 @@ pub struct EngineRequest {
     budget_ref: Option<String>,
 }
 
+/// Trusted runtime context for one atomic typed graph mutation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EngineMutationContext {
+    workspace_id: String,
+    session_id: String,
+    budget_ref: String,
+}
+
+impl EngineMutationContext {
+    /// Creates a mutation context supplied by the authenticated host boundary.
+    pub fn new(
+        workspace_id: impl Into<String>,
+        session_id: impl Into<String>,
+        budget_ref: impl Into<String>,
+    ) -> Self {
+        Self {
+            workspace_id: workspace_id.into(),
+            session_id: session_id.into(),
+            budget_ref: budget_ref.into(),
+        }
+    }
+}
+
 impl EngineRequest {
     /// Creates a public engine request with no context overrides.
     pub fn new(query: impl Into<String>, mode: EngineRequestMode) -> Self {
@@ -463,10 +486,16 @@ impl CorroboreEngineBuilder {
             .map_err(EngineError::Persistence)?;
 
         Ok(CorroboreEngine {
-            gateway: CypherGateway::with_graph(runtime_policy, budget, execution_policy, graph),
+            gateway: CypherGateway::with_graph(
+                runtime_policy.clone(),
+                budget,
+                execution_policy,
+                graph,
+            ),
             workspace_id,
             session_id,
             budget_ref,
+            runtime_policy,
             persistence,
             core_read_metrics: CoreReadMetrics::default(),
             security_audit_events: Vec::new(),
@@ -483,6 +512,7 @@ pub struct CorroboreEngine {
     workspace_id: WorkspaceId,
     session_id: SessionId,
     budget_ref: CypherBudgetRef,
+    runtime_policy: RuntimePolicy,
     persistence: Option<Box<dyn EnginePersistence>>,
     core_read_metrics: CoreReadMetrics,
     security_audit_events: Vec<SecurityAuditEvent>,
@@ -708,6 +738,60 @@ impl CorroboreEngine {
     /// Returns an immutable view of the runtime graph.
     pub fn graph(&self) -> &Graph {
         self.gateway.graph()
+    }
+
+    /// Applies one typed graph mutation atomically and persists it as one
+    /// transition when durable storage is configured.
+    pub fn mutate_graph_atomically<T, F>(
+        &mut self,
+        context: EngineMutationContext,
+        mutation: F,
+    ) -> Result<T, EngineError>
+    where
+        F: FnOnce(&mut Graph) -> Result<T, GraphError>,
+    {
+        WorkspaceId::new(context.workspace_id).map_err(|error| {
+            EngineError::InvalidConfiguration {
+                field: "workspace_id",
+                reason: error.to_string(),
+            }
+        })?;
+        SessionId::new(context.session_id).map_err(|error| EngineError::InvalidConfiguration {
+            field: "session_id",
+            reason: error.to_string(),
+        })?;
+        CypherBudgetRef::new(context.budget_ref).map_err(|error| {
+            EngineError::InvalidConfiguration {
+                field: "budget_ref",
+                reason: error.to_string(),
+            }
+        })?;
+        if !self.runtime_policy.mutation_permissions
+            || !self
+                .runtime_policy
+                .allowed_request_modes
+                .contains(&shared_runtime::CypherRequestMode::Mutation)
+        {
+            return Err(EngineError::InvalidConfiguration {
+                field: "mutation_policy",
+                reason: "runtime policy disallows typed graph mutations".to_owned(),
+            });
+        }
+
+        // Durable paged hosts start payload-cold. Hydrate the complete current
+        // graph before deriving an idempotent typed transition.
+        self.prepare_graph_for_query("MATCH (n)-[r]->(m) RETURN n, r, m")?;
+        let previous = self.gateway.graph().clone();
+        let mut next = previous.clone();
+        let result = mutation(&mut next)?;
+        if let Some(adapter) = self.persistence.as_mut()
+            && let Err(error) = adapter.persist_graph_transition(&previous, &next)
+        {
+            return Err(EngineError::Persistence(error));
+        }
+        self.advanced_query_cache.clear();
+        self.gateway.replace_graph(next);
+        Ok(result)
     }
 
     /// Exports the current graph as a deterministic STIX subset bundle.

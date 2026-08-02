@@ -16,8 +16,8 @@ use std::{
 };
 
 use graph_core::{
-    AdjacencyDirection, Graph, GraphPager, GraphPersistenceSnapshot, GraphSequenceFloor, Node,
-    NodeId, PropertyValue, RecordStatus, Relationship, RelationshipId,
+    AdjacencyDirection, EvidenceRecordStore, Graph, GraphPager, GraphPersistenceSnapshot,
+    GraphSequenceFloor, Node, NodeId, PropertyValue, RecordStatus, Relationship, RelationshipId,
 };
 use opencti_access::AccessContext;
 use opencti_access::{AccessMetadata, OpenCtiAccessPolicy};
@@ -67,6 +67,8 @@ const FILE_CONTENT_MAX_CANDIDATES: usize = 100_000;
 const FILE_CONTENT_SNIPPET_CHARS: usize = 240;
 const FILE_CONTENT_MAX_ATTEMPTS: u32 = 3;
 const FILE_CONTENT_LEASE_MS: u64 = 60_000;
+const EVIDENCE_SIDECAR: &str = "evidence-records-v1.json";
+const EVIDENCE_SIDECAR_NEXT: &str = "evidence-records-v1.next.json";
 
 /// Bounded resident-record budgets for the standalone canonical store.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -341,6 +343,7 @@ pub struct CanonicalEngineStore {
     resident_policy_fingerprint: Option<String>,
     last_projection_stats: CanonicalProjectionStats,
     file_content_index: Option<FileContentIndex>,
+    evidence: EvidenceRecordStore,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -385,6 +388,8 @@ impl CanonicalEngineStore {
             validate_canonical_append_logs(&root)?;
         }
         let recovered = recover_atomic_persistent_runtime_state_with_report(&root)?;
+        recover_evidence_sidecar(&root)?;
+        let evidence = load_evidence_sidecar(&root)?;
         let mut store = Self {
             root,
             state: recovered.state,
@@ -404,6 +409,7 @@ impl CanonicalEngineStore {
             resident_policy_fingerprint: None,
             last_projection_stats: CanonicalProjectionStats::default(),
             file_content_index: None,
+            evidence,
         };
         store.migrate_legacy_snapshot_if_needed()?;
         store.refresh_index_stats();
@@ -566,8 +572,10 @@ impl CanonicalEngineStore {
                 "selected"
             },
         };
-        Graph::from_current_records(nodes, relationships, self.sequence_floor())
-            .map_err(graph_error)
+        let mut graph = Graph::from_current_records(nodes, relationships, self.sequence_floor())
+            .map_err(graph_error)?;
+        graph.replace_evidence_store(self.evidence.clone());
+        Ok(graph)
     }
 
     /// Persist only current record versions changed by an engine transition,
@@ -600,26 +608,42 @@ impl CanonicalEngineStore {
         crash_stage: Option<MutationCrashStage>,
     ) -> GraphStorageResult<AtomicPersistentMutationOutcome> {
         let batch = self.build_mutation_batch(previous, current, transaction_id)?;
+        let evidence_changed = previous.evidence_store() != current.evidence_store();
         if batch.node_records.is_empty()
             && batch.relationship_records.is_empty()
             && batch.outgoing_adjacency.is_empty()
             && batch.incoming_adjacency.is_empty()
         {
+            if evidence_changed {
+                stage_evidence_sidecar(&self.root, current.evidence_store())?;
+                promote_evidence_sidecar(&self.root)?;
+                self.evidence = current.evidence_store().clone();
+            }
             return Ok(AtomicPersistentMutationOutcome {
-                applied: false,
+                applied: evidence_changed,
                 mutation_sequence_number: None,
             });
         }
         let full_text_index = self.full_text_index()?;
         full_text_index.invalidate().map_err(full_text_error)?;
+        if evidence_changed {
+            stage_evidence_sidecar(&self.root, current.evidence_store())?;
+        }
         let mut batch = batch;
         batch.audit_events = audit_events;
-        let outcome = apply_atomic_persistent_mutation_batch(
-            &self.root,
-            &mut self.state,
-            batch,
-            crash_stage,
-        )?;
+        let outcome =
+            apply_atomic_persistent_mutation_batch(&self.root, &mut self.state, batch, crash_stage);
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                discard_staged_evidence_sidecar(&self.root);
+                return Err(error);
+            }
+        };
+        if evidence_changed {
+            promote_evidence_sidecar(&self.root)?;
+            self.evidence = current.evidence_store().clone();
+        }
         // A mutation may replace any payload in the operational projection.
         // Drop the request cache so the next read observes cataloged versions.
         self.resident_nodes.clear();
@@ -2272,6 +2296,72 @@ fn encode_payload(
         bytes,
         checksum,
     })
+}
+
+fn evidence_sidecar_paths(root: &StorageRoot) -> (PathBuf, PathBuf) {
+    let runtime = root.path().join("runtime");
+    (
+        runtime.join(EVIDENCE_SIDECAR),
+        runtime.join(EVIDENCE_SIDECAR_NEXT),
+    )
+}
+
+fn load_evidence_sidecar(root: &StorageRoot) -> GraphStorageResult<EvidenceRecordStore> {
+    let (current, _) = evidence_sidecar_paths(root);
+    if !current.is_file() {
+        return Ok(EvidenceRecordStore::new());
+    }
+    let bytes =
+        fs::read(&current).map_err(|error| io_error("load_evidence_sidecar", &current, error))?;
+    serde_json::from_slice(&bytes).map_err(|error| GraphStorageError::DecodeFailed {
+        format: "evidence-records-json-v1".to_owned(),
+        reason: error.to_string(),
+    })
+}
+
+fn stage_evidence_sidecar(
+    root: &StorageRoot,
+    evidence: &EvidenceRecordStore,
+) -> GraphStorageResult<()> {
+    let (current, next) = evidence_sidecar_paths(root);
+    let directory = current.parent().expect("evidence sidecar has a parent");
+    fs::create_dir_all(directory)
+        .map_err(|error| io_error("stage_evidence_sidecar", directory, error))?;
+    let mut bytes =
+        serde_json::to_vec(evidence).map_err(|error| GraphStorageError::OperationFailed {
+            operation: "stage_evidence_sidecar",
+            message: error.to_string(),
+        })?;
+    bytes.push(b'\n');
+    let mut file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&next)
+        .map_err(|error| io_error("stage_evidence_sidecar", &next, error))?;
+    file.write_all(&bytes)
+        .and_then(|_| file.sync_all())
+        .map_err(|error| io_error("stage_evidence_sidecar", &next, error))
+}
+
+fn promote_evidence_sidecar(root: &StorageRoot) -> GraphStorageResult<()> {
+    let (current, next) = evidence_sidecar_paths(root);
+    fs::rename(&next, &current).map_err(|error| io_error("promote_evidence_sidecar", &next, error))
+}
+
+fn recover_evidence_sidecar(root: &StorageRoot) -> GraphStorageResult<()> {
+    let (_, next) = evidence_sidecar_paths(root);
+    if next.is_file() {
+        promote_evidence_sidecar(root)?;
+    }
+    Ok(())
+}
+
+fn discard_staged_evidence_sidecar(root: &StorageRoot) {
+    let (_, next) = evidence_sidecar_paths(root);
+    if next.is_file() {
+        let _ = fs::remove_file(next);
+    }
 }
 
 fn placeholder_ref(segment: StorageSegment) -> StorageRef {

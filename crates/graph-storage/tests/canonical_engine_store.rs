@@ -8,7 +8,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use graph_core::{Graph, GraphPager, NodeInput, NodePatch, PropertyValue, RelationshipInput};
+use graph_core::{
+    EvidenceId, EvidenceInput, EvidenceLocator, Graph, GraphPager, NodeInput, NodePatch,
+    PropertyValue, RelationshipInput,
+};
 use graph_storage::{
     CanonicalEngineStore, CanonicalProjectionRequest, CanonicalStoreOptions, DurableTransactionId,
     GraphId, RecordFormat, StorageManifest, StorageTimestamp, StorageVersion,
@@ -98,6 +101,63 @@ fn startup_recovers_metadata_without_hydrating_payloads() {
     assert_eq!(reopened.stats().page_ins, 0);
     assert_eq!(reopened.stats().resident_hot_nodes, 0);
     assert_eq!(reopened.catalog().latest_node_records.len(), 1);
+
+    let _ = fs::remove_dir_all(root.path());
+}
+
+#[test]
+fn canonical_store_recovers_first_class_evidence_with_attached_records() {
+    let root = empty_store("evidence-recovery");
+    let mut store =
+        CanonicalEngineStore::open(root.clone(), CanonicalStoreOptions::default()).unwrap();
+    let mut current = Graph::new();
+    let evidence_id = EvidenceId::new("evidence--canonical-store-1").unwrap();
+    current
+        .create_evidence(
+            EvidenceInput::new(evidence_id.clone(), "document--canonical-store", "excerpt")
+                .with_content_sha256(
+                    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                )
+                .with_locator(EvidenceLocator::Page { page: 5 }),
+        )
+        .unwrap();
+    current
+        .create_node(
+            NodeInput::new(["OpenCtiObject"])
+                .with_property(
+                    "opencti.canonical_id",
+                    PropertyValue::String("indicator--canonical-store".to_owned()),
+                )
+                .with_evidence_ref(evidence_id.clone()),
+        )
+        .unwrap();
+    store
+        .commit_transition(
+            &Graph::new(),
+            &current,
+            DurableTransactionId::new("tx--evidence-recovery").unwrap(),
+            None,
+        )
+        .unwrap();
+    drop(store);
+
+    let mut reopened =
+        CanonicalEngineStore::open(root.clone(), CanonicalStoreOptions::default()).unwrap();
+    let projection = reopened
+        .load_projection(CanonicalProjectionRequest::all())
+        .unwrap();
+    assert_eq!(projection.evidence_count(), 1);
+    assert_eq!(
+        projection
+            .evidence_by_id(&evidence_id)
+            .unwrap()
+            .source_ref(),
+        "document--canonical-store"
+    );
+    assert_eq!(
+        projection.list_nodes().unwrap()[0].evidence_refs(),
+        &[evidence_id]
+    );
 
     let _ = fs::remove_dir_all(root.path());
 }

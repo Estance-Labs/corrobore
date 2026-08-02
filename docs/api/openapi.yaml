@@ -140,6 +140,106 @@ components:
         objects:
           type: array
           items: {type: object}
+    StixImportRequest:
+      type: object
+      required: [bundle]
+      properties:
+        bundle: {$ref: '#/components/schemas/StixBundle'}
+        evidence:
+          $ref: '#/components/schemas/StixEvidenceEnvelopeV1'
+        workspace_id:
+          type: string
+          description: Trusted runtime workspace context; never read from the STIX bundle.
+        session_id:
+          type: string
+          description: Trusted runtime session context; never read from the STIX bundle.
+        budget_ref:
+          type: string
+          description: Trusted runtime budget context; never read from the STIX bundle.
+    StixEvidenceEnvelopeV1:
+      type: object
+      required: [schema_version, records, annotations]
+      properties:
+        schema_version:
+          type: string
+          const: '1.0'
+        records:
+          type: array
+          items: {$ref: '#/components/schemas/StixEvidenceRecordV1'}
+        annotations:
+          type: object
+          description: Native candidate metadata keyed by an exact STIX ID present in bundle.objects.
+          additionalProperties:
+            $ref: '#/components/schemas/StixRecordAnnotationV1'
+    StixEvidenceRecordV1:
+      type: object
+      required: [id, source_id, content_sha256, payload, locator]
+      properties:
+        id:
+          type: string
+          description: Stable caller-owned evidence identifier.
+        source_id:
+          type: string
+          description: Stable document or source identity.
+        content_sha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Lowercase SHA-256 digest of the complete source content.
+        payload:
+          type: string
+          minLength: 1
+          description: Exact bounded excerpt supporting the annotated record.
+        locator: {$ref: '#/components/schemas/StixEvidenceLocatorV1'}
+        source_url: {type: string, format: uri}
+        extractor_id: {type: string}
+        model_version: {type: string}
+        language: {type: string}
+    StixEvidenceLocatorV1:
+      oneOf:
+        - type: object
+          required: [type, page]
+          properties:
+            type: {type: string, const: page}
+            page: {type: integer, minimum: 1, maximum: 1000000}
+        - type: object
+          required: [type, paragraph]
+          properties:
+            type: {type: string, const: paragraph}
+            page: {type: integer, minimum: 1, maximum: 1000000}
+            paragraph: {type: integer, minimum: 1, maximum: 1000000}
+        - type: object
+          required: [type, table, row, column]
+          properties:
+            type: {type: string, const: table_cell}
+            page: {type: integer, minimum: 1, maximum: 1000000}
+            table: {type: integer, minimum: 1, maximum: 1000000}
+            row: {type: integer, minimum: 1, maximum: 1000000}
+            column: {type: integer, minimum: 1, maximum: 1000000}
+        - type: object
+          required: [type, start, end]
+          properties:
+            type: {type: string, const: byte_range}
+            start: {type: integer, minimum: 0}
+            end: {type: integer, minimum: 1}
+          description: Half-open byte range; end must be greater than start.
+      discriminator:
+        propertyName: type
+    StixRecordAnnotationV1:
+      type: object
+      properties:
+        evidence_refs:
+          type: array
+          uniqueItems: true
+          items: {type: string}
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: STIX 0-100 confidence normalized deterministically to native 0-1.
+        status:
+          type: string
+          const: candidate
+          description: Import cannot assert validated, exportable or exported authority.
     ImportResult:
       type: object
       required: [processed_objects, applied_mutations, rejected_mutations, errors]
@@ -1225,13 +1325,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [bundle]
-              properties:
-                bundle: {$ref: '#/components/schemas/StixBundle'}
-                workspace_id: {type: string}
-                session_id: {type: string}
-                budget_ref: {type: string}
+              $ref: '#/components/schemas/StixImportRequest'
       responses:
         '200':
           description: Import summary
@@ -1243,6 +1337,8 @@ paths:
                   ok: {type: boolean, const: true}
                   result: {$ref: '#/components/schemas/ImportResult'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '400':
+          $ref: '#/components/responses/BadRequest'
 
   /v1/import/stix/file:
     post:
