@@ -111,6 +111,7 @@ nav:
     - Elastic-free OpenCTI Acceptance: acceptance/opencti-elastic-free.md
     - Release Notes Process: developer-guide/release-notes-process.md
   - Release Notes:
+    - v0.3.3: release-notes/v0.3.3.md
     - v0.3.2: release-notes/v0.3.2.md
     - v0.3.1: release-notes/v0.3.1.md
     - v0.3.0: release-notes/v0.3.0.md

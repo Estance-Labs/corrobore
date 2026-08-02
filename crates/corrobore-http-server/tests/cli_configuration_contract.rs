@@ -159,7 +159,7 @@ fn status_reports_ready_when_operational_contract_is_compatible() {
     let port = listener.local_addr().expect("fixture address").port();
     let fixture = spawn_operational_fixture(
         listener,
-        r#"{"service":"corrobore-http-server","version":"0.3.2","commit":"fixture","build_target":"test","storage_compatibility":{"supported_versions":["V1"],"supported_record_formats":["JsonLinesV1"],"active_storage_version":null,"active_record_format":null}}"#,
+        r#"{"service":"corrobore-http-server","version":"0.3.3","commit":"fixture","build_target":"test","storage_compatibility":{"supported_versions":["V1"],"supported_record_formats":["JsonLinesV1"],"active_storage_version":null,"active_record_format":null}}"#,
     );
 
     let output = status_command(port);
@@ -172,7 +172,7 @@ fn status_reports_ready_when_operational_contract_is_compatible() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("ready"));
-    assert!(stdout.contains("version=0.3.2"));
+    assert!(stdout.contains("version=0.3.3"));
 }
 
 #[test]
