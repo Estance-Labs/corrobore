@@ -154,7 +154,7 @@ to `/health/ready`.
 {
   "status": "ok",
   "service": "corrobore-http-server",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "lifecycle_state": "ready",
   "storage_mode": "ephemeral",
   "uptime_ms": 1200,
