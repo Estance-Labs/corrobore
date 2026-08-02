@@ -143,9 +143,12 @@ pub async fn validate_stix(
                 Ok::<_, ApiError>((issues, playbooks, Some(corrected_objects)))
             } else {
                 // --- source=graph: native domain validation ---
-                let engine = engine
+                let mut engine = engine
                     .lock()
                     .map_err(|_| ApiError::internal("STATE_LOCK_FAILED", "engine lock poisoned"))?;
+                engine.hydrate_full_graph().map_err(|error| {
+                    ApiError::internal("GRAPH_HYDRATION_FAILED", error.to_string())
+                })?;
                 let (issues, playbooks) = validate_graph_nodes(
                     engine.graph(),
                     snapshot_id.as_deref(),

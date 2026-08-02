@@ -617,13 +617,19 @@ fn node_matches_import(
     annotation: Option<&NativeImportAnnotation>,
     confidence: Option<Confidence>,
 ) -> bool {
-    node.property("opencti.raw") == Some(&PropertyValue::Json(raw.clone()))
-        && node.status() == RecordStatus::Candidate
-        && node.confidence() == confidence
-        && node.evidence_refs()
-            == annotation
-                .map(|annotation| annotation.evidence_refs.as_slice())
-                .unwrap_or_default()
+    if node.property("opencti.raw") != Some(&PropertyValue::Json(raw.clone())) {
+        return false;
+    }
+
+    // Import annotations can seed candidates, but they are not authoritative
+    // over a later reviewed or exported state. Replaying the same source object
+    // must not roll back supported confidence, evidence, or status corrections.
+    node.status() != RecordStatus::Candidate
+        || (node.confidence() == confidence
+            && node.evidence_refs()
+                == annotation
+                    .map(|annotation| annotation.evidence_refs.as_slice())
+                    .unwrap_or_default())
 }
 
 fn relationship_matches_import(
@@ -637,12 +643,12 @@ fn relationship_matches_import(
     relationship.source() == source
         && relationship.target() == target
         && relationship.property("opencti.raw") == Some(&PropertyValue::Json(raw.clone()))
-        && relationship.status() == RecordStatus::Candidate
-        && relationship.confidence() == confidence
-        && relationship.evidence_refs()
-            == annotation
-                .map(|annotation| annotation.evidence_refs.as_slice())
-                .unwrap_or_default()
+        && (relationship.status() != RecordStatus::Candidate
+            || (relationship.confidence() == confidence
+                && relationship.evidence_refs()
+                    == annotation
+                        .map(|annotation| annotation.evidence_refs.as_slice())
+                        .unwrap_or_default()))
 }
 
 fn native_confidence(

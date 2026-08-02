@@ -628,6 +628,7 @@ const STIX_OBSERVABLE_TYPES: &[&str] = &[
     "email-addr",
     "email-message",
     "email-mime-part-type",
+    "file",
     "hostname",
     "iccid",
     "imei",
@@ -705,7 +706,6 @@ const INTERNAL_OBJECT_TYPES: &[&str] = &[
     "workflowdefinition",
     "workflowinstance",
     "workspace",
-    "file",
 ];
 
 const STIX_REF_RELATIONSHIP_TYPES: &[&str] = &[

@@ -55,6 +55,8 @@ jobs:
               - 'scripts/standalone-acceptance-contract.test.mjs'
               - 'scripts/standalone-docs-contract.test.mjs'
               - 'scripts/standalone-acceptance.sh'
+              - 'scripts/report-to-stix-acceptance.sh'
+              - 'scripts/report-to-stix-acceptance-contract.test.mjs'
               - '.github/workflows/standalone-acceptance.yml'
               - 'scripts/opencti-elastic-free-contract.test.mjs'
               - 'scripts/opencti-elastic-free-acceptance.sh'
@@ -119,7 +121,9 @@ jobs:
         run: node --test scripts/open-source-readiness.test.mjs
 
       - name: Validate standalone acceptance contracts
-        run: node --test scripts/standalone-acceptance-contract.test.mjs
+        run: |
+          node --test scripts/standalone-acceptance-contract.test.mjs
+          node --test scripts/report-to-stix-acceptance-contract.test.mjs
 
       # Asserts the standalone reference still covers every CLI flag, TOML field
       # and env var declared in the binary and config module.

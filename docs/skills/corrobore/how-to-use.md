@@ -11,6 +11,16 @@ license: MIT
 
 Corrobore stores entities, relationships, evidence, confidence, time, and audit history outside your context window.
 
+## Report-to-STIX boundary
+
+Corrobore accepts already-extracted structured candidates plus caller-owned evidence;
+PDF parsing, OCR, and LLM extraction happen outside Corrobore. Evidence ingestion retains
+source digests and bounded locators. Generic graph memory remains application-owned and is
+not automatically CTI. Licensed CTI validation uses the native domain provider, while the
+OpenCTI provider and OpenCTI endpoints are separate integration surfaces. See the
+[release-gating report-to-STIX acceptance](../../acceptance/report-to-stix.md) for the
+executable correction and export flow.
+
 ## Workflow
 
 1. Check service health when connectivity is uncertain.

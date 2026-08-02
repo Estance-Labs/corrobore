@@ -1,0 +1,64 @@
+{
+  "schema_version": "1.0",
+  "expected_import": {
+    "requested": 47,
+    "nodes": 17,
+    "relationships": 30,
+    "evidence_records": 3
+  },
+  "validation_issue_codes": [
+    "CTI_CONFIDENCE_TOO_LOW",
+    "CTI_EVIDENCE_REQUIRED"
+  ],
+  "corrections": {
+    "low_confidence_id": "malware--00000000-0000-4000-8000-000000000102",
+    "missing_evidence_id": "domain-name--00000000-0000-4000-8000-000000000602",
+    "evidence_id": "evidence--report-table-6-1-2-3",
+    "final_confidence": 0.95,
+    "final_status": "exportable"
+  },
+  "golden": {
+    "object_count": 47,
+    "intrusion_set_id": "intrusion-set--00000000-0000-4000-8000-000000000001",
+    "malware_ids": [
+      "malware--00000000-0000-4000-8000-000000000101",
+      "malware--00000000-0000-4000-8000-000000000102",
+      "malware--00000000-0000-4000-8000-000000000103"
+    ],
+    "technique_external_ids": [
+      "T1059",
+      "T1105",
+      "T1055",
+      "T1567"
+    ],
+    "report_id": "report--00000000-0000-4000-8000-000000000701",
+    "report_object_ref_count": 45,
+    "unknown_extension_object_id": "malware--00000000-0000-4000-8000-000000000103"
+  },
+  "negative_cases": [
+    {
+      "id": "dangling-reference",
+      "expected_code": "UNRESOLVED_STIX_REFERENCE"
+    },
+    {
+      "id": "contradictory-candidate",
+      "expected_code": "CONFLICTING_STIX_ID"
+    },
+    {
+      "id": "unknown-extension",
+      "expected_outcome": "preserved"
+    },
+    {
+      "id": "invalid-list",
+      "expected_code": "UNSUPPORTED_PARAMETER_TYPE"
+    },
+    {
+      "id": "provider-not-ready",
+      "expected_code": "DOMAIN_PROVIDER_NOT_READY"
+    },
+    {
+      "id": "license-missing",
+      "expected_code": "LICENSE_MODULE_MISSING"
+    }
+  ]
+}
