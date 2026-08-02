@@ -137,8 +137,38 @@ components:
       properties:
         type: {type: string, const: bundle}
         id: {type: string}
+        spec_version: {type: string, const: '2.1'}
         objects:
           type: array
+          items: {type: object}
+        export_metadata:
+          type: object
+          required: [snapshot_id, transaction_id, exporter_version, profile, mode, determinism_key]
+          properties:
+            snapshot_id: {type: string}
+            transaction_id: {type: string}
+            exporter_version: {type: string}
+            profile: {type: string, enum: [stix-mvp]}
+            mode: {type: string, enum: [strict, permissive]}
+            determinism_key: {type: string}
+        export_diagnostics:
+          type: object
+          required: [exclusions]
+          properties:
+            exclusions:
+              type: array
+              maxItems: 256
+              items:
+                type: object
+                required: [code, message, target_kind, record_id]
+                properties:
+                  code: {type: string}
+                  message: {type: string}
+                  target_kind: {type: string, enum: [node, relationship]}
+                  record_id: {type: string}
+        x_corrobore_evidence:
+          type: array
+          description: Retained native evidence records referenced by exported objects.
           items: {type: object}
     StixImportRequest:
       type: object
@@ -1886,11 +1916,26 @@ paths:
         - {name: profile, in: query, schema: {type: string, enum: [stix-mvp], default: stix-mvp}}
       responses:
         '200':
-          description: Raw STIX bundle
+          description: CTI-scoped raw STIX bundle with preserved canonical identities and evidence links
           content:
             application/json:
               schema: {$ref: '#/components/schemas/StixBundle'}
+        '400':
+          description: Strict export rejected named CTI readiness, identity, evidence, or endpoint findings
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorEnvelope'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: Enterprise CTI support or the licensed cti module is unavailable
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorEnvelope'}
+        '503':
+          description: CTI provider is not ready or lacks node.validate/v1
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorEnvelope'}
 
   /v1/sessions/start:
     post:

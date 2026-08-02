@@ -29,7 +29,9 @@ fn metadata(mode: ExportMode) -> ExportMetadata {
         "snapshot--epic-0010",
         TransactionId::new("transaction--epic-0010").expect("transaction ID should be valid"),
         "stix-mvp-v1",
-        ExportProfile::StixMvp,
+        // These tests exercise profile-neutral planning mechanics. CTI/STIX
+        // readiness and selection have their own issue-119 contract suite.
+        ExportProfile::FimiJsonMvp,
         mode,
         None,
     )

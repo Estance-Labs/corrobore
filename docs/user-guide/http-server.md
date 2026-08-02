@@ -695,6 +695,26 @@ Exports a raw STIX bundle (not the standard envelope). Query parameters:
 | `mode` | `strict` (`permissive` is also accepted) |
 | `profile` | `stix-mvp` |
 
+The route exports only eligible CTI records. Imported OpenCTI objects and
+relationships preserve their original STIX identity and fields; unrelated
+memory and receipt nodes are excluded. Every exported record must carry native
+confidence and retained evidence. Relationship endpoints always reference the
+actual exported object identifiers.
+
+Strict mode returns `EXPORT_PLAN_FAILED` (HTTP 400) with named readiness,
+identity, evidence, provider-validation, or endpoint issue codes. Permissive
+mode omits failing records and returns bounded machine-readable details in
+`export_diagnostics.exclusions`. Retained evidence referenced by exported
+objects is included in `x_corrobore_evidence`.
+
+| Error code | HTTP | Meaning |
+| :--- | :---: | :--- |
+| `FEATURE_NOT_AVAILABLE` | 403 | Enterprise CTI support is not compiled in. |
+| `LICENSE_MODULE_MISSING` | 403 | The runtime license does not enable `cti`. |
+| `DOMAIN_PROVIDER_NOT_READY` | 503 | No loaded, healthy CTI provider is available. |
+| `DOMAIN_PROVIDER_CAPABILITY_MISSING` | 503 | The CTI provider does not expose `node.validate/v1`. |
+| `EXPORT_PLAN_FAILED` | 400 | Strict CTI readiness or identity checks rejected the export; the message contains named issue codes. |
+
 ## `POST /v1/sessions/start`
 
 ```json

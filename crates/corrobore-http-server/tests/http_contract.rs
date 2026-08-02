@@ -24,6 +24,7 @@ use std::{
     collections::HashMap,
     fs,
     path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -87,6 +88,7 @@ fn test_app_with_store_dir_and_extra_env(
 }
 
 fn unique_store_dir(suffix: &str) -> PathBuf {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system time should be after unix epoch")
@@ -94,7 +96,8 @@ fn unique_store_dir(suffix: &str) -> PathBuf {
 
     std::env::temp_dir().join(format!(
         "corrobore-http-session-store-{}-{}",
-        suffix, millis
+        suffix,
+        format_args!("{millis}-{}", SEQUENCE.fetch_add(1, Ordering::Relaxed))
     ))
 }
 
@@ -345,11 +348,17 @@ async fn domain_validation_contract_invokes_real_c_provider() {
 
 #[cfg(all(unix, feature = "enterprise-cti"))]
 fn compile_c_provider_fixture() -> (PathBuf, PathBuf) {
+    compile_c_provider_fixture_with_capability("node.validate")
+}
+
+#[cfg(all(unix, feature = "enterprise-cti"))]
+fn compile_c_provider_fixture_with_capability(capability: &str) -> (PathBuf, PathBuf) {
     let root = unique_store_dir("c-domain-provider");
     fs::create_dir_all(&root).expect("provider root should be created");
     let source = root.join("provider.c");
-    fs::write(&source, include_str!("fixtures/domain_provider_v1.c"))
-        .expect("provider source should be written");
+    let source_code =
+        include_str!("fixtures/domain_provider_v1.c").replace("node.validate", capability);
+    fs::write(&source, source_code).expect("provider source should be written");
     let library_name = if cfg!(target_os = "macos") {
         "libcorrobore_domain_cti.dylib"
     } else {
@@ -393,7 +402,7 @@ fn compile_c_provider_fixture() -> (PathBuf, PathBuf) {
                 "library": library_name,
                 "sha256": hash,
                 "required": true,
-                "capabilities": [{"name": "node.validate", "version": "1"}]
+                "capabilities": [{"name": capability, "version": "1"}]
             }]
         })
         .to_string(),
@@ -794,8 +803,53 @@ async fn cypher_contract_restores_session_idle_when_request_is_invalid() {
 }
 
 #[tokio::test]
-async fn export_contract_uses_default_snapshot_when_missing() {
+async fn export_contract_fails_closed_when_cti_provider_is_unavailable() {
     let app = test_app();
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("/v1/export/stix")
+        .header(header::AUTHORIZATION, "Bearer token-123")
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app.oneshot(request).await.expect("request should respond");
+    let expected_status = if cfg!(feature = "enterprise-cti") {
+        StatusCode::SERVICE_UNAVAILABLE
+    } else {
+        StatusCode::FORBIDDEN
+    };
+    assert_eq!(response.status(), expected_status);
+
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body should be readable");
+    let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
+
+    let expected_code = if cfg!(feature = "enterprise-cti") {
+        "DOMAIN_PROVIDER_NOT_READY"
+    } else {
+        "FEATURE_NOT_AVAILABLE"
+    };
+    assert_eq!(payload["error"]["code"], expected_code);
+}
+
+#[cfg(all(unix, feature = "enterprise-cti"))]
+#[tokio::test]
+async fn export_contract_uses_default_snapshot_with_ready_cti_provider() {
+    let (provider_dir, manifest_file) = compile_c_provider_fixture();
+    let app = test_app_with_store_dir_and_extra_env(
+        unique_store_dir("export-ready-cti-provider"),
+        HashMap::from([
+            (
+                "CORROBORE_DOMAIN_PROVIDER_DIR".to_owned(),
+                provider_dir.display().to_string(),
+            ),
+            (
+                "CORROBORE_DOMAIN_PROVIDER_MANIFEST_FILE".to_owned(),
+                manifest_file.display().to_string(),
+            ),
+        ]),
+    );
     let request = Request::builder()
         .method(Method::GET)
         .uri("/v1/export/stix")
@@ -810,11 +864,72 @@ async fn export_contract_uses_default_snapshot_when_missing() {
         .await
         .expect("body should be readable");
     let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
-
     assert_eq!(payload["type"], "bundle");
     assert_eq!(
         payload["export_metadata"]["snapshot_id"],
         "snapshot--current"
+    );
+}
+
+#[cfg(feature = "enterprise-cti")]
+#[tokio::test]
+async fn export_contract_distinguishes_missing_cti_license() {
+    let app = test_app_with_store_dir_and_extra_env(
+        unique_store_dir("export-license-missing"),
+        HashMap::from([(
+            "CORROBORE_HTTP_LICENSED_MODULES".to_owned(),
+            "fimi".to_owned(),
+        )]),
+    );
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("/v1/export/stix")
+        .header(header::AUTHORIZATION, "Bearer token-123")
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app.oneshot(request).await.expect("request should respond");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body should be readable");
+    let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
+    assert_eq!(payload["error"]["code"], "LICENSE_MODULE_MISSING");
+}
+
+#[cfg(all(unix, feature = "enterprise-cti"))]
+#[tokio::test]
+async fn export_contract_distinguishes_missing_provider_capability() {
+    let (provider_dir, manifest_file) = compile_c_provider_fixture_with_capability("node.inspect");
+    let app = test_app_with_store_dir_and_extra_env(
+        unique_store_dir("export-provider-capability-missing"),
+        HashMap::from([
+            (
+                "CORROBORE_DOMAIN_PROVIDER_DIR".to_owned(),
+                provider_dir.display().to_string(),
+            ),
+            (
+                "CORROBORE_DOMAIN_PROVIDER_MANIFEST_FILE".to_owned(),
+                manifest_file.display().to_string(),
+            ),
+        ]),
+    );
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("/v1/export/stix")
+        .header(header::AUTHORIZATION, "Bearer token-123")
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app.oneshot(request).await.expect("request should respond");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body should be readable");
+    let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
+    assert_eq!(
+        payload["error"]["code"],
+        "DOMAIN_PROVIDER_CAPABILITY_MISSING"
     );
 }
 

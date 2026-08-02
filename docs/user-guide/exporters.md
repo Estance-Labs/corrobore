@@ -13,6 +13,32 @@ This guide targets the current `0.1.x` runtime baseline.
 
 The plan records logical `snapshot_id`, `transaction_id`, exporter version, profile, and strict/permissive mode. It projects the current graph; these metadata do not perform historical rollback.
 
+The `stix-mvp` profile is CTI-scoped. It selects supported imported OpenCTI
+families and documented graph-native CTI labels; domain-neutral memories,
+receipts, and unrelated graph records are not retyped as STIX identities.
+Imported objects and relationships keep their original STIX `id`, `type`,
+standard fields, supported custom fields, and relationship semantics. Native
+confidence is projected to the STIX 0-100 scale, while
+`x_corrobore_evidence_refs` points to retained records in the bundle-level
+`x_corrobore_evidence` array.
+
+Generated identifiers are limited to graph-native records with a documented
+supported CTI label and no valid `stix_id` or `external_id`. They use the
+exported STIX type plus a deterministic hash of the native record identifier.
+Unknown labels and unsupported OpenCTI families never receive a generated
+identity.
+
+Strict mode rejects the export with named findings when an eligible CTI record
+is not export-ready, lacks confidence or retained evidence, has malformed
+canonical identity, fails provider validation, or references an excluded
+endpoint. Permissive mode omits those records and returns at most 256
+machine-readable entries in `export_diagnostics.exclusions`; it never creates a
+fallback STIX identity for an unsupported record.
+
+The HTTP route is fail-closed: it requires enterprise CTI support, a valid
+`cti` license claim, and a ready provider exposing `node.validate/v1`. Missing
+license, provider readiness, and provider capability have distinct error codes.
+
 ## FIMI
 
 `export-fimi::export_fimi_json_document` produces a deterministic FIMI document from a `Graph` and `DeterministicExportPlan`. The exporter is a Rust library surface and has no dedicated HTTP route.

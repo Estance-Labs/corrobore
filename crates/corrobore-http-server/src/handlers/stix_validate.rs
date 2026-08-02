@@ -111,29 +111,8 @@ pub async fn validate_stix(
 ) -> Result<Json<ValidateStixResponse>, ApiError> {
     let source_mode = parse_source_mode(payload.source.as_deref())?;
 
-    #[cfg(feature = "enterprise-cti")]
-    if source_mode == "graph" && !state.config.is_module_licensed("cti") {
-        return Err(ApiError::forbidden(
-            "LICENSE_MODULE_MISSING",
-            "graph-native STIX validation requires a valid cti enterprise license",
-        ));
-    }
-
-    #[cfg(feature = "enterprise-cti")]
     if source_mode == "graph" {
-        let provider_ready = state
-            .domain_providers
-            .as_deref()
-            .and_then(|registry| registry.status(DomainName::Cti))
-            .is_some_and(|status| {
-                status.ready && status.has_capability("node.validate", SCHEMA_V1)
-            });
-        if !provider_ready {
-            return Err(ApiError::service_unavailable(
-                "DOMAIN_PROVIDER_NOT_READY",
-                "graph-native STIX validation requires a ready CTI provider",
-            ));
-        }
+        require_cti_provider(&state)?;
     }
 
     let timeout = Duration::from_millis(state.config.request_timeout_ms);
@@ -233,6 +212,77 @@ pub async fn validate_stix(
     }))
 }
 
+#[cfg(feature = "enterprise-cti")]
+pub(crate) fn require_cti_provider(
+    state: &AppState,
+) -> Result<&crate::enterprise::registry::DomainProviderRegistry, ApiError> {
+    if !state.config.is_module_licensed("cti") {
+        return Err(ApiError::forbidden(
+            "LICENSE_MODULE_MISSING",
+            "graph-native STIX validation requires a valid cti enterprise license",
+        ));
+    }
+    let provider = state.domain_providers.as_deref().ok_or_else(|| {
+        ApiError::service_unavailable(
+            "DOMAIN_PROVIDER_NOT_READY",
+            "graph-native STIX validation requires a configured CTI provider",
+        )
+    })?;
+    let status = provider.status(DomainName::Cti).ok_or_else(|| {
+        ApiError::service_unavailable(
+            "DOMAIN_PROVIDER_NOT_READY",
+            "graph-native STIX validation requires a loaded CTI provider",
+        )
+    })?;
+    if !status.ready {
+        return Err(ApiError::service_unavailable(
+            "DOMAIN_PROVIDER_NOT_READY",
+            "graph-native STIX validation requires a ready CTI provider",
+        ));
+    }
+    if !status.has_capability("node.validate", SCHEMA_V1) {
+        return Err(ApiError::service_unavailable(
+            "DOMAIN_PROVIDER_CAPABILITY_MISSING",
+            "CTI provider does not expose node.validate/v1",
+        ));
+    }
+    Ok(provider)
+}
+
+#[cfg(not(feature = "enterprise-cti"))]
+pub(crate) fn require_cti_provider(
+    _state: &AppState,
+) -> Result<&crate::enterprise::registry::DomainProviderRegistry, ApiError> {
+    Err(ApiError::forbidden(
+        "FEATURE_NOT_AVAILABLE",
+        "graph-native STIX validation requires enterprise-cti",
+    ))
+}
+
+pub(crate) fn collect_cti_export_findings(
+    state: &AppState,
+    graph: &graph_core::Graph,
+) -> Result<Vec<graph_core::ValidationErrorRecord>, ApiError> {
+    let provider = require_cti_provider(state)?;
+    let (issues, _) = validate_graph_nodes(graph, None, Some(provider))?;
+    Ok(issues
+        .into_iter()
+        .filter_map(|issue| {
+            let node_id = issue.node_id?;
+            Some(graph_core::ValidationErrorRecord::new(
+                issue.code,
+                if issue.severity == "error" {
+                    graph_core::ValidationErrorSeverity::Error
+                } else {
+                    graph_core::ValidationErrorSeverity::Warning
+                },
+                issue.message,
+                graph_core::ValidationTarget::node(node_id),
+            ))
+        })
+        .collect())
+}
+
 // ---------------------------------------------------------------------------
 // Graph-native validation (source=graph)
 // ---------------------------------------------------------------------------
@@ -257,22 +307,7 @@ fn validate_graph_nodes(
 
     for node in &nodes {
         let labels = node.labels().to_vec();
-        let is_cti = labels.iter().any(|label| {
-            matches!(
-                label.as_str(),
-                "ThreatActor"
-                    | "Malware"
-                    | "Indicator"
-                    | "Tool"
-                    | "Campaign"
-                    | "Infrastructure"
-                    | "Vulnerability"
-                    | "Identity"
-                    | "Location"
-                    | "Report"
-            )
-        });
-        if !is_cti {
+        if !graph_core::node_eligible_for_export_profile(&ExportProfile::StixMvp, node) {
             continue;
         }
         let external_id = node
@@ -281,6 +316,14 @@ fn validate_graph_nodes(
             .and_then(|value| match value {
                 graph_core::PropertyValue::String(value) => Some(value.clone()),
                 _ => None,
+            })
+            .or_else(|| {
+                node.property("opencti.raw").and_then(|value| match value {
+                    graph_core::PropertyValue::Json(value) => {
+                        value.get("id").and_then(Value::as_str).map(str::to_owned)
+                    }
+                    _ => None,
+                })
             });
         let response = providers
             .invoke(InvokeRequest {
