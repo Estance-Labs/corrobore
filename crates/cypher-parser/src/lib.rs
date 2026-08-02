@@ -187,6 +187,8 @@ pub struct MatchClause {
     pub start: NodePattern,
     /// Relationship.
     pub relationship: Option<(RelationshipPattern, NodePattern)>,
+    /// Additional bounded standalone MATCH node patterns.
+    pub additional_nodes: Vec<NodePattern>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -289,7 +291,14 @@ pub enum LiteralValue {
     Boolean(bool),
     /// Null.
     Null,
+    /// Bounded homogeneous scalar list.
+    List(Vec<LiteralValue>),
+    /// Bounded homogeneous list of property references resolved per matched row.
+    PropertyReferenceList(Vec<PropertyRef>),
 }
+
+/// Maximum number of values accepted by the bounded list subset.
+pub const MAX_LIST_ITEMS: usize = 256;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Return clause.
@@ -408,7 +417,7 @@ pub fn mvp_supported_clauses() -> Vec<&'static str> {
 /// [`escape_string_literal`].
 #[derive(Clone, Copy, Debug, Default)]
 struct StringLiteralScanner {
-    inside: bool,
+    delimiter: Option<u8>,
     escaped: bool,
 }
 
@@ -418,18 +427,18 @@ impl StringLiteralScanner {
     /// characters within it. Bytes reported as literal content must never be
     /// interpreted as Cypher syntax.
     fn consume(&mut self, byte: u8) -> bool {
-        if self.inside {
+        if let Some(delimiter) = self.delimiter {
             if self.escaped {
                 self.escaped = false;
             } else if byte == b'\\' {
                 self.escaped = true;
-            } else if byte == b'\'' {
-                self.inside = false;
+            } else if byte == delimiter {
+                self.delimiter = None;
             }
             return true;
         }
-        if byte == b'\'' {
-            self.inside = true;
+        if byte == b'\'' || byte == b'"' {
+            self.delimiter = Some(byte);
             return true;
         }
         false
@@ -460,9 +469,10 @@ pub fn escape_string_literal(value: &str) -> String {
 /// such as `'a' + 'b'` is not mistaken for a single value.
 pub fn decode_string_literal(input: &str) -> Option<String> {
     let bytes = input.as_bytes();
-    if bytes.len() < 2 || bytes[0] != b'\'' {
+    if bytes.len() < 2 || (bytes[0] != b'\'' && bytes[0] != b'"') {
         return None;
     }
+    let delimiter = bytes[0];
 
     let mut value = String::with_capacity(input.len());
     let mut index = 1;
@@ -472,7 +482,7 @@ pub fn decode_string_literal(input: &str) -> Option<String> {
                 let next = *bytes.get(index + 1)?;
                 // Only the quote and the backslash are escaped on encode, so any
                 // other sequence is preserved verbatim rather than reinterpreted.
-                if next == b'\\' || next == b'\'' {
+                if next == b'\\' || next == delimiter {
                     value.push(next as char);
                     index += 2;
                 } else {
@@ -480,7 +490,7 @@ pub fn decode_string_literal(input: &str) -> Option<String> {
                     index += 1;
                 }
             }
-            b'\'' => {
+            quote if quote == delimiter => {
                 // A literal is well formed only when its closing quote ends the
                 // input; an earlier close means this is not a single literal.
                 return (index + 1 == bytes.len()).then_some(value);
@@ -560,7 +570,9 @@ pub fn parse_query_with_parameters(
         // Structured parsing stays best effort for shapes outside the supported
         // subset, but a parameter problem is fatal: dropping it here would run a
         // query whose predicate or bound silently went missing.
-        Err(error) if error.code == ParseErrorCode::InvalidParameter => return Err(error),
+        Err(error) if error.code == ParseErrorCode::InvalidParameter || kind != QueryKind::Read => {
+            return Err(error);
+        }
         Err(_) => None,
     };
     let aggregations = extract_basic_aggregations(&query, &normalized_query);
@@ -607,7 +619,7 @@ fn classify_query_kind(clauses: &[ClauseKind]) -> QueryKind {
 }
 
 fn detect_unsupported_feature(query_text: &str) -> Option<&'static str> {
-    let upper = query_text.to_ascii_uppercase();
+    let upper = mask_string_literals(query_text).to_ascii_uppercase();
     let tokens = upper
         .split_whitespace()
         .map(str::trim)
@@ -647,7 +659,8 @@ fn detect_unsupported_feature(query_text: &str) -> Option<&'static str> {
 fn extract_supported_clauses(query_text: &str) -> Vec<ClauseKind> {
     let mut clauses = Vec::new();
     let mut index = 0;
-    let tokens = query_text
+    let masked = mask_string_literals(query_text);
+    let tokens = masked
         .split_whitespace()
         .map(|token| token.to_ascii_uppercase())
         .collect::<Vec<String>>();
@@ -942,7 +955,25 @@ fn parse_match_where_return_only_match(
         (body.trim(), None)
     };
 
-    let match_clause = parse_match_clause(match_part, optional, bindings)?;
+    let mut match_parts = split_top_level_token(match_part, " MATCH ").into_iter();
+    let primary = match_parts.next().ok_or_else(|| ParseError {
+        code: ParseErrorCode::InvalidSyntax,
+        message: "MATCH clause must contain a node pattern".to_owned(),
+        suggestion: None,
+    })?;
+    let mut match_clause = parse_match_clause(primary, optional, bindings)?;
+    for additional in match_parts {
+        let (node, trailing) = parse_node_pattern(additional, bindings)?;
+        if !trailing.trim().is_empty() || node.variable == match_clause.start.variable {
+            return Err(ParseError {
+                code: ParseErrorCode::InvalidSyntax,
+                message: "additional MATCH clauses support distinct standalone node patterns"
+                    .to_owned(),
+                suggestion: None,
+            });
+        }
+        match_clause.additional_nodes.push(node);
+    }
     let where_clause = where_part
         .map(|part| parse_where_clause(part, bindings))
         .transpose()?;
@@ -1030,8 +1061,8 @@ fn parse_directed_relationship(
 ///
 /// Expected input shape: `n.score = 20, n.active = true`
 fn parse_set_clause(input: &str, bindings: &ParameterBindings) -> Result<SetClause, ParseError> {
-    let assignments = input
-        .split(',')
+    let assignments = split_top_level_commas(input)
+        .into_iter()
         .map(|pair| {
             let (left, right) = pair.split_once('=').ok_or_else(|| ParseError {
                 code: ParseErrorCode::InvalidSyntax,
@@ -1178,6 +1209,7 @@ fn parse_match_clause(
             optional,
             start,
             relationship: None,
+            additional_nodes: Vec::new(),
         });
     }
 
@@ -1230,6 +1262,7 @@ fn parse_match_clause(
         optional,
         start,
         relationship: Some((relationship, end)),
+        additional_nodes: Vec::new(),
     })
 }
 
@@ -1339,7 +1372,8 @@ fn parse_inline_properties(
         return Ok(Vec::new());
     }
 
-    body.split(',')
+    split_top_level_commas(body)
+        .into_iter()
         .map(|pair| {
             let (key, value) = pair.split_once(':').ok_or_else(|| ParseError {
                 code: ParseErrorCode::InvalidSyntax,
@@ -1558,9 +1592,21 @@ fn find_top_level_token(input: &str, token: &str) -> Option<usize> {
 fn split_top_level_commas(input: &str) -> Vec<&str> {
     let mut values = Vec::new();
     let mut start = 0;
+    let mut parenthesis_depth = 0_i32;
+    let mut bracket_depth = 0_i32;
     let mut scanner = StringLiteralScanner::default();
     for (index, byte) in input.bytes().enumerate() {
-        if !scanner.consume(byte) && byte == b',' {
+        let inside_literal = scanner.consume(byte);
+        if !inside_literal {
+            match byte {
+                b'(' => parenthesis_depth += 1,
+                b')' => parenthesis_depth -= 1,
+                b'[' => bracket_depth += 1,
+                b']' => bracket_depth -= 1,
+                _ => {}
+            }
+        }
+        if !inside_literal && parenthesis_depth == 0 && bracket_depth == 0 && byte == b',' {
             let value = input[start..index].trim();
             if !value.is_empty() {
                 values.push(value);
@@ -1589,10 +1635,10 @@ fn parse_property_ref(input: &str) -> Result<PropertyRef, ParseError> {
         suggestion: None,
     })?;
 
-    if variable.trim().is_empty() || property.trim().is_empty() {
+    if !is_identifier(variable.trim()) || !is_identifier(property.trim()) {
         return Err(ParseError {
             code: ParseErrorCode::InvalidSyntax,
-            message: "property reference contains an empty variable or property".to_owned(),
+            message: "property reference contains an invalid variable or property".to_owned(),
             suggestion: None,
         });
     }
@@ -1601,6 +1647,12 @@ fn parse_property_ref(input: &str) -> Result<PropertyRef, ParseError> {
         variable: variable.trim().to_owned(),
         property: property.trim().to_owned(),
     })
+}
+
+fn is_identifier(value: &str) -> bool {
+    let mut characters = value.chars();
+    matches!(characters.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
+        && characters.all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
 /// Extracts a `$name` placeholder name, or `None` when `input` is not one.
@@ -1636,7 +1688,11 @@ fn parse_literal_value(
         return resolve_parameter(name, bindings);
     }
 
-    if trimmed.starts_with('\'') {
+    if trimmed.starts_with('[') {
+        return parse_list_literal(trimmed, bindings);
+    }
+
+    if trimmed.starts_with('\'') || trimmed.starts_with('"') {
         // Decoding reverses `escape_string_literal`, so an escaped quote becomes
         // data instead of leaking the escape character into the stored value.
         return decode_string_literal(trimmed)
@@ -1672,6 +1728,80 @@ fn parse_literal_value(
         message: "literal value is unsupported in MVP parser".to_owned(),
         suggestion: None,
     })
+}
+
+fn parse_list_literal(
+    input: &str,
+    bindings: &ParameterBindings,
+) -> Result<LiteralValue, ParseError> {
+    if !input.ends_with(']') {
+        return Err(invalid_list("list literal is not terminated"));
+    }
+    let members = split_top_level_commas(&input[1..input.len() - 1]);
+    if members.is_empty() {
+        return Err(invalid_list("list literal must contain at least one item"));
+    }
+    if members.len() > MAX_LIST_ITEMS {
+        return Err(invalid_list("list literal exceeds the 256 item limit"));
+    }
+
+    // Property references are a deliberately separate shape because the
+    // executor must resolve them against each matched row before mutation.
+    let property_refs = members
+        .iter()
+        .map(|member| parse_property_ref(member.trim()))
+        .collect::<Result<Vec<_>, _>>();
+    if let Ok(property_refs) = property_refs {
+        return Ok(LiteralValue::PropertyReferenceList(property_refs));
+    }
+
+    let values = members
+        .into_iter()
+        .map(|member| {
+            if member.trim().starts_with('[') {
+                return Err(invalid_list("nested list literals are not supported"));
+            }
+            parse_literal_value(member, bindings)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let expected = scalar_list_kind(&values[0]).ok_or_else(|| {
+        invalid_list("list items must be strings, integers, decimals, or booleans")
+    })?;
+    if values
+        .iter()
+        .any(|value| scalar_list_kind(value) != Some(expected))
+    {
+        return Err(invalid_list(
+            "list literal items must have one homogeneous type",
+        ));
+    }
+    Ok(LiteralValue::List(values))
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ScalarListKind {
+    String,
+    Integer,
+    Float,
+    Boolean,
+}
+
+fn scalar_list_kind(value: &LiteralValue) -> Option<ScalarListKind> {
+    match value {
+        LiteralValue::String(_) => Some(ScalarListKind::String),
+        LiteralValue::Integer(_) => Some(ScalarListKind::Integer),
+        LiteralValue::Float(_) => Some(ScalarListKind::Float),
+        LiteralValue::Boolean(_) => Some(ScalarListKind::Boolean),
+        LiteralValue::Null | LiteralValue::List(_) | LiteralValue::PropertyReferenceList(_) => None,
+    }
+}
+
+fn invalid_list(message: &str) -> ParseError {
+    ParseError {
+        code: ParseErrorCode::InvalidSyntax,
+        message: message.to_owned(),
+        suggestion: None,
+    }
 }
 
 fn parse_return_clause(
@@ -1810,6 +1940,8 @@ fn literal_type_name(value: &LiteralValue) -> &'static str {
         LiteralValue::Float(_) => "a decimal",
         LiteralValue::Boolean(_) => "a boolean",
         LiteralValue::Null => "null",
+        LiteralValue::List(_) => "a list",
+        LiteralValue::PropertyReferenceList(_) => "a property-reference list",
     }
 }
 
@@ -1917,21 +2049,22 @@ fn split_first_token(input: &str) -> (&str, &str) {
 }
 
 fn find_clause_keyword(haystack_upper: &str, keyword_upper: &str) -> Option<usize> {
-    if let Some(suffix) = haystack_upper.strip_prefix(keyword_upper)
+    let masked = mask_string_literals(haystack_upper);
+    if let Some(suffix) = masked.strip_prefix(keyword_upper)
         && (suffix.is_empty() || suffix.starts_with(' '))
     {
         return Some(0);
     }
 
     let needle = format!(" {}", keyword_upper);
-    haystack_upper.find(&needle).map(|index| index + 1)
+    masked.find(&needle).map(|index| index + 1)
 }
 
 fn extract_basic_aggregations(
     _query: &Option<ParsedQuery>,
     query_text: &str,
 ) -> Vec<AggregationFunction> {
-    let upper = query_text.to_ascii_uppercase();
+    let upper = mask_string_literals(query_text).to_ascii_uppercase();
     let patterns = [
         ("COUNT(", AggregationFunction::Count),
         ("SUM(", AggregationFunction::Sum),
@@ -1946,6 +2079,19 @@ fn extract_basic_aggregations(
         .collect();
     found.sort_by_key(|(index, _)| *index);
     found.into_iter().map(|(_, function)| function).collect()
+}
+
+fn mask_string_literals(input: &str) -> String {
+    let mut masked = input.as_bytes().to_vec();
+    let mut scanner = StringLiteralScanner::default();
+    for byte in &mut masked {
+        if scanner.consume(*byte) {
+            *byte = b' ';
+        }
+    }
+    // Bytes outside literals are copied unchanged; bytes inside literals are
+    // ASCII spaces, so valid UTF-8 input remains valid UTF-8 after masking.
+    String::from_utf8(masked).expect("masking valid UTF-8 preserves valid UTF-8")
 }
 
 #[cfg(test)]

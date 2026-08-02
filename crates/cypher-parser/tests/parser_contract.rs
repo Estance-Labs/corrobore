@@ -208,6 +208,122 @@ fn parse_match_set_with_multiple_assignments() {
     assert_eq!(set.assignments.len(), 2);
 }
 
+#[test]
+fn parse_set_preserves_homogeneous_typed_list_literals() {
+    let ast = parse_query(
+        "MATCH (n:Indicator) SET n.aliases = ['alpha,beta', 'gamma'], n.ports = [80, 443], n.scores = [0.4, 0.9], n.flags = [true, false] RETURN n",
+    )
+    .expect("bounded homogeneous list literals should parse");
+
+    let parsed = ast.query.expect("structured query should be attached");
+    let assignments = parsed
+        .set_clause
+        .expect("SET clause should exist")
+        .assignments;
+    assert_eq!(assignments.len(), 4);
+    assert_eq!(
+        assignments[0].value,
+        LiteralValue::List(vec![
+            LiteralValue::String("alpha,beta".to_owned()),
+            LiteralValue::String("gamma".to_owned()),
+        ])
+    );
+    assert_eq!(
+        assignments[1].value,
+        LiteralValue::List(vec![LiteralValue::Integer(80), LiteralValue::Integer(443)])
+    );
+    assert_eq!(
+        assignments[2].value,
+        LiteralValue::List(vec![
+            LiteralValue::Float("0.4".to_owned()),
+            LiteralValue::Float("0.9".to_owned()),
+        ])
+    );
+    assert_eq!(
+        assignments[3].value,
+        LiteralValue::List(vec![
+            LiteralValue::Boolean(true),
+            LiteralValue::Boolean(false),
+        ])
+    );
+}
+
+#[test]
+fn parse_set_preserves_bounded_property_reference_lists() {
+    let ast = parse_query(
+        "MATCH (r:Report)-[rel:CITES]->(e:Evidence) SET rel.evidence_refs = [e.id] RETURN rel",
+    )
+    .expect("a bounded property-reference list should parse");
+
+    let assignment = &ast
+        .query
+        .expect("structured query should be attached")
+        .set_clause
+        .expect("SET clause should exist")
+        .assignments[0];
+    assert_eq!(
+        assignment.value,
+        LiteralValue::PropertyReferenceList(vec![cypher_parser::PropertyRef {
+            variable: "e".to_owned(),
+            property: "id".to_owned(),
+        }])
+    );
+}
+
+#[test]
+fn parse_set_accepts_the_guides_double_quoted_status_literal() {
+    let ast = parse_query(
+        "MATCH (r:Report)-[rel:CITES]->(e:Evidence) SET rel.status = \"candidate\" RETURN rel.status",
+    )
+    .expect("the user-facing guide syntax should remain valid");
+
+    assert_eq!(
+        ast.query
+            .expect("structured query should be attached")
+            .set_clause
+            .expect("SET clause should exist")
+            .assignments[0]
+            .value,
+        LiteralValue::String("candidate".to_owned())
+    );
+}
+
+#[test]
+fn parse_the_complete_multi_match_guide_example_without_rewriting_it() {
+    let ast = parse_query(
+        "MATCH (a:ThreatActor {name: \"APT28\"}) MATCH (e:EvidenceSpan {id: \"span--123\"}) MERGE (a)-[r:USES]->(m:Malware {name: \"X-Agent\"}) SET r.confidence = 0.82, r.evidence_refs = [e.id], r.status = \"candidate\" RETURN r",
+    )
+    .expect("the complete guide example should parse unchanged");
+
+    let parsed = ast.query.expect("structured query should be attached");
+    let matched = parsed.match_clause.expect("primary MATCH should exist");
+    assert_eq!(matched.start.variable, "a");
+    assert_eq!(matched.additional_nodes.len(), 1);
+    assert_eq!(matched.additional_nodes[0].variable, "e");
+    assert!(parsed.merge_clause.is_some());
+    assert!(parsed.set_clause.is_some());
+}
+
+#[test]
+fn parse_create_keeps_clause_words_inside_quoted_property_text_as_data() {
+    parse_query(
+        "CREATE (n:ThreatActor {stix_id: 'intrusion-set--94f0bef7-d7a2-51fd-99f4-c2df6e1a9ac4', name: 'Cicada', description: 'Chinese government-linked APT group involved in espionage-type operations since 2009, with a strong focus on Japanese organizations and MSPs. Uses living-off-the-land tools, custom DLL loaders, and cu', confidence: 50})",
+    )
+    .expect("quoted description text must not become Cypher syntax");
+}
+
+#[test]
+fn parse_set_rejects_mixed_and_nested_list_literals() {
+    for query in [
+        "MATCH (n) SET n.values = ['alpha', 1]",
+        "MATCH (n) SET n.values = [[1, 2]]",
+    ] {
+        let error = parse_query(query).expect_err("unsupported list shape should be rejected");
+        assert_eq!(error.code, ParseErrorCode::InvalidSyntax);
+        assert!(error.message.contains("list"));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Mutation parsing: DELETE (mixed query)
 // ---------------------------------------------------------------------------

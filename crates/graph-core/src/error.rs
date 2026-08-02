@@ -167,6 +167,10 @@ pub enum GraphError {
     #[error("invalid confidence: {0}")]
     InvalidConfidence(f64),
 
+    /// A record lifecycle transition is missing native export prerequisites.
+    #[error("invalid record status transition: {0}")]
+    InvalidRecordStatusTransition(String),
+
     /// An outcome probability failed finite unit-interval validation.
     #[error("invalid outcome probability: {0}")]
     InvalidOutcomeProbability(f64),

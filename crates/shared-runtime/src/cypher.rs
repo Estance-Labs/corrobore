@@ -51,6 +51,8 @@ pub enum CypherValue {
     Boolean(bool),
     /// Explicit null.
     Null,
+    /// Bounded homogeneous scalar list.
+    List(Vec<CypherValue>),
 }
 
 impl CypherValue {
@@ -62,6 +64,7 @@ impl CypherValue {
             Self::Float(_) => "float",
             Self::Boolean(_) => "boolean",
             Self::Null => "null",
+            Self::List(_) => "list",
         }
     }
 }
@@ -263,6 +266,9 @@ pub struct CypherRecord {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 /// Cypher mutation summary.
 pub struct CypherMutationSummary {
+    /// Rows matched before mutation execution.
+    #[serde(default)]
+    pub matched_rows: u64,
     /// Created nodes.
     pub created_nodes: u64,
     /// Updated nodes.
@@ -271,10 +277,19 @@ pub struct CypherMutationSummary {
     pub deleted_nodes: u64,
     /// Created relationships.
     pub created_relationships: u64,
+    /// Updated relationships.
+    #[serde(default)]
+    pub updated_relationships: u64,
     /// Deleted relationships.
     pub deleted_relationships: u64,
     /// Properties set.
     pub properties_set: u64,
+    /// Native metadata fields changed.
+    #[serde(default)]
+    pub native_fields_changed: u64,
+    /// Generic property fields changed.
+    #[serde(default)]
+    pub property_fields_changed: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

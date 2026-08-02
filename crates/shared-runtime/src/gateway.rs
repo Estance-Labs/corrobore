@@ -40,10 +40,26 @@ fn to_parser_bindings(parameters: &CypherParameters) -> ParameterBindings {
                 CypherValue::Float(text) => LiteralValue::Float(text.clone()),
                 CypherValue::Boolean(flag) => LiteralValue::Boolean(*flag),
                 CypherValue::Null => LiteralValue::Null,
+                CypherValue::List(values) => {
+                    LiteralValue::List(values.iter().map(runtime_value_to_literal).collect())
+                }
             };
             (name.clone(), literal)
         })
         .collect()
+}
+
+fn runtime_value_to_literal(value: &CypherValue) -> LiteralValue {
+    match value {
+        CypherValue::String(text) => LiteralValue::String(text.clone()),
+        CypherValue::Integer(number) => LiteralValue::Integer(*number),
+        CypherValue::Float(text) => LiteralValue::Float(text.clone()),
+        CypherValue::Boolean(flag) => LiteralValue::Boolean(*flag),
+        CypherValue::Null => LiteralValue::Null,
+        CypherValue::List(values) => {
+            LiteralValue::List(values.iter().map(runtime_value_to_literal).collect())
+        }
+    }
 }
 
 /// Projects the runtime budget onto the bounds the executor enforces while a
@@ -87,11 +103,14 @@ fn measure_budget_usage(
             properties_set,
             nodes_deleted,
             relationships_deleted,
+            native_fields_changed,
+            ..
         } => (
             0,
             nodes_created
                 + relationships_created
                 + properties_set
+                + native_fields_changed
                 + nodes_deleted
                 + relationships_deleted,
             0,
@@ -418,22 +437,23 @@ pub(crate) fn map_execution_data(data: ExecutionResultData) -> CypherResponseDat
             properties_set,
             nodes_deleted,
             relationships_deleted,
-        } => {
-            // Map mutation summary into a single record with summary fields.
-            let mut fields = std::collections::HashMap::new();
-            fields.insert("nodes_created".to_owned(), nodes_created.to_string());
-            fields.insert(
-                "relationships_created".to_owned(),
-                relationships_created.to_string(),
-            );
-            fields.insert("properties_set".to_owned(), properties_set.to_string());
-            fields.insert("nodes_deleted".to_owned(), nodes_deleted.to_string());
-            fields.insert(
-                "relationships_deleted".to_owned(),
-                relationships_deleted.to_string(),
-            );
-            CypherResponseData::Records(vec![CypherRecord { fields }])
-        }
+            matched_rows,
+            native_fields_changed,
+            property_fields_changed,
+            nodes_updated,
+            relationships_updated,
+        } => CypherResponseData::MutationSummary(CypherMutationSummary {
+            matched_rows: matched_rows as u64,
+            created_nodes: nodes_created as u64,
+            updated_nodes: nodes_updated as u64,
+            deleted_nodes: nodes_deleted as u64,
+            created_relationships: relationships_created as u64,
+            updated_relationships: relationships_updated as u64,
+            deleted_relationships: relationships_deleted as u64,
+            properties_set: properties_set as u64,
+            native_fields_changed: native_fields_changed as u64,
+            property_fields_changed: property_fields_changed as u64,
+        }),
         ExecutionResultData::Empty => CypherResponseData::Empty,
     }
 }

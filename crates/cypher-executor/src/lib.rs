@@ -35,8 +35,8 @@ use cypher_parser::{
 use cypher_planner::{build_function_call_plan, build_logical_plan};
 use function_registry::{FunctionRegistry, FunctionValue, ModelFunctionAdapter, RegistryError};
 use graph_core::{
-    Graph, Node, NodeInput, NodePatch, PropertyValue, Relationship, RelationshipInput,
-    RelationshipPatch,
+    Confidence, EvidenceId, Graph, Node, NodeId, NodeInput, NodePatch, PropertyValue, RecordStatus,
+    Relationship, RelationshipId, RelationshipInput, RelationshipPatch,
 };
 use thiserror::Error;
 use tracing::{debug, instrument, trace, warn};
@@ -117,6 +117,16 @@ pub enum ExecutionResultData {
         nodes_deleted: usize,
         /// Number of relationships deleted (tombstoned).
         relationships_deleted: usize,
+        /// Number of rows matched before the mutation clauses ran.
+        matched_rows: usize,
+        /// Number of native metadata fields changed.
+        native_fields_changed: usize,
+        /// Number of generic property fields changed.
+        property_fields_changed: usize,
+        /// Number of node versions updated by SET.
+        nodes_updated: usize,
+        /// Number of relationship versions updated by SET.
+        relationships_updated: usize,
     },
     /// Empty.
     Empty,
@@ -456,6 +466,9 @@ impl CypherPipelineExecutor {
         let mut nodes_created: usize = 0;
         let mut relationships_created: usize = 0;
         let mut properties_set: usize = 0;
+        let mut native_fields_changed: usize = 0;
+        let mut nodes_updated: usize = 0;
+        let mut relationships_updated: usize = 0;
         let mut nodes_deleted: usize = 0;
         let mut relationships_deleted: usize = 0;
 
@@ -469,6 +482,7 @@ impl CypherPipelineExecutor {
         } else {
             Vec::new()
         };
+        let matched_rows = rows.len();
 
         // Matching is complete and nothing has been written yet, so this is the
         // last point at which the mutation bound can be enforced without leaving
@@ -520,34 +534,42 @@ impl CypherPipelineExecutor {
 
         // --- SET ---
         if let Some(set_clause) = &query.set_clause {
-            let mut updated_rows = Vec::new();
-            for row in &rows {
-                for assignment in &set_clause.assignments {
-                    let variable = &assignment.target.variable;
-                    if let Some(BindingValue::Node(node)) = row.bindings.get(variable) {
-                        let patch = NodePatch::default().set_property(
-                            assignment.target.property.clone(),
-                            literal_to_property_value(&assignment.value),
-                        );
-                        self.graph.update_node(node.id(), patch).map_err(|e| {
+            // Resolve and validate every assignment before the first graph
+            // version is appended. This keeps multi-field metadata updates
+            // atomic when a range, status, evidence reference, or list is bad.
+            let prepared = prepare_set_mutations(&rows, set_clause)?;
+            for mutation in prepared {
+                match mutation {
+                    PreparedSetMutation::Node {
+                        id,
+                        patch,
+                        native_fields,
+                        property_fields,
+                    } => {
+                        self.graph.update_node(&id, patch).map_err(|e| {
                             ExecutionError::InvalidQuery(format!("SET failed: {e}"))
                         })?;
-                        properties_set += 1;
-                    } else if let Some(BindingValue::Relationship(relationship)) =
-                        row.bindings.get(variable)
-                    {
-                        let patch = RelationshipPatch::default().set_property(
-                            assignment.target.property.clone(),
-                            literal_to_property_value(&assignment.value),
-                        );
-                        self.graph
-                            .update_relationship(relationship.id(), patch)
-                            .map_err(|e| {
-                                ExecutionError::InvalidQuery(format!("SET failed: {e}"))
-                            })?;
-                        properties_set += 1;
+                        nodes_updated += 1;
+                        native_fields_changed += native_fields;
+                        properties_set += property_fields;
+                    }
+                    PreparedSetMutation::Relationship {
+                        id,
+                        patch,
+                        native_fields,
+                        property_fields,
+                    } => {
+                        self.graph.update_relationship(&id, patch).map_err(|e| {
+                            ExecutionError::InvalidQuery(format!("SET failed: {e}"))
+                        })?;
+                        relationships_updated += 1;
+                        native_fields_changed += native_fields;
+                        properties_set += property_fields;
                     }
                 }
+            }
+            let mut updated_rows = Vec::new();
+            for row in &rows {
                 // Re-read the updated node for projection.
                 let mut new_row = ExecutionRow::new();
                 for (var, binding) in &row.bindings {
@@ -676,6 +698,11 @@ impl CypherPipelineExecutor {
                     properties_set,
                     nodes_deleted,
                     relationships_deleted,
+                    matched_rows,
+                    native_fields_changed,
+                    property_fields_changed: properties_set,
+                    nodes_updated,
+                    relationships_updated,
                 },
                 warnings: vec![],
                 validation_errors: vec![],
@@ -881,8 +908,8 @@ impl CypherPipelineExecutor {
             rows.sort_by(|left, right| {
                 for order_by in &return_clause.order_by {
                     let ordering = compare_optional_property_values(
-                        property_ref_value(left, &order_by.field),
-                        property_ref_value(right, &order_by.field),
+                        property_ref_value(left, &order_by.field).as_ref(),
+                        property_ref_value(right, &order_by.field).as_ref(),
                     );
                     let ordering = match order_by.direction {
                         cypher_parser::OrderDirection::Asc => ordering,
@@ -996,7 +1023,11 @@ impl CypherPipelineExecutor {
                 rows.push(row);
             }
 
-            return Ok(rows);
+            return self.expand_additional_match_nodes(
+                rows,
+                &match_clause.additional_nodes,
+                budget,
+            );
         }
 
         let nodes = self.graph.list_nodes().map_err(|error| {
@@ -1018,6 +1049,39 @@ impl CypherPipelineExecutor {
             rows.push(row);
         }
 
+        self.expand_additional_match_nodes(rows, &match_clause.additional_nodes, budget)
+    }
+
+    fn expand_additional_match_nodes(
+        &self,
+        mut rows: Vec<ExecutionRow>,
+        patterns: &[cypher_parser::NodePattern],
+        budget: &mut ExecutionBudget,
+    ) -> Result<Vec<ExecutionRow>, ExecutionError> {
+        for pattern in patterns {
+            let candidates = self
+                .graph
+                .list_nodes()
+                .map_err(|error| {
+                    ExecutionError::InvalidQuery(format!("graph traversal failed: {error}"))
+                })?
+                .into_iter()
+                .filter(|node| node_pattern_matches(node, pattern))
+                .collect::<Vec<_>>();
+            let mut expanded = Vec::new();
+            for row in rows {
+                for candidate in &candidates {
+                    budget.charge_loaded_record()?;
+                    let mut expanded_row = row.clone();
+                    expanded_row.bindings.insert(
+                        pattern.variable.clone(),
+                        BindingValue::Node(candidate.clone()),
+                    );
+                    expanded.push(expanded_row);
+                }
+            }
+            rows = expanded;
+        }
         Ok(rows)
     }
 }
@@ -1042,6 +1106,230 @@ enum BindingValue {
     Node(Node),
     /// Relationship.
     Relationship(Relationship),
+}
+
+enum PreparedSetMutation {
+    Node {
+        id: NodeId,
+        patch: NodePatch,
+        native_fields: usize,
+        property_fields: usize,
+    },
+    Relationship {
+        id: RelationshipId,
+        patch: RelationshipPatch,
+        native_fields: usize,
+        property_fields: usize,
+    },
+}
+
+fn prepare_set_mutations(
+    rows: &[ExecutionRow],
+    set_clause: &cypher_parser::SetClause,
+) -> Result<Vec<PreparedSetMutation>, ExecutionError> {
+    let mut prepared = Vec::new();
+    for row in rows {
+        for (variable, binding) in &row.bindings {
+            let assignments = set_clause
+                .assignments
+                .iter()
+                .filter(|assignment| assignment.target.variable == *variable)
+                .collect::<Vec<_>>();
+            if assignments.is_empty() {
+                continue;
+            }
+            prepared.push(match binding {
+                BindingValue::Node(node) => prepare_node_set(row, node, &assignments)?,
+                BindingValue::Relationship(relationship) => {
+                    prepare_relationship_set(row, relationship, &assignments)?
+                }
+            });
+        }
+    }
+    Ok(prepared)
+}
+
+fn prepare_node_set(
+    row: &ExecutionRow,
+    node: &Node,
+    assignments: &[&cypher_parser::SetAssignment],
+) -> Result<PreparedSetMutation, ExecutionError> {
+    let mut patch = NodePatch::default();
+    let mut native_fields = 0;
+    let mut property_fields = 0;
+    let mut final_status = node.status();
+    let mut final_confidence = node.confidence();
+    let mut final_evidence = node.evidence_refs().to_vec();
+
+    for assignment in assignments {
+        match assignment.target.property.as_str() {
+            "confidence" => {
+                let confidence = parse_confidence(&assignment.value)?;
+                final_confidence = Some(confidence);
+                patch = patch.set_confidence(confidence);
+                native_fields += 1;
+            }
+            "status" => {
+                final_status = parse_record_status(&assignment.value)?;
+                patch = patch.set_status(final_status);
+                native_fields += 1;
+            }
+            "evidence_refs" => {
+                final_evidence = resolve_evidence_refs(row, &assignment.value)?;
+                patch = patch.set_evidence_refs(final_evidence.clone());
+                native_fields += 1;
+            }
+            property => {
+                patch = patch.set_property(
+                    property,
+                    literal_to_property_value_checked(&assignment.value)?,
+                );
+                property_fields += 1;
+            }
+        }
+    }
+    validate_exportable_metadata(final_status, final_confidence, &final_evidence)?;
+    Ok(PreparedSetMutation::Node {
+        id: node.id().clone(),
+        patch,
+        native_fields,
+        property_fields,
+    })
+}
+
+fn prepare_relationship_set(
+    row: &ExecutionRow,
+    relationship: &Relationship,
+    assignments: &[&cypher_parser::SetAssignment],
+) -> Result<PreparedSetMutation, ExecutionError> {
+    let mut patch = RelationshipPatch::default();
+    let mut native_fields = 0;
+    let mut property_fields = 0;
+    let mut final_status = relationship.status();
+    let mut final_confidence = relationship.confidence();
+    let mut final_evidence = relationship.evidence_refs().to_vec();
+
+    for assignment in assignments {
+        match assignment.target.property.as_str() {
+            "confidence" => {
+                let confidence = parse_confidence(&assignment.value)?;
+                final_confidence = Some(confidence);
+                patch = patch.set_confidence(confidence);
+                native_fields += 1;
+            }
+            "status" => {
+                final_status = parse_record_status(&assignment.value)?;
+                patch = patch.set_status(final_status);
+                native_fields += 1;
+            }
+            "evidence_refs" => {
+                final_evidence = resolve_evidence_refs(row, &assignment.value)?;
+                patch = patch.set_evidence_refs(final_evidence.clone());
+                native_fields += 1;
+            }
+            property => {
+                patch = patch.set_property(
+                    property,
+                    literal_to_property_value_checked(&assignment.value)?,
+                );
+                property_fields += 1;
+            }
+        }
+    }
+    validate_exportable_metadata(final_status, final_confidence, &final_evidence)?;
+    Ok(PreparedSetMutation::Relationship {
+        id: relationship.id().clone(),
+        patch,
+        native_fields,
+        property_fields,
+    })
+}
+
+fn parse_confidence(value: &LiteralValue) -> Result<Confidence, ExecutionError> {
+    let raw = match value {
+        LiteralValue::Float(value) => value.parse::<f64>().ok(),
+        LiteralValue::Integer(value) => Some(*value as f64),
+        _ => None,
+    }
+    .ok_or_else(|| {
+        ExecutionError::InvalidQuery("confidence must be a number in 0..=1".to_owned())
+    })?;
+    Confidence::new(raw)
+        .map_err(|error| ExecutionError::InvalidQuery(format!("invalid confidence: {error}")))
+}
+
+fn parse_record_status(value: &LiteralValue) -> Result<RecordStatus, ExecutionError> {
+    let LiteralValue::String(value) = value else {
+        return Err(ExecutionError::InvalidQuery(
+            "status must be a lifecycle status string".to_owned(),
+        ));
+    };
+    match value.trim().to_ascii_lowercase().as_str() {
+        "candidate" => Ok(RecordStatus::Candidate),
+        "needs_evidence" => Ok(RecordStatus::NeedsEvidence),
+        "needs_review" => Ok(RecordStatus::NeedsReview),
+        "validated" => Ok(RecordStatus::Validated),
+        "rejected" => Ok(RecordStatus::Rejected),
+        "exportable" => Ok(RecordStatus::Exportable),
+        "exported" => Ok(RecordStatus::Exported),
+        "tombstoned" => Err(ExecutionError::InvalidQuery(
+            "status tombstoned must use DELETE".to_owned(),
+        )),
+        _ => Err(ExecutionError::InvalidQuery(format!(
+            "unsupported record status: {value}"
+        ))),
+    }
+}
+
+fn resolve_evidence_refs(
+    row: &ExecutionRow,
+    value: &LiteralValue,
+) -> Result<Vec<EvidenceId>, ExecutionError> {
+    let values = match value {
+        LiteralValue::List(values) => values
+            .iter()
+            .map(|value| match value {
+                LiteralValue::String(value) => Ok(value.clone()),
+                _ => Err(invalid_evidence_refs()),
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        LiteralValue::PropertyReferenceList(references) => references
+            .iter()
+            .map(|reference| match property_ref_value(row, reference) {
+                Some(PropertyValue::String(value)) => Ok(value),
+                _ => Err(invalid_evidence_refs()),
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => return Err(invalid_evidence_refs()),
+    };
+    if values.is_empty() || values.len() > cypher_parser::MAX_LIST_ITEMS {
+        return Err(invalid_evidence_refs());
+    }
+    values
+        .into_iter()
+        .map(|value| EvidenceId::new(value).map_err(|_| invalid_evidence_refs()))
+        .collect()
+}
+
+fn invalid_evidence_refs() -> ExecutionError {
+    ExecutionError::InvalidQuery(
+        "evidence_refs must be a non-empty homogeneous string or property-reference list"
+            .to_owned(),
+    )
+}
+
+fn validate_exportable_metadata(
+    status: RecordStatus,
+    confidence: Option<Confidence>,
+    evidence_refs: &[EvidenceId],
+) -> Result<(), ExecutionError> {
+    if status == RecordStatus::Exportable && (confidence.is_none() || evidence_refs.is_empty()) {
+        return Err(ExecutionError::InvalidQuery(
+            "status exportable requires native confidence and at least one evidence reference"
+                .to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// Upper bound on the graph operations a mutation query will apply.
@@ -1121,7 +1409,7 @@ fn evaluate_where_expression(row: &ExecutionRow, expression: &WhereExpression) -
             operator,
             right,
         } => property_ref_value(row, left)
-            .is_some_and(|left| compare_property_literal(left, right, operator)),
+            .is_some_and(|left| compare_property_literal(&left, right, operator)),
         WhereExpression::In {
             left,
             values,
@@ -1130,7 +1418,7 @@ fn evaluate_where_expression(row: &ExecutionRow, expression: &WhereExpression) -
             let matches = property_ref_value(row, left).is_some_and(|actual| {
                 values
                     .iter()
-                    .any(|expected| property_contains_literal(actual, expected))
+                    .any(|expected| property_contains_literal(&actual, expected))
             });
             if *negated { !matches } else { matches }
         }
@@ -1339,8 +1627,8 @@ fn numeric_projection(
         .iter()
         .filter_map(|row| property_ref_value(row, property))
         .filter_map(|value| match value {
-            PropertyValue::Integer(value) => Some(*value as f64),
-            PropertyValue::Float(value) if value.is_finite() => Some(*value),
+            PropertyValue::Integer(value) => Some(value as f64),
+            PropertyValue::Float(value) if value.is_finite() => Some(value),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -1379,7 +1667,7 @@ fn project_record(row: &ExecutionRow, items: &[ProjectionItem]) -> ExecutionReco
                 if let Some(value) = property_ref_value(row, property_ref) {
                     fields.insert(
                         format!("{}.{}", property_ref.variable, property_ref.property),
-                        property_value_to_string(value),
+                        property_value_to_string(&value),
                     );
                 }
             }
@@ -1405,16 +1693,72 @@ fn binding_to_string(value: &BindingValue) -> String {
     }
 }
 
-fn property_ref_value<'a>(
-    row: &'a ExecutionRow,
-    property_ref: &PropertyRef,
-) -> Option<&'a PropertyValue> {
+fn property_ref_value(row: &ExecutionRow, property_ref: &PropertyRef) -> Option<PropertyValue> {
     match row.bindings.get(&property_ref.variable) {
-        Some(BindingValue::Node(node)) => node.property(&property_ref.property),
+        Some(BindingValue::Node(node)) => native_node_property(node, &property_ref.property),
         Some(BindingValue::Relationship(relationship)) => {
-            relationship.property(&property_ref.property)
+            native_relationship_property(relationship, &property_ref.property)
         }
         None => None,
+    }
+}
+
+fn native_node_property(node: &Node, property: &str) -> Option<PropertyValue> {
+    match property {
+        "confidence" => node
+            .confidence()
+            .map(|confidence| PropertyValue::Float(confidence.value())),
+        "status" => Some(PropertyValue::String(status_name(node.status()).to_owned())),
+        "evidence_refs" => Some(PropertyValue::StringList(
+            node.evidence_refs()
+                .iter()
+                .map(|reference| reference.as_str().to_owned())
+                .collect(),
+        )),
+        "id" => node
+            .property("id")
+            .cloned()
+            .or_else(|| Some(PropertyValue::String(node.id().as_str().to_owned()))),
+        property => node.property(property).cloned(),
+    }
+}
+
+fn native_relationship_property(
+    relationship: &Relationship,
+    property: &str,
+) -> Option<PropertyValue> {
+    match property {
+        "confidence" => relationship
+            .confidence()
+            .map(|confidence| PropertyValue::Float(confidence.value())),
+        "status" => Some(PropertyValue::String(
+            status_name(relationship.status()).to_owned(),
+        )),
+        "evidence_refs" => Some(PropertyValue::StringList(
+            relationship
+                .evidence_refs()
+                .iter()
+                .map(|reference| reference.as_str().to_owned())
+                .collect(),
+        )),
+        "id" => relationship
+            .property("id")
+            .cloned()
+            .or_else(|| Some(PropertyValue::String(relationship.id().as_str().to_owned()))),
+        property => relationship.property(property).cloned(),
+    }
+}
+
+fn status_name(status: RecordStatus) -> &'static str {
+    match status {
+        RecordStatus::Candidate => "candidate",
+        RecordStatus::NeedsEvidence => "needs_evidence",
+        RecordStatus::NeedsReview => "needs_review",
+        RecordStatus::Validated => "validated",
+        RecordStatus::Rejected => "rejected",
+        RecordStatus::Exportable => "exportable",
+        RecordStatus::Exported => "exported",
+        RecordStatus::Tombstoned => "tombstoned",
     }
 }
 
@@ -1456,6 +1800,89 @@ fn literal_to_property_value(literal: &LiteralValue) -> PropertyValue {
             .unwrap_or(PropertyValue::Null),
         LiteralValue::Boolean(b) => PropertyValue::Bool(*b),
         LiteralValue::Null => PropertyValue::Null,
+        LiteralValue::List(values) => match values.first() {
+            Some(LiteralValue::String(_)) => PropertyValue::StringList(
+                values
+                    .iter()
+                    .filter_map(|value| match value {
+                        LiteralValue::String(value) => Some(value.clone()),
+                        _ => None,
+                    })
+                    .collect(),
+            ),
+            Some(LiteralValue::Integer(_)) => PropertyValue::IntegerList(
+                values
+                    .iter()
+                    .filter_map(|value| match value {
+                        LiteralValue::Integer(value) => Some(*value),
+                        _ => None,
+                    })
+                    .collect(),
+            ),
+            Some(LiteralValue::Float(_)) => PropertyValue::FloatList(
+                values
+                    .iter()
+                    .filter_map(|value| match value {
+                        LiteralValue::Float(value) => value.parse::<f64>().ok(),
+                        _ => None,
+                    })
+                    .collect(),
+            ),
+            Some(LiteralValue::Boolean(_)) => PropertyValue::BoolList(
+                values
+                    .iter()
+                    .filter_map(|value| match value {
+                        LiteralValue::Boolean(value) => Some(*value),
+                        _ => None,
+                    })
+                    .collect(),
+            ),
+            _ => PropertyValue::Null,
+        },
+        // Property-reference lists require a matched row and are resolved by
+        // the mutation path before conversion to a stored property value.
+        LiteralValue::PropertyReferenceList(_) => PropertyValue::Null,
+    }
+}
+
+fn literal_to_property_value_checked(
+    literal: &LiteralValue,
+) -> Result<PropertyValue, ExecutionError> {
+    if matches!(literal, LiteralValue::PropertyReferenceList(_)) {
+        return Err(ExecutionError::InvalidQuery(
+            "property-reference lists are only supported for evidence_refs".to_owned(),
+        ));
+    }
+    if let LiteralValue::List(values) = literal {
+        if values.is_empty() || values.len() > cypher_parser::MAX_LIST_ITEMS {
+            return Err(ExecutionError::InvalidQuery(
+                "list values must contain 1..=256 items".to_owned(),
+            ));
+        }
+        let expected = literal_scalar_kind(&values[0]).ok_or_else(|| {
+            ExecutionError::InvalidQuery(
+                "list values must contain supported scalar items".to_owned(),
+            )
+        })?;
+        if values
+            .iter()
+            .any(|value| literal_scalar_kind(value) != Some(expected))
+        {
+            return Err(ExecutionError::InvalidQuery(
+                "list values must contain one homogeneous scalar type".to_owned(),
+            ));
+        }
+    }
+    Ok(literal_to_property_value(literal))
+}
+
+fn literal_scalar_kind(value: &LiteralValue) -> Option<u8> {
+    match value {
+        LiteralValue::String(_) => Some(0),
+        LiteralValue::Integer(_) => Some(1),
+        LiteralValue::Float(_) => Some(2),
+        LiteralValue::Boolean(_) => Some(3),
+        LiteralValue::Null | LiteralValue::List(_) | LiteralValue::PropertyReferenceList(_) => None,
     }
 }
 
@@ -1487,7 +1914,9 @@ mod tests {
         ComparisonOperator, LiteralValue, MatchClause, NodePattern, ProjectionItem, PropertyRef,
         ReturnClause, WhereClause,
     };
-    use graph_core::{Graph, NodeInput, PropertyValue, RecordStatus, RelationshipInput};
+    use graph_core::{
+        Confidence, Graph, NodeInput, PropertyValue, RecordStatus, RelationshipInput,
+    };
 
     fn small_graph() -> Graph {
         let mut graph = Graph::new();
@@ -1661,6 +2090,7 @@ mod tests {
                     properties: Vec::new(),
                 },
                 relationship: None,
+                additional_nodes: Vec::new(),
             }),
             where_clause: None,
             return_clause: None,
@@ -1725,6 +2155,243 @@ mod tests {
                 "nested": [true, 42]
             }))),
             "{\"nested\":[true,42]}"
+        );
+    }
+
+    #[test]
+    fn set_updates_and_reads_native_relationship_metadata_from_guide_shape() {
+        let mut graph = small_graph();
+        let narrative = graph
+            .list_nodes()
+            .expect("nodes should list")
+            .into_iter()
+            .find(|node| node.has_label("Narrative"))
+            .expect("narrative should exist");
+        graph
+            .update_node(
+                narrative.id(),
+                NodePatch::default()
+                    .set_property("id", PropertyValue::String("span--123".to_owned())),
+            )
+            .expect("evidence span id should be attached");
+        let mut executor = CypherPipelineExecutor::with_graph(
+            ExecutionPolicy {
+                read_only_by_default: false,
+            },
+            graph,
+        );
+
+        let result = executor
+            .execute(
+                "MATCH (a:Actor)-[r:AMPLIFIES]->(e:Narrative) SET r.confidence = 0.82, r.evidence_refs = [e.id], r.status = 'candidate' RETURN r.confidence, r.evidence_refs, r.status",
+            )
+            .expect("the documented metadata mutation should execute");
+
+        let ExecutionResultData::Records(records) = result.data else {
+            panic!("RETURN should project native metadata");
+        };
+        assert_eq!(
+            records[0].fields.get("r.confidence"),
+            Some(&"0.82".to_owned())
+        );
+        assert_eq!(
+            records[0].fields.get("r.evidence_refs"),
+            Some(&"span--123".to_owned())
+        );
+        assert_eq!(
+            records[0].fields.get("r.status"),
+            Some(&"candidate".to_owned())
+        );
+        let relationship = executor
+            .graph()
+            .list_relationships()
+            .expect("relationships should list")
+            .into_iter()
+            .next()
+            .expect("relationship should exist");
+        assert_eq!(relationship.confidence(), Confidence::new(0.82).ok());
+        assert_eq!(relationship.status(), RecordStatus::Candidate);
+        assert_eq!(relationship.evidence_refs()[0].as_str(), "span--123");
+        assert!(relationship.property("confidence").is_none());
+        assert!(relationship.property("evidence_refs").is_none());
+        assert!(relationship.property("status").is_none());
+    }
+
+    #[test]
+    fn native_node_metadata_replaces_legacy_reserved_properties() {
+        let mut graph = Graph::new();
+        graph
+            .create_node(
+                NodeInput::new(["Indicator"])
+                    .with_property("confidence", PropertyValue::String("legacy".to_owned()))
+                    .with_property("status", PropertyValue::String("legacy".to_owned()))
+                    .with_property(
+                        "evidence_refs",
+                        PropertyValue::StringList(vec!["legacy--evidence".to_owned()]),
+                    ),
+            )
+            .expect("node should be created");
+        let mut executor = CypherPipelineExecutor::with_graph(
+            ExecutionPolicy {
+                read_only_by_default: false,
+            },
+            graph,
+        );
+
+        executor
+            .execute(
+                "MATCH (n:Indicator) SET n.confidence = 0.7, n.evidence_refs = ['span--7'], n.status = 'validated'",
+            )
+            .expect("native metadata update should succeed");
+
+        let node = executor
+            .graph()
+            .list_nodes()
+            .expect("nodes should list")
+            .into_iter()
+            .next()
+            .expect("node should exist");
+        assert_eq!(node.confidence(), Confidence::new(0.7).ok());
+        assert_eq!(node.status(), RecordStatus::Validated);
+        assert_eq!(node.evidence_refs()[0].as_str(), "span--7");
+        assert!(node.property("confidence").is_none());
+        assert!(node.property("status").is_none());
+        assert!(node.property("evidence_refs").is_none());
+    }
+
+    #[test]
+    fn exportable_without_native_prerequisites_is_rejected_atomically() {
+        let mut graph = Graph::new();
+        graph
+            .create_node(
+                NodeInput::new(["Indicator"])
+                    .with_property("name", PropertyValue::String("before".to_owned())),
+            )
+            .expect("node should be created");
+        let mut executor = CypherPipelineExecutor::with_graph(
+            ExecutionPolicy {
+                read_only_by_default: false,
+            },
+            graph,
+        );
+
+        let error = executor
+            .execute("MATCH (n:Indicator) SET n.name = 'after', n.status = 'exportable'")
+            .expect_err("exportable without confidence and evidence should fail");
+        assert!(error.to_string().contains("exportable"));
+
+        let node = executor
+            .graph()
+            .list_nodes()
+            .expect("nodes should list")
+            .into_iter()
+            .next()
+            .expect("node should exist");
+        assert_eq!(node.status(), RecordStatus::Candidate);
+        assert_eq!(
+            node.property("name"),
+            Some(&PropertyValue::String("before".to_owned()))
+        );
+    }
+
+    #[test]
+    fn exportable_with_native_prerequisites_is_applied_atomically() {
+        let mut graph = Graph::new();
+        graph
+            .create_node(NodeInput::new(["Indicator"]))
+            .expect("node should be created");
+        let mut executor = CypherPipelineExecutor::with_graph(
+            ExecutionPolicy {
+                read_only_by_default: false,
+            },
+            graph,
+        );
+
+        executor
+            .execute(
+                "MATCH (n:Indicator) SET n.confidence = 0.9, n.evidence_refs = ['span--9'], n.status = 'exportable'",
+            )
+            .expect("exportable with native prerequisites should succeed");
+
+        let node = executor
+            .graph()
+            .list_nodes()
+            .expect("nodes should list")
+            .into_iter()
+            .next()
+            .expect("node should exist");
+        assert_eq!(node.status(), RecordStatus::Exportable);
+        assert_eq!(node.confidence(), Confidence::new(0.9).ok());
+        assert_eq!(node.evidence_refs()[0].as_str(), "span--9");
+    }
+
+    #[test]
+    fn invalid_native_metadata_inputs_leave_the_graph_unchanged() {
+        for query in [
+            "MATCH (n:Indicator) SET n.name = 'after', n.confidence = 1.2",
+            "MATCH (n:Indicator) SET n.name = 'after', n.status = 'unknown'",
+            "MATCH (n:Indicator) SET n.name = 'after', n.evidence_refs = [42]",
+            "MATCH (n:Indicator) SET n.name = 'after', n.values = ['mixed', 42]",
+        ] {
+            let mut graph = Graph::new();
+            graph
+                .create_node(
+                    NodeInput::new(["Indicator"])
+                        .with_property("name", PropertyValue::String("before".to_owned())),
+                )
+                .expect("node should be created");
+            let mut executor = CypherPipelineExecutor::with_graph(
+                ExecutionPolicy {
+                    read_only_by_default: false,
+                },
+                graph,
+            );
+
+            executor
+                .execute(query)
+                .expect_err("invalid native metadata should fail");
+            let node = executor
+                .graph()
+                .list_nodes()
+                .expect("nodes should list")
+                .into_iter()
+                .next()
+                .expect("node should exist");
+            assert_eq!(
+                node.property("name"),
+                Some(&PropertyValue::String("before".to_owned())),
+                "query mutated the graph despite rejection: {query}"
+            );
+        }
+    }
+
+    #[test]
+    fn zero_match_mutation_reports_unambiguous_zero_counts() {
+        let mut executor = CypherPipelineExecutor::with_graph(
+            ExecutionPolicy {
+                read_only_by_default: false,
+            },
+            small_graph(),
+        );
+
+        let result = executor
+            .execute("MATCH (n:Missing) SET n.name = 'never'")
+            .expect("zero matched rows should be a successful no-op");
+
+        assert_eq!(
+            result.data,
+            ExecutionResultData::MutationSummary {
+                nodes_created: 0,
+                relationships_created: 0,
+                properties_set: 0,
+                nodes_deleted: 0,
+                relationships_deleted: 0,
+                matched_rows: 0,
+                native_fields_changed: 0,
+                property_fields_changed: 0,
+                nodes_updated: 0,
+                relationships_updated: 0,
+            }
         );
     }
 }

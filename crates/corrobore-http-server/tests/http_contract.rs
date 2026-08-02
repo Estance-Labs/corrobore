@@ -570,6 +570,118 @@ async fn cypher_contract_executes_read_query_with_auth() {
 }
 
 #[tokio::test]
+async fn cypher_write_contract_keeps_typed_arrays_and_guide_metadata_native() {
+    let app = test_app();
+    for query in [
+        "CREATE (a:ThreatActor {name: \"APT28\"})",
+        "CREATE (e:EvidenceSpan {id: \"span--123\"})",
+    ] {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/v1/cypher/write")
+            .header(header::AUTHORIZATION, "Bearer token-123")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({"query": query}).to_string()))
+            .expect("seed request should build");
+        let response = app
+            .clone()
+            .oneshot(request)
+            .await
+            .expect("seed request should respond");
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    let metadata_query = "MATCH (a:ThreatActor {name: \"APT28\"}) MATCH (e:EvidenceSpan {id: \"span--123\"}) MERGE (a)-[r:USES]->(m:Malware {name: \"X-Agent\"}) SET r.confidence = 0.82, r.evidence_refs = [e.id], r.status = \"candidate\" RETURN r.confidence, r.evidence_refs, r.status";
+    let guide = include_str!("../../../docs/skills/corrobore/how-to-use.md");
+    assert!(guide.contains("r.confidence = 0.82,"));
+    assert!(guide.contains("r.evidence_refs = [e.id],"));
+    assert!(guide.contains("r.status = \"candidate\""));
+    let metadata_request = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/cypher/write")
+        .header(header::AUTHORIZATION, "Bearer token-123")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({"query": metadata_query}).to_string()))
+        .expect("metadata request should build");
+    let metadata_response = app
+        .clone()
+        .oneshot(metadata_request)
+        .await
+        .expect("metadata request should respond");
+    assert_eq!(metadata_response.status(), StatusCode::OK);
+    let metadata_body = to_bytes(metadata_response.into_body(), usize::MAX)
+        .await
+        .expect("metadata response should be readable");
+    let metadata_payload: Value =
+        serde_json::from_slice(&metadata_body).expect("metadata response should be json");
+    assert_eq!(metadata_payload["result"]["status"], "Success");
+    assert_eq!(
+        metadata_payload["result"]["data"]["Records"][0]["fields"]["r.confidence"],
+        "0.82"
+    );
+    assert_eq!(
+        metadata_payload["result"]["data"]["Records"][0]["fields"]["r.evidence_refs"],
+        "span--123"
+    );
+
+    let list_request = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/cypher/write")
+        .header(header::AUTHORIZATION, "Bearer token-123")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({
+                "query": "MATCH (a:ThreatActor {name: 'APT28'}) SET a.aliases = $aliases",
+                "params": {"aliases": ["Fancy Bear", "Sofacy"]}
+            })
+            .to_string(),
+        ))
+        .expect("typed list request should build");
+    let list_response = app
+        .clone()
+        .oneshot(list_request)
+        .await
+        .expect("typed list request should respond");
+    assert_eq!(list_response.status(), StatusCode::OK);
+    let list_body = to_bytes(list_response.into_body(), usize::MAX)
+        .await
+        .expect("typed list response should be readable");
+    let list_payload: Value =
+        serde_json::from_slice(&list_body).expect("typed list response should be json");
+    assert_eq!(
+        list_payload["result"]["data"]["MutationSummary"]["matched_rows"],
+        1
+    );
+    assert_eq!(
+        list_payload["result"]["data"]["MutationSummary"]["property_fields_changed"],
+        1
+    );
+
+    let read_request = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/cypher/read")
+        .header(header::AUTHORIZATION, "Bearer token-123")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({"query": "MATCH (a:ThreatActor {name: 'APT28'}) RETURN a.aliases"}).to_string(),
+        ))
+        .expect("typed list read should build");
+    let read_response = app
+        .oneshot(read_request)
+        .await
+        .expect("typed list read should respond");
+    let read_body = to_bytes(read_response.into_body(), usize::MAX)
+        .await
+        .expect("typed list read should be readable");
+    let read_payload: Value =
+        serde_json::from_slice(&read_body).expect("typed list read should be json");
+    assert_eq!(
+        read_payload["result"]["data"]["Records"][0]["fields"]["a.aliases"],
+        "Fancy Bear,Sofacy"
+    );
+}
+
+#[tokio::test]
 async fn cypher_read_contract_rejects_mutation_query() {
     let app = test_app();
     let request = Request::builder()

@@ -281,13 +281,17 @@ fn response_audit_summary(response: &CypherResponse) -> (&'static str, usize, Op
             "mutation_summary",
             0,
             Some(format!(
-                "created_nodes={},updated_nodes={},deleted_nodes={},created_relationships={},deleted_relationships={},properties_set={}",
+                "matched_rows={},created_nodes={},updated_nodes={},deleted_nodes={},created_relationships={},updated_relationships={},deleted_relationships={},properties_set={},native_fields_changed={},property_fields_changed={}",
+                summary.matched_rows,
                 summary.created_nodes,
                 summary.updated_nodes,
                 summary.deleted_nodes,
                 summary.created_relationships,
+                summary.updated_relationships,
                 summary.deleted_relationships,
-                summary.properties_set
+                summary.properties_set,
+                summary.native_fields_changed,
+                summary.property_fields_changed
             )),
         ),
         CypherResponseData::Empty => ("empty", 0, None),
@@ -367,9 +371,8 @@ fn generate_rotating_session_id() -> String {
 /// JSON already carries the scalar type the caller intended, so it is preserved
 /// instead of being flattened to text: a number stays a number all the way to the
 /// executor, which is what makes `LIMIT $n` and numeric comparisons behave.
-/// Composite values have no scalar equivalent in the supported Cypher subset and
-/// are rejected rather than stringified into something that would silently fail
-/// to match.
+/// Homogeneous scalar arrays remain typed lists. Other composite shapes are
+/// rejected rather than stringified into values that would silently fail.
 fn typed_params(params: HashMap<String, Value>) -> Result<HashMap<String, CypherValue>, ApiError> {
     params
         .into_iter()
@@ -383,12 +386,13 @@ fn typed_params(params: HashMap<String, Value>) -> Result<HashMap<String, Cypher
                     // Decimals keep their source text so the value stays lossless.
                     None => CypherValue::Float(number.to_string()),
                 },
-                Value::Array(_) | Value::Object(_) => {
+                Value::Array(values) => json_array_to_cypher_list(&key, values)?,
+                Value::Object(_) => {
                     return Err(ApiError::bad_request(
                         "UNSUPPORTED_PARAMETER_TYPE",
                         format!(
-                            "parameter {key:?} must be a string, number, boolean, or null; \
-                             arrays and objects are not supported"
+                            "parameter {key:?} must be a scalar or homogeneous scalar array; \
+                             objects are not supported"
                         ),
                     ));
                 }
@@ -398,9 +402,50 @@ fn typed_params(params: HashMap<String, Value>) -> Result<HashMap<String, Cypher
         .collect()
 }
 
+fn json_array_to_cypher_list(key: &str, values: Vec<Value>) -> Result<CypherValue, ApiError> {
+    if values.is_empty() || values.len() > cypher_parser::MAX_LIST_ITEMS {
+        return Err(unsupported_array(key));
+    }
+    let converted = values
+        .into_iter()
+        .map(|value| match value {
+            Value::String(inner) => Ok(CypherValue::String(inner)),
+            Value::Bool(inner) => Ok(CypherValue::Boolean(inner)),
+            Value::Number(number) => match number.as_i64() {
+                Some(integer) => Ok(CypherValue::Integer(integer)),
+                None => Ok(CypherValue::Float(number.to_string())),
+            },
+            Value::Null | Value::Array(_) | Value::Object(_) => Err(unsupported_array(key)),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let first_type = converted[0].type_name();
+    if converted
+        .iter()
+        .any(|value| value.type_name() != first_type)
+    {
+        return Err(unsupported_array(key));
+    }
+    Ok(CypherValue::List(converted))
+}
+
+fn unsupported_array(key: &str) -> ApiError {
+    ApiError::bad_request(
+        "UNSUPPORTED_PARAMETER_TYPE",
+        format!(
+            "parameter {key:?} arrays must contain 1..={} strings, integers, decimals, or booleans of one type",
+            cypher_parser::MAX_LIST_ITEMS
+        ),
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::generate_rotating_session_id;
+    use std::collections::HashMap;
+
+    use serde_json::json;
+
+    use super::{generate_rotating_session_id, typed_params};
+    use corrobore_engine::CypherValue;
 
     #[test]
     fn generated_session_ids_rotate_and_use_http_prefix() {
@@ -410,5 +455,59 @@ mod tests {
         assert_ne!(first, second);
         assert!(first.starts_with("session--http-"));
         assert!(second.starts_with("session--http-"));
+    }
+
+    #[test]
+    fn typed_params_preserve_homogeneous_json_arrays_end_to_end() {
+        let params = HashMap::from([
+            ("names".to_owned(), json!(["alpha", "beta"])),
+            ("ports".to_owned(), json!([80, 443])),
+            ("scores".to_owned(), json!([0.4, 0.9])),
+            ("flags".to_owned(), json!([true, false])),
+        ]);
+
+        let converted = typed_params(params).expect("homogeneous arrays should remain typed");
+
+        assert_eq!(
+            converted.get("names"),
+            Some(&CypherValue::List(vec![
+                CypherValue::String("alpha".to_owned()),
+                CypherValue::String("beta".to_owned()),
+            ]))
+        );
+        assert_eq!(
+            converted.get("ports"),
+            Some(&CypherValue::List(vec![
+                CypherValue::Integer(80),
+                CypherValue::Integer(443),
+            ]))
+        );
+        assert_eq!(
+            converted.get("scores"),
+            Some(&CypherValue::List(vec![
+                CypherValue::Float("0.4".to_owned()),
+                CypherValue::Float("0.9".to_owned()),
+            ]))
+        );
+        assert_eq!(
+            converted.get("flags"),
+            Some(&CypherValue::List(vec![
+                CypherValue::Boolean(true),
+                CypherValue::Boolean(false),
+            ]))
+        );
+    }
+
+    #[test]
+    fn typed_params_reject_mixed_nested_and_object_values_atomically() {
+        for value in [
+            json!(["alpha", 1]),
+            json!([[1, 2]]),
+            json!({"key": "value"}),
+        ] {
+            let error = typed_params(HashMap::from([("value".to_owned(), value)]))
+                .expect_err("unsupported composite parameter should be rejected");
+            assert_eq!(error.code, "UNSUPPORTED_PARAMETER_TYPE");
+        }
     }
 }

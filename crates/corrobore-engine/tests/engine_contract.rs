@@ -61,15 +61,11 @@ fn engine_contract_auto_mode_routes_leading_create_to_mutation() {
 
     assert_eq!(response.status, CypherResponseStatus::Success);
     match response.data {
-        // The gateway maps mutation summaries into one record of counters.
-        CypherResponseData::Records(records) => {
-            assert_eq!(records.len(), 1);
-            assert_eq!(
-                records[0].fields.get("nodes_created").map(String::as_str),
-                Some("1")
-            );
+        CypherResponseData::MutationSummary(summary) => {
+            assert_eq!(summary.created_nodes, 1);
+            assert_eq!(summary.matched_rows, 0);
         }
-        other => panic!("expected mutation counters record, got {other:?}"),
+        other => panic!("expected typed mutation summary, got {other:?}"),
     }
 
     let nodes = engine
