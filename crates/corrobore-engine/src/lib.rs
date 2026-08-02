@@ -740,6 +740,16 @@ impl CorroboreEngine {
         self.gateway.graph()
     }
 
+    /// Hydrates the complete current graph from a configured paged persistence
+    /// adapter before a host performs a graph-wide operation outside Cypher.
+    ///
+    /// Snapshot-backed and ephemeral engines keep their current graph. HTTP
+    /// validation and export use this boundary after restart so they do not
+    /// inspect the intentionally payload-cold startup graph.
+    pub fn hydrate_full_graph(&mut self) -> Result<(), EngineError> {
+        self.prepare_graph_for_query("MATCH (n)-[r]->(m) RETURN n, r, m")
+    }
+
     /// Applies one typed graph mutation atomically and persists it as one
     /// transition when durable storage is configured.
     pub fn mutate_graph_atomically<T, F>(

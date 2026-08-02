@@ -107,6 +107,7 @@ nav:
     - OpenCTI Transactional Writes: developer-guide/opencti-transactional-writes.md
     - OpenCTI Merge and Reconciliation: developer-guide/opencti-merge-reconciliation.md
     - Standalone Acceptance Matrix: acceptance/standalone-server.md
+    - Report-to-STIX Acceptance: acceptance/report-to-stix.md
     - Elastic-free OpenCTI Acceptance: acceptance/opencti-elastic-free.md
     - Release Notes Process: developer-guide/release-notes-process.md
   - Release Notes:

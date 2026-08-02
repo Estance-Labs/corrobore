@@ -50,9 +50,12 @@ pub async fn export_stix(
     let bundle = tokio::time::timeout(
         timeout,
         tokio::task::spawn_blocking(move || {
-            let engine = engine
+            let mut engine = engine
                 .lock()
                 .map_err(|_| ApiError::internal("STATE_LOCK_FAILED", "engine lock poisoned"))?;
+            engine
+                .hydrate_full_graph()
+                .map_err(map_engine_export_error)?;
 
             let snapshot_id = query
                 .snapshot_id

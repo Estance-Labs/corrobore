@@ -1,0 +1,927 @@
+{
+  "schema_version": "1.0",
+  "description": "Already-extracted synthetic CTI candidates; no PDF, OCR, or LLM extraction is performed by Corrobore.",
+  "bundle": {
+    "type": "bundle",
+    "id": "bundle--00000000-0000-4000-8000-000000000001",
+    "objects": [
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001030",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "related-to",
+        "source_ref": "report--00000000-0000-4000-8000-000000000701",
+        "target_ref": "intrusion-set--00000000-0000-4000-8000-000000000001"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001029",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "drops",
+        "source_ref": "malware--00000000-0000-4000-8000-000000000103",
+        "target_ref": "file--00000000-0000-4000-8000-000000000501"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001028",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "drops",
+        "source_ref": "malware--00000000-0000-4000-8000-000000000102",
+        "target_ref": "file--00000000-0000-4000-8000-000000000502"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001027",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "drops",
+        "source_ref": "malware--00000000-0000-4000-8000-000000000101",
+        "target_ref": "file--00000000-0000-4000-8000-000000000501"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001026",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "communicates-with",
+        "source_ref": "malware--00000000-0000-4000-8000-000000000103",
+        "target_ref": "domain-name--00000000-0000-4000-8000-000000000602"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001025",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "communicates-with",
+        "source_ref": "malware--00000000-0000-4000-8000-000000000103",
+        "target_ref": "domain-name--00000000-0000-4000-8000-000000000601"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001024",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "communicates-with",
+        "source_ref": "malware--00000000-0000-4000-8000-000000000102",
+        "target_ref": "domain-name--00000000-0000-4000-8000-000000000602"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001023",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "communicates-with",
+        "source_ref": "malware--00000000-0000-4000-8000-000000000102",
+        "target_ref": "domain-name--00000000-0000-4000-8000-000000000601"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001022",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "communicates-with",
+        "source_ref": "malware--00000000-0000-4000-8000-000000000101",
+        "target_ref": "domain-name--00000000-0000-4000-8000-000000000602"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001021",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "communicates-with",
+        "source_ref": "malware--00000000-0000-4000-8000-000000000101",
+        "target_ref": "domain-name--00000000-0000-4000-8000-000000000601"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001020",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "targets",
+        "source_ref": "intrusion-set--00000000-0000-4000-8000-000000000001",
+        "target_ref": "location--00000000-0000-4000-8000-000000000402"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001019",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "targets",
+        "source_ref": "intrusion-set--00000000-0000-4000-8000-000000000001",
+        "target_ref": "location--00000000-0000-4000-8000-000000000401"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001018",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "targets",
+        "source_ref": "intrusion-set--00000000-0000-4000-8000-000000000001",
+        "target_ref": "identity--00000000-0000-4000-8000-000000000302"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001017",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "targets",
+        "source_ref": "intrusion-set--00000000-0000-4000-8000-000000000001",
+        "target_ref": "identity--00000000-0000-4000-8000-000000000301"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001016",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "uses",
+        "source_ref": "malware--00000000-0000-4000-8000-000000000103",
+        "target_ref": "attack-pattern--00000000-0000-4000-8000-000000000201"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001015",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "uses",
+        "source_ref": "malware--00000000-0000-4000-8000-000000000103",
+        "target_ref": "attack-pattern--00000000-0000-4000-8000-000000000204"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001014",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "uses",
+        "source_ref": "malware--00000000-0000-4000-8000-000000000103",
+        "target_ref": "attack-pattern--00000000-0000-4000-8000-000000000203"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001013",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "uses",
+        "source_ref": "malware--00000000-0000-4000-8000-000000000102",
+        "target_ref": "attack-pattern--00000000-0000-4000-8000-000000000204"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001012",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "uses",
+        "source_ref": "malware--00000000-0000-4000-8000-000000000102",
+        "target_ref": "attack-pattern--00000000-0000-4000-8000-000000000203"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001011",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "uses",
+        "source_ref": "malware--00000000-0000-4000-8000-000000000102",
+        "target_ref": "attack-pattern--00000000-0000-4000-8000-000000000202"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001010",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "uses",
+        "source_ref": "malware--00000000-0000-4000-8000-000000000101",
+        "target_ref": "attack-pattern--00000000-0000-4000-8000-000000000203"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001009",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "uses",
+        "source_ref": "malware--00000000-0000-4000-8000-000000000101",
+        "target_ref": "attack-pattern--00000000-0000-4000-8000-000000000202"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001008",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "uses",
+        "source_ref": "malware--00000000-0000-4000-8000-000000000101",
+        "target_ref": "attack-pattern--00000000-0000-4000-8000-000000000201"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001007",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "uses",
+        "source_ref": "intrusion-set--00000000-0000-4000-8000-000000000001",
+        "target_ref": "attack-pattern--00000000-0000-4000-8000-000000000204"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001006",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "uses",
+        "source_ref": "intrusion-set--00000000-0000-4000-8000-000000000001",
+        "target_ref": "attack-pattern--00000000-0000-4000-8000-000000000203"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001005",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "uses",
+        "source_ref": "intrusion-set--00000000-0000-4000-8000-000000000001",
+        "target_ref": "attack-pattern--00000000-0000-4000-8000-000000000202"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001004",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "uses",
+        "source_ref": "intrusion-set--00000000-0000-4000-8000-000000000001",
+        "target_ref": "attack-pattern--00000000-0000-4000-8000-000000000201"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001003",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "uses",
+        "source_ref": "intrusion-set--00000000-0000-4000-8000-000000000001",
+        "target_ref": "malware--00000000-0000-4000-8000-000000000103"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001002",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "uses",
+        "source_ref": "intrusion-set--00000000-0000-4000-8000-000000000001",
+        "target_ref": "malware--00000000-0000-4000-8000-000000000102"
+      },
+      {
+        "type": "relationship",
+        "spec_version": "2.1",
+        "id": "relationship--00000000-0000-4000-8000-000000001001",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "relationship_type": "uses",
+        "source_ref": "intrusion-set--00000000-0000-4000-8000-000000000001",
+        "target_ref": "malware--00000000-0000-4000-8000-000000000101"
+      },
+      {
+        "type": "report",
+        "spec_version": "2.1",
+        "id": "report--00000000-0000-4000-8000-000000000701",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "name": "Synthetic Orchard campaign report",
+        "report_types": [
+          "threat-report"
+        ],
+        "published": "2026-01-15T10:00:00.000Z",
+        "object_refs": [
+          "intrusion-set--00000000-0000-4000-8000-000000000001",
+          "malware--00000000-0000-4000-8000-000000000101",
+          "malware--00000000-0000-4000-8000-000000000102",
+          "malware--00000000-0000-4000-8000-000000000103",
+          "attack-pattern--00000000-0000-4000-8000-000000000201",
+          "attack-pattern--00000000-0000-4000-8000-000000000202",
+          "attack-pattern--00000000-0000-4000-8000-000000000203",
+          "attack-pattern--00000000-0000-4000-8000-000000000204",
+          "identity--00000000-0000-4000-8000-000000000301",
+          "identity--00000000-0000-4000-8000-000000000302",
+          "location--00000000-0000-4000-8000-000000000401",
+          "location--00000000-0000-4000-8000-000000000402",
+          "file--00000000-0000-4000-8000-000000000501",
+          "file--00000000-0000-4000-8000-000000000502",
+          "domain-name--00000000-0000-4000-8000-000000000601",
+          "domain-name--00000000-0000-4000-8000-000000000602",
+          "relationship--00000000-0000-4000-8000-000000001001",
+          "relationship--00000000-0000-4000-8000-000000001002",
+          "relationship--00000000-0000-4000-8000-000000001003",
+          "relationship--00000000-0000-4000-8000-000000001004",
+          "relationship--00000000-0000-4000-8000-000000001005",
+          "relationship--00000000-0000-4000-8000-000000001006",
+          "relationship--00000000-0000-4000-8000-000000001007",
+          "relationship--00000000-0000-4000-8000-000000001008",
+          "relationship--00000000-0000-4000-8000-000000001009",
+          "relationship--00000000-0000-4000-8000-000000001010",
+          "relationship--00000000-0000-4000-8000-000000001011",
+          "relationship--00000000-0000-4000-8000-000000001012",
+          "relationship--00000000-0000-4000-8000-000000001013",
+          "relationship--00000000-0000-4000-8000-000000001014",
+          "relationship--00000000-0000-4000-8000-000000001015",
+          "relationship--00000000-0000-4000-8000-000000001016",
+          "relationship--00000000-0000-4000-8000-000000001017",
+          "relationship--00000000-0000-4000-8000-000000001018",
+          "relationship--00000000-0000-4000-8000-000000001019",
+          "relationship--00000000-0000-4000-8000-000000001020",
+          "relationship--00000000-0000-4000-8000-000000001021",
+          "relationship--00000000-0000-4000-8000-000000001022",
+          "relationship--00000000-0000-4000-8000-000000001023",
+          "relationship--00000000-0000-4000-8000-000000001024",
+          "relationship--00000000-0000-4000-8000-000000001025",
+          "relationship--00000000-0000-4000-8000-000000001026",
+          "relationship--00000000-0000-4000-8000-000000001027",
+          "relationship--00000000-0000-4000-8000-000000001028",
+          "relationship--00000000-0000-4000-8000-000000001029"
+        ]
+      },
+      {
+        "type": "intrusion-set",
+        "spec_version": "2.1",
+        "id": "intrusion-set--00000000-0000-4000-8000-000000000001",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "name": "Synthetic Orchard",
+        "aliases": [
+          "Orchard Group"
+        ],
+        "description": "A fictional intrusion set used only for Corrobore acceptance testing."
+      },
+      {
+        "type": "malware",
+        "spec_version": "2.1",
+        "id": "malware--00000000-0000-4000-8000-000000000101",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "name": "Copper Finch",
+        "is_family": true,
+        "malware_types": [
+          "remote-access-trojan"
+        ]
+      },
+      {
+        "type": "malware",
+        "spec_version": "2.1",
+        "id": "malware--00000000-0000-4000-8000-000000000102",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "name": "Silver Fern",
+        "is_family": true,
+        "malware_types": [
+          "loader"
+        ]
+      },
+      {
+        "type": "malware",
+        "spec_version": "2.1",
+        "id": "malware--00000000-0000-4000-8000-000000000103",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "name": "Amber Reed",
+        "is_family": true,
+        "malware_types": [
+          "backdoor"
+        ],
+        "extensions": {
+          "extension-definition--00000000-0000-4000-8000-000000009999": {
+            "synthetic_score": 7,
+            "note": "Unknown extension retained verbatim by the supported boundary."
+          }
+        }
+      },
+      {
+        "type": "attack-pattern",
+        "spec_version": "2.1",
+        "id": "attack-pattern--00000000-0000-4000-8000-000000000201",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "name": "Command and Scripting Interpreter",
+        "external_references": [
+          {
+            "source_name": "synthetic-attack",
+            "external_id": "T1059"
+          }
+        ]
+      },
+      {
+        "type": "attack-pattern",
+        "spec_version": "2.1",
+        "id": "attack-pattern--00000000-0000-4000-8000-000000000202",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "name": "Ingress Tool Transfer",
+        "external_references": [
+          {
+            "source_name": "synthetic-attack",
+            "external_id": "T1105"
+          }
+        ]
+      },
+      {
+        "type": "attack-pattern",
+        "spec_version": "2.1",
+        "id": "attack-pattern--00000000-0000-4000-8000-000000000203",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "name": "Process Injection",
+        "external_references": [
+          {
+            "source_name": "synthetic-attack",
+            "external_id": "T1055"
+          }
+        ]
+      },
+      {
+        "type": "attack-pattern",
+        "spec_version": "2.1",
+        "id": "attack-pattern--00000000-0000-4000-8000-000000000204",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "name": "Exfiltration Over Web Service",
+        "external_references": [
+          {
+            "source_name": "synthetic-attack",
+            "external_id": "T1567"
+          }
+        ]
+      },
+      {
+        "type": "identity",
+        "spec_version": "2.1",
+        "id": "identity--00000000-0000-4000-8000-000000000301",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "name": "Synthetic Energy Cooperative",
+        "identity_class": "organization",
+        "sectors": [
+          "energy"
+        ]
+      },
+      {
+        "type": "identity",
+        "spec_version": "2.1",
+        "id": "identity--00000000-0000-4000-8000-000000000302",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "name": "Synthetic Transport Cooperative",
+        "identity_class": "organization",
+        "sectors": [
+          "transportation"
+        ]
+      },
+      {
+        "type": "location",
+        "spec_version": "2.1",
+        "id": "location--00000000-0000-4000-8000-000000000401",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "name": "Synthetic North Region",
+        "region": "northern-europe"
+      },
+      {
+        "type": "location",
+        "spec_version": "2.1",
+        "id": "location--00000000-0000-4000-8000-000000000402",
+        "created": "2026-01-15T10:00:00.000Z",
+        "modified": "2026-01-15T10:00:00.000Z",
+        "name": "Synthetic West Region",
+        "region": "western-europe"
+      },
+      {
+        "type": "file",
+        "id": "file--00000000-0000-4000-8000-000000000501",
+        "name": "orchard-loader.bin",
+        "hashes": {
+          "SHA-256": "1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      },
+      {
+        "type": "file",
+        "id": "file--00000000-0000-4000-8000-000000000502",
+        "name": "orchard-config.dat",
+        "hashes": {
+          "SHA-256": "2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      },
+      {
+        "type": "domain-name",
+        "id": "domain-name--00000000-0000-4000-8000-000000000601",
+        "value": "update.synthetic.invalid"
+      },
+      {
+        "type": "domain-name",
+        "id": "domain-name--00000000-0000-4000-8000-000000000602",
+        "value": "cdn.synthetic.invalid"
+      }
+    ]
+  },
+  "evidence": {
+    "schema_version": "1.0",
+    "records": [
+      {
+        "id": "evidence--report-page-2",
+        "source_id": "document--synthetic-orchard-report-v1",
+        "content_sha256": "667c62bd0c5a57e0be800c24cc264b08ac85775315923216f08157f9e6a7a051",
+        "payload": "The report names Synthetic Orchard and three fictional malware families.",
+        "locator": {
+          "type": "page",
+          "page": 2
+        },
+        "extractor_id": "fixture-generator/v1",
+        "model_version": "none-deterministic-structured-input",
+        "language": "en"
+      },
+      {
+        "id": "evidence--report-paragraph-4-2",
+        "source_id": "document--synthetic-orchard-report-v1",
+        "content_sha256": "667c62bd0c5a57e0be800c24cc264b08ac85775315923216f08157f9e6a7a051",
+        "payload": "Synthetic Orchard uses T1059, T1105, T1055 and T1567-like techniques.",
+        "locator": {
+          "type": "paragraph",
+          "page": 4,
+          "paragraph": 2
+        },
+        "extractor_id": "fixture-generator/v1",
+        "model_version": "none-deterministic-structured-input",
+        "language": "en"
+      },
+      {
+        "id": "evidence--report-table-6-1-2-3",
+        "source_id": "document--synthetic-orchard-report-v1",
+        "content_sha256": "667c62bd0c5a57e0be800c24cc264b08ac85775315923216f08157f9e6a7a051",
+        "payload": "update.synthetic.invalid",
+        "locator": {
+          "type": "table_cell",
+          "page": 6,
+          "table": 1,
+          "row": 2,
+          "column": 3
+        },
+        "extractor_id": "fixture-generator/v1",
+        "model_version": "none-deterministic-structured-input",
+        "language": "en"
+      }
+    ],
+    "annotations": {
+      "relationship--00000000-0000-4000-8000-000000001030": {
+        "evidence_refs": [
+          "evidence--report-page-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001029": {
+        "evidence_refs": [
+          "evidence--report-paragraph-4-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001028": {
+        "evidence_refs": [
+          "evidence--report-table-6-1-2-3"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001027": {
+        "evidence_refs": [
+          "evidence--report-page-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001026": {
+        "evidence_refs": [
+          "evidence--report-paragraph-4-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001025": {
+        "evidence_refs": [
+          "evidence--report-table-6-1-2-3"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001024": {
+        "evidence_refs": [
+          "evidence--report-page-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001023": {
+        "evidence_refs": [
+          "evidence--report-paragraph-4-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001022": {
+        "evidence_refs": [
+          "evidence--report-table-6-1-2-3"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001021": {
+        "evidence_refs": [
+          "evidence--report-page-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001020": {
+        "evidence_refs": [
+          "evidence--report-paragraph-4-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001019": {
+        "evidence_refs": [
+          "evidence--report-table-6-1-2-3"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001018": {
+        "evidence_refs": [
+          "evidence--report-page-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001017": {
+        "evidence_refs": [
+          "evidence--report-paragraph-4-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001016": {
+        "evidence_refs": [
+          "evidence--report-table-6-1-2-3"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001015": {
+        "evidence_refs": [
+          "evidence--report-page-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001014": {
+        "evidence_refs": [
+          "evidence--report-paragraph-4-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001013": {
+        "evidence_refs": [
+          "evidence--report-table-6-1-2-3"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001012": {
+        "evidence_refs": [
+          "evidence--report-page-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001011": {
+        "evidence_refs": [
+          "evidence--report-paragraph-4-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001010": {
+        "evidence_refs": [
+          "evidence--report-table-6-1-2-3"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001009": {
+        "evidence_refs": [
+          "evidence--report-page-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001008": {
+        "evidence_refs": [
+          "evidence--report-paragraph-4-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001007": {
+        "evidence_refs": [
+          "evidence--report-table-6-1-2-3"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001006": {
+        "evidence_refs": [
+          "evidence--report-page-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001005": {
+        "evidence_refs": [
+          "evidence--report-paragraph-4-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001004": {
+        "evidence_refs": [
+          "evidence--report-table-6-1-2-3"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001003": {
+        "evidence_refs": [
+          "evidence--report-page-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001002": {
+        "evidence_refs": [
+          "evidence--report-paragraph-4-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "relationship--00000000-0000-4000-8000-000000001001": {
+        "evidence_refs": [
+          "evidence--report-table-6-1-2-3"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "report--00000000-0000-4000-8000-000000000701": {
+        "evidence_refs": [
+          "evidence--report-page-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "intrusion-set--00000000-0000-4000-8000-000000000001": {
+        "evidence_refs": [
+          "evidence--report-paragraph-4-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "malware--00000000-0000-4000-8000-000000000101": {
+        "evidence_refs": [
+          "evidence--report-table-6-1-2-3"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "malware--00000000-0000-4000-8000-000000000102": {
+        "evidence_refs": [
+          "evidence--report-page-2"
+        ],
+        "confidence": 40,
+        "status": "candidate"
+      },
+      "malware--00000000-0000-4000-8000-000000000103": {
+        "evidence_refs": [
+          "evidence--report-paragraph-4-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "attack-pattern--00000000-0000-4000-8000-000000000201": {
+        "evidence_refs": [
+          "evidence--report-table-6-1-2-3"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "attack-pattern--00000000-0000-4000-8000-000000000202": {
+        "evidence_refs": [
+          "evidence--report-page-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "attack-pattern--00000000-0000-4000-8000-000000000203": {
+        "evidence_refs": [
+          "evidence--report-paragraph-4-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "attack-pattern--00000000-0000-4000-8000-000000000204": {
+        "evidence_refs": [
+          "evidence--report-table-6-1-2-3"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "identity--00000000-0000-4000-8000-000000000301": {
+        "evidence_refs": [
+          "evidence--report-page-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "identity--00000000-0000-4000-8000-000000000302": {
+        "evidence_refs": [
+          "evidence--report-paragraph-4-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "location--00000000-0000-4000-8000-000000000401": {
+        "evidence_refs": [
+          "evidence--report-table-6-1-2-3"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "location--00000000-0000-4000-8000-000000000402": {
+        "evidence_refs": [
+          "evidence--report-page-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "file--00000000-0000-4000-8000-000000000501": {
+        "evidence_refs": [
+          "evidence--report-paragraph-4-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "file--00000000-0000-4000-8000-000000000502": {
+        "evidence_refs": [
+          "evidence--report-table-6-1-2-3"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "domain-name--00000000-0000-4000-8000-000000000601": {
+        "evidence_refs": [
+          "evidence--report-page-2"
+        ],
+        "confidence": 92,
+        "status": "candidate"
+      },
+      "domain-name--00000000-0000-4000-8000-000000000602": {
+        "evidence_refs": [],
+        "confidence": 90,
+        "status": "candidate"
+      }
+    }
+  },
+  "workspace_id": "workspace--report-to-stix-acceptance",
+  "session_id": "session--report-to-stix-acceptance",
+  "budget_ref": "budget--report-to-stix-acceptance"
+}
