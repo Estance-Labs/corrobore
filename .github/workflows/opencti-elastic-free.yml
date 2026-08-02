@@ -62,7 +62,10 @@ jobs:
           yarn check-ts
 
   local-matrix:
+    # This product-specific acceptance remains available on demand without
+    # consuming pull-request runners for unrelated engine changes.
     name: Corrobore OpenCTI matrix
+    if: github.event_name == 'workflow_dispatch'
     needs: contracts
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -97,8 +100,10 @@ jobs:
           retention-days: 14
 
   exact-stack:
+    # The shipped-stack proof is an explicit certification action layered on
+    # top of the manually requested local matrix.
     name: Exact image and stack gate
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.full_stack)
+    if: github.event_name == 'workflow_dispatch' && inputs.full_stack
     needs: local-matrix
     runs-on: ubuntu-latest
     timeout-minutes: 90
