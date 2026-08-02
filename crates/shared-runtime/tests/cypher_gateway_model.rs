@@ -128,12 +128,16 @@ fn response_model_carries_mutation_summary_warnings_and_fix_hints() {
     let response = CypherResponse {
         status: CypherResponseStatus::ValidationFailed,
         data: CypherResponseData::MutationSummary(CypherMutationSummary {
+            matched_rows: 0,
             created_nodes: 0,
             updated_nodes: 0,
             deleted_nodes: 0,
             created_relationships: 0,
+            updated_relationships: 0,
             deleted_relationships: 0,
             properties_set: 0,
+            native_fields_changed: 0,
+            property_fields_changed: 0,
         }),
         warnings: vec!["planner_fallback".to_owned()],
         validation_errors: vec![CypherValidationError {

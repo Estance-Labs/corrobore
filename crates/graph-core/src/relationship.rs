@@ -357,6 +357,7 @@ pub struct RelationshipPatch {
     pub(crate) properties_to_set: PropertyMap,
     pub(crate) status: Option<RecordStatus>,
     pub(crate) confidence: Option<Confidence>,
+    pub(crate) evidence_refs: Option<Vec<EvidenceId>>,
 }
 
 impl RelationshipPatch {
@@ -375,6 +376,12 @@ impl RelationshipPatch {
     /// Sets the confidence.
     pub fn set_confidence(mut self, confidence: Confidence) -> Self {
         self.confidence = Some(confidence);
+        self
+    }
+
+    /// Replaces the native evidence references.
+    pub fn set_evidence_refs(mut self, evidence_refs: Vec<EvidenceId>) -> Self {
+        self.evidence_refs = Some(evidence_refs);
         self
     }
 }

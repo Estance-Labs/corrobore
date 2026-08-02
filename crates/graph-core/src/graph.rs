@@ -362,7 +362,7 @@ impl Graph {
         next.version += 1;
         next.current = true;
         next.previous_version_id = Some(current.version_id.clone());
-        Self::apply_node_patch(&mut next, patch);
+        Self::apply_node_patch(&mut next, patch)?;
         self.append_node_version(id, &current.version_id, version_id, next)?;
         Ok(id.clone())
     }
@@ -779,7 +779,8 @@ impl Graph {
         Ok(relationships)
     }
 
-    fn apply_node_patch(node: &mut Node, patch: NodePatch) {
+    fn apply_node_patch(node: &mut Node, patch: NodePatch) -> Result<(), GraphError> {
+        let requests_exportable = patch.status == Some(RecordStatus::Exportable);
         for (key, value) in patch.properties_to_set {
             node.properties.insert(key, value);
         }
@@ -788,13 +789,27 @@ impl Graph {
         }
         if let Some(confidence) = patch.confidence {
             node.confidence = Some(confidence);
+            node.properties.remove("confidence");
         }
+        if let Some(evidence_refs) = patch.evidence_refs {
+            node.evidence_refs = evidence_refs;
+            node.properties.remove("evidence_refs");
+        }
+        if patch.status.is_some() {
+            node.properties.remove("status");
+        }
+        validate_exportable_transition(
+            requests_exportable,
+            node.confidence.is_some(),
+            !node.evidence_refs.is_empty(),
+        )
     }
 
     fn apply_relationship_patch(
         relationship: &mut Relationship,
         patch: RelationshipPatch,
     ) -> Result<(), GraphError> {
+        let requests_exportable = patch.status == Some(RecordStatus::Exportable);
         for (key, value) in patch.properties_to_set {
             relationship.properties.insert(key, value);
         }
@@ -803,8 +818,20 @@ impl Graph {
         }
         if let Some(confidence) = patch.confidence {
             relationship.confidence = Some(confidence);
+            relationship.properties.remove("confidence");
         }
-        Ok(())
+        if let Some(evidence_refs) = patch.evidence_refs {
+            relationship.evidence_refs = evidence_refs;
+            relationship.properties.remove("evidence_refs");
+        }
+        if patch.status.is_some() {
+            relationship.properties.remove("status");
+        }
+        validate_exportable_transition(
+            requests_exportable,
+            relationship.confidence.is_some(),
+            !relationship.evidence_refs.is_empty(),
+        )
     }
 
     fn append_node_version(
@@ -864,6 +891,19 @@ impl Graph {
     }
 }
 
+fn validate_exportable_transition(
+    requests_exportable: bool,
+    has_confidence: bool,
+    has_evidence: bool,
+) -> Result<(), GraphError> {
+    if requests_exportable && (!has_confidence || !has_evidence) {
+        return Err(GraphError::InvalidRecordStatusTransition(
+            "exportable requires native confidence and at least one evidence reference".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -885,6 +925,61 @@ mod tests {
             .expect("relationship creation should succeed");
 
         (graph, source, target, relationship)
+    }
+
+    #[test]
+    fn native_evidence_reference_patches_are_versioned_for_nodes_and_relationships() {
+        let (mut graph, source, _target, relationship) = setup_graph_with_relationship();
+        let evidence_id = EvidenceId::new("span--123").expect("evidence id should be valid");
+
+        graph
+            .update_node(
+                &source,
+                NodePatch::default().set_evidence_refs(vec![evidence_id.clone()]),
+            )
+            .expect("node evidence patch should succeed");
+        graph
+            .update_relationship(
+                &relationship,
+                RelationshipPatch::default().set_evidence_refs(vec![evidence_id.clone()]),
+            )
+            .expect("relationship evidence patch should succeed");
+
+        assert_eq!(
+            graph
+                .get_node(&source)
+                .expect("node lookup should succeed")
+                .expect("node should exist")
+                .evidence_refs(),
+            std::slice::from_ref(&evidence_id)
+        );
+        assert_eq!(
+            graph
+                .get_relationship(&relationship)
+                .expect("relationship lookup should succeed")
+                .expect("relationship should exist")
+                .evidence_refs(),
+            std::slice::from_ref(&evidence_id)
+        );
+
+        let restored = Graph::from_persistence_snapshot(graph.persistence_snapshot())
+            .expect("native metadata snapshot should restore");
+        assert_eq!(
+            restored
+                .get_node(&source)
+                .expect("restored node lookup should succeed")
+                .expect("restored node should exist")
+                .evidence_refs(),
+            std::slice::from_ref(&evidence_id)
+        );
+        assert_eq!(
+            restored
+                .get_relationship(&relationship)
+                .expect("restored relationship lookup should succeed")
+                .expect("restored relationship should exist")
+                .evidence_refs(),
+            std::slice::from_ref(&evidence_id)
+        );
     }
 
     #[test]

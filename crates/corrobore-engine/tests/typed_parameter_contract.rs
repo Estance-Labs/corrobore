@@ -145,6 +145,44 @@ fn boolean_parameter_keeps_its_type() {
 }
 
 #[test]
+fn homogeneous_list_parameter_is_stored_and_read_without_json_stringification() {
+    let mut engine = CorroboreEngine::strict_default();
+    seed_indicators(&mut engine, &["typed-list"]);
+    let update = EngineRequest::new(
+        "MATCH (n:Indicator {name: 'typed-list'}) SET n.tags = $tags",
+        EngineRequestMode::Mutation,
+    )
+    .with_typed_parameters(typed(&[(
+        "tags",
+        CypherValue::List(vec![
+            CypherValue::String("alpha".to_owned()),
+            CypherValue::String("beta".to_owned()),
+        ]),
+    )]));
+
+    let response = engine
+        .execute_request(update)
+        .expect("typed list update should execute");
+    let CypherResponseData::MutationSummary(summary) = response.data else {
+        panic!("mutation should expose a typed summary");
+    };
+    assert_eq!(summary.matched_rows, 1);
+    assert_eq!(summary.property_fields_changed, 1);
+    assert_eq!(summary.native_fields_changed, 0);
+
+    let read = engine
+        .read("MATCH (n:Indicator {name: 'typed-list'}) RETURN n.tags")
+        .expect("typed list should read back");
+    let CypherResponseData::Records(records) = read.data else {
+        panic!("read should return records");
+    };
+    assert_eq!(
+        records[0].fields.get("n.tags"),
+        Some(&"alpha,beta".to_owned())
+    );
+}
+
+#[test]
 fn unbound_placeholder_fails_loudly_instead_of_returning_no_rows() {
     let mut engine = CorroboreEngine::strict_default();
     seed_indicators(&mut engine, &["a"]);

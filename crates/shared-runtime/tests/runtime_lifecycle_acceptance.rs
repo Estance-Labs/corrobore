@@ -137,12 +137,16 @@ impl RuntimeHarness {
         Ok(CypherResponse {
             status: CypherResponseStatus::Success,
             data: CypherResponseData::MutationSummary(CypherMutationSummary {
+                matched_rows: 0,
                 created_nodes: 1,
                 updated_nodes: 0,
                 deleted_nodes: 0,
                 created_relationships: 0,
+                updated_relationships: 0,
                 deleted_relationships: 0,
                 properties_set: 1,
+                native_fields_changed: 0,
+                property_fields_changed: 1,
             }),
             warnings: vec![],
             validation_errors: vec![],
