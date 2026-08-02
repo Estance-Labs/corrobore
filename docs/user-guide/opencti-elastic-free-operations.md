@@ -62,6 +62,30 @@ defaults (`50` requests/second, burst `200`). Tune
 state traffic; the provider still retries `429` responses within its request
 deadline.
 
+## Load demonstration data
+
+Demonstration data is for disposable evaluation environments only. Normal
+`docker compose up` never imports it. After the seven services are healthy,
+load the versioned Corrobore demonstration scenario with:
+
+```bash
+scripts/opencti-elastic-free-demo-data.sh
+```
+
+The default selection is `corrobore-demo`, a small deterministic CTI dataset
+with an author, malware, and indicator. You may also pass its name explicitly:
+
+```bash
+scripts/opencti-elastic-free-demo-data.sh corrobore-demo
+```
+
+The command refuses path-like or unknown names, checks the live OpenCTI health
+endpoint, and reads the administrator token only from the container secret. It
+uses OpenCTI's pinned importer with update semantics, so rerunning it updates
+the same STIX identifiers instead of intentionally creating duplicate demo
+objects. A rerun can overwrite analyst changes made to those demonstration
+objects; never point this command at a production project.
+
 ## Capacity profiles
 
 The small profile covers 100,000 objects and 500,000 relationships. It starts

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-ARG OPENCTI_COMMIT=df63a5107602a41aa8259e1d566532e36218c2a0
+ARG OPENCTI_COMMIT=cba9785b6b32093cfa645a1bacc9243c0d771260
 
 FROM node:22-alpine3.23 AS source
 ARG OPENCTI_COMMIT
@@ -31,8 +31,12 @@ WORKDIR /opt/opencti
 COPY --from=builder /opt/opencti/opencti-graphql/build/ ./build/
 COPY --from=builder /opt/opencti/opencti-graphql/config/ ./config/
 COPY --from=builder /opt/opencti/opencti-graphql/src/python/runtime/ ./src/python/runtime/
+COPY --from=builder /opt/opencti/opencti-graphql/src/python/testing/local_importer.py /opt/opencti/src/python/testing/local_importer.py
+COPY packaging/opencti-elastic-free/demo-data/corrobore-demo.json /opt/opencti/tests/data/corrobore-demo.json
 COPY packaging/opencti-elastic-free/opencti-entrypoint.sh /usr/local/bin/opencti-corrobore-entrypoint
-RUN chmod 0555 /usr/local/bin/opencti-corrobore-entrypoint
+COPY packaging/opencti-elastic-free/opencti-demo-data-entrypoint.sh /usr/local/bin/opencti-load-demo-data
+COPY packaging/opencti-elastic-free/opencti-demo-data-loader.py /usr/local/lib/opencti-demo-data-loader.py
+RUN chmod 0555 /usr/local/bin/opencti-corrobore-entrypoint /usr/local/bin/opencti-load-demo-data
 ENV NODE_ENV=production PYTHONUNBUFFERED=1 NODE_OPTIONS=--max_old_space_size=12288 DATABASE_ENGINE=corrobore
 RUN install -m 0777 -d /opt/opencti/logs /opt/opencti/telemetry /opt/opencti/.support
 EXPOSE 8080
