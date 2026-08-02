@@ -206,6 +206,31 @@ pub async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
         shutdown_started = shutdown_started,
         shutdown_failures = shutdown_failures,
     );
+    let import_metrics = state
+        .stix_import_metrics
+        .lock()
+        .map(|metrics| metrics.clone())
+        .unwrap_or_default();
+    body.push_str(&format!(
+        concat!(
+            "# HELP corrobore_stix_import_records_total Cumulative STIX import records by bounded outcome.\n",
+            "# TYPE corrobore_stix_import_records_total counter\n",
+            "corrobore_stix_import_records_total{{outcome=\"requested\"}} {requested}\n",
+            "corrobore_stix_import_records_total{{outcome=\"created\"}} {created}\n",
+            "corrobore_stix_import_records_total{{outcome=\"updated\"}} {updated}\n",
+            "corrobore_stix_import_records_total{{outcome=\"duplicate\"}} {duplicate}\n",
+            "corrobore_stix_import_records_total{{outcome=\"rejected\"}} {rejected}\n",
+            "corrobore_stix_import_records_total{{outcome=\"unresolved_reference\"}} {unresolved_reference}\n",
+            "corrobore_stix_import_records_total{{outcome=\"failed\"}} {failed}\n",
+        ),
+        requested = import_metrics.requested,
+        created = import_metrics.created,
+        updated = import_metrics.updated,
+        duplicate = import_metrics.duplicate,
+        rejected = import_metrics.rejected,
+        unresolved_reference = import_metrics.unresolved_reference,
+        failed = import_metrics.failed,
+    ));
     let sync = state
         .opencti_sync
         .lock()

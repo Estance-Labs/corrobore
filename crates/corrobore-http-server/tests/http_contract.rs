@@ -2237,6 +2237,9 @@ async fn import_stix_http_contract_accepts_versioned_evidence_and_returns_stable
     let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
     assert_eq!(payload["result"]["processed_objects"], 1);
     assert_eq!(payload["result"]["applied_mutations"], 1);
+    assert_eq!(payload["result"]["metrics"]["requested"], 1);
+    assert_eq!(payload["result"]["metrics"]["created"], 1);
+    assert_eq!(payload["result"]["outcomes"][0]["status"], "created");
 
     let mut invalid = request_body;
     invalid["bundle"]["objects"][0]["id"] = json!("indicator--http-evidence-2");
@@ -2265,6 +2268,73 @@ async fn import_stix_http_contract_accepts_versioned_evidence_and_returns_stable
         .expect("body should be readable");
     let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
     assert_eq!(payload["error"]["code"], "EVIDENCE_NOT_FOUND");
+}
+
+#[tokio::test]
+async fn import_stix_http_contract_reports_unresolved_relationships_and_bounded_metrics() {
+    let app = test_app();
+    let body = json!({
+        "bundle": {
+            "type": "bundle",
+            "objects": [
+                {"type": "identity", "id": "identity--atomic-http", "name": "Atomic"},
+                {
+                    "type": "relationship",
+                    "id": "relationship--unresolved-http",
+                    "relationship_type": "related-to",
+                    "source_ref": "identity--atomic-http",
+                    "target_ref": "identity--missing-http"
+                }
+            ]
+        }
+    });
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/import/stix")
+        .header(header::AUTHORIZATION, "Bearer token-123")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .expect("request should build");
+    let response = app
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("import should respond");
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body should be readable");
+    let payload: Value = serde_json::from_slice(&bytes).expect("body should be JSON");
+    assert_eq!(payload["result"]["applied_mutations"], 0);
+    assert_eq!(payload["result"]["rejected_mutations"], 2);
+    assert_eq!(payload["result"]["metrics"]["unresolved_reference"], 1);
+    assert_eq!(
+        payload["result"]["outcomes"][1]["status"],
+        "unresolved_reference"
+    );
+    assert_eq!(
+        payload["result"]["outcomes"][1]["reference"],
+        "identity--missing-http"
+    );
+
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("/metrics")
+        .body(Body::empty())
+        .expect("request should build");
+    let response = app.oneshot(request).await.expect("metrics should respond");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = String::from_utf8(
+        to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("metrics body should be readable")
+            .to_vec(),
+    )
+    .expect("metrics body should be UTF-8");
+    assert!(
+        body.contains("corrobore_stix_import_records_total{outcome=\"unresolved_reference\"} 1")
+    );
+    assert!(body.contains("corrobore_stix_import_records_total{outcome=\"rejected\"} 1"));
 }
 
 #[tokio::test]

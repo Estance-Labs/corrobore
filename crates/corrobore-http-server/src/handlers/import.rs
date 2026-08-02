@@ -96,6 +96,77 @@ pub struct ImportStixResult {
     pub applied_mutations: usize,
     pub rejected_mutations: usize,
     pub errors: Vec<String>,
+    pub outcomes: Vec<ImportObjectOutcome>,
+    pub metrics: ImportMutationMetrics,
+}
+
+/// Stable bounded result category for one requested STIX record.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportOutcomeStatus {
+    Created,
+    Updated,
+    Duplicate,
+    Rejected,
+    UnresolvedReference,
+    Failed,
+}
+
+/// Canonically ordered result for one STIX identifier.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ImportObjectOutcome {
+    pub id: String,
+    pub record_type: String,
+    pub status: ImportOutcomeStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+}
+
+/// Fixed-cardinality import counters suitable for receipts and Prometheus.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct ImportMutationMetrics {
+    pub requested: usize,
+    pub created: usize,
+    pub updated: usize,
+    pub duplicate: usize,
+    pub rejected: usize,
+    pub unresolved_reference: usize,
+    pub failed: usize,
+}
+
+/// Cumulative fixed-cardinality STIX import counters exposed by `/metrics`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ImportRuntimeMetrics {
+    pub requested: u64,
+    pub created: u64,
+    pub updated: u64,
+    pub duplicate: u64,
+    pub rejected: u64,
+    pub unresolved_reference: u64,
+    pub failed: u64,
+}
+
+impl ImportRuntimeMetrics {
+    pub fn record(&mut self, metrics: &ImportMutationMetrics) {
+        let bounded = |value: usize| u64::try_from(value).unwrap_or(u64::MAX);
+        self.requested = self.requested.saturating_add(bounded(metrics.requested));
+        self.created = self.created.saturating_add(bounded(metrics.created));
+        self.updated = self.updated.saturating_add(bounded(metrics.updated));
+        self.duplicate = self.duplicate.saturating_add(bounded(metrics.duplicate));
+        self.rejected = self.rejected.saturating_add(bounded(metrics.rejected));
+        self.unresolved_reference = self
+            .unresolved_reference
+            .saturating_add(bounded(metrics.unresolved_reference));
+        self.failed = self.failed.saturating_add(bounded(metrics.failed));
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ImportMutationReceipt {
+    outcomes: Vec<ImportObjectOutcome>,
+    metrics: ImportMutationMetrics,
 }
 
 pub async fn import_stix_bundle(
@@ -132,7 +203,7 @@ async fn import_bundle_with_evidence_context(
     let timeout = Duration::from_millis(state.config.request_timeout_ms);
     let engine = state.engine.clone();
 
-    let applied_mutations = tokio::time::timeout(
+    let receipt = tokio::time::timeout(
         timeout,
         tokio::task::spawn_blocking(move || {
             let mut locked = engine
@@ -147,11 +218,18 @@ async fn import_bundle_with_evidence_context(
     .map_err(|_| ApiError::timeout("REQUEST_TIMEOUT", "stix import timeout"))?
     .map_err(|error| ApiError::internal("TASK_JOIN_FAILED", error.to_string()))??;
 
+    if let Ok(mut metrics) = state.stix_import_metrics.lock() {
+        metrics.record(&receipt.metrics);
+    }
     Ok(ImportStixResult {
         processed_objects,
-        applied_mutations,
-        rejected_mutations: 0,
+        applied_mutations: receipt.metrics.created + receipt.metrics.updated,
+        rejected_mutations: receipt.metrics.rejected
+            + receipt.metrics.unresolved_reference
+            + receipt.metrics.failed,
         errors: Vec::new(),
+        outcomes: receipt.outcomes,
+        metrics: receipt.metrics,
     })
 }
 
@@ -205,6 +283,19 @@ fn prepare_typed_import(
                 .map_err(|error| ApiError::bad_request("INVALID_STIX_OBJECT", error.to_string()))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let mut unique_payloads = BTreeMap::<String, Value>::new();
+    for record in &records {
+        let canonical_id = record.record_ref().canonical_id().to_owned();
+        if let Some(existing) = unique_payloads.get(&canonical_id)
+            && existing != record.raw()
+        {
+            return Err(ApiError::bad_request(
+                "CONFLICTING_STIX_ID",
+                format!("bundle contains conflicting records for STIX ID: {canonical_id}"),
+            ));
+        }
+        unique_payloads.insert(canonical_id, record.raw().clone());
+    }
     let canonical_ids = records
         .iter()
         .map(|record| record.record_ref().canonical_id().to_owned())
@@ -324,7 +415,65 @@ fn normalize_stix_confidence(value: f64) -> Result<Confidence, ApiError> {
 fn apply_typed_import(
     graph: &mut Graph,
     prepared: PreparedTypedImport,
-) -> Result<usize, GraphError> {
+) -> Result<ImportMutationReceipt, GraphError> {
+    // Preflight evidence, duplicate identifiers and every relationship endpoint
+    // before mutating the cloned graph. Any unresolved reference returns a full
+    // bounded receipt while leaving the authoritative graph unchanged.
+    //
+    // Apply node-like records before relationships, compare the intended typed
+    // state with the canonical current version, and emit created/updated/
+    // duplicate outcomes in canonical STIX-ID order.
+    let mut node_index = index_nodes_by_canonical_id(graph)?;
+    let mut relationship_index = index_relationships_by_canonical_id(graph)?;
+    let bundled_node_ids = prepared
+        .records
+        .iter()
+        .filter(|record| matches!(record, MappedRecord::Object(_)))
+        .map(|record| record.record_ref().canonical_id().to_owned())
+        .collect::<std::collections::BTreeSet<_>>();
+
+    let mut unresolved = BTreeMap::<String, String>::new();
+    for record in &prepared.records {
+        let MappedRecord::Relationship(relationship) = record else {
+            continue;
+        };
+        for reference in [relationship.source_ref(), relationship.target_ref()] {
+            if !bundled_node_ids.contains(reference) && !node_index.contains_key(reference) {
+                unresolved
+                    .entry(record.record_ref().canonical_id().to_owned())
+                    .or_insert_with(|| reference.to_owned());
+            }
+        }
+    }
+    if !unresolved.is_empty() {
+        let mut outcomes = prepared
+            .records
+            .iter()
+            .map(|record| {
+                let id = record.record_ref().canonical_id().to_owned();
+                if let Some(reference) = unresolved.get(&id) {
+                    ImportObjectOutcome {
+                        id,
+                        record_type: stix_record_type(record),
+                        status: ImportOutcomeStatus::UnresolvedReference,
+                        reference: Some(reference.clone()),
+                        error_code: Some("UNRESOLVED_STIX_REFERENCE".to_owned()),
+                    }
+                } else {
+                    ImportObjectOutcome {
+                        id,
+                        record_type: stix_record_type(record),
+                        status: ImportOutcomeStatus::Rejected,
+                        reference: None,
+                        error_code: Some("ATOMIC_IMPORT_ABORTED".to_owned()),
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+        canonicalize_outcomes(&mut outcomes);
+        return Ok(receipt_from_outcomes(outcomes));
+    }
+
     for input in prepared.evidence {
         graph.create_evidence(input)?;
     }
@@ -336,11 +485,8 @@ fn apply_typed_import(
         }
     }
 
-    let mut node_index = index_nodes_by_canonical_id(graph)?;
-    let mut relationship_index = index_relationships_by_canonical_id(graph)?;
+    let mut outcomes = Vec::with_capacity(prepared.records.len());
     let mut relationships = Vec::new();
-    let applied = prepared.records.len();
-
     for record in prepared.records {
         let canonical_id = record.record_ref().canonical_id().to_owned();
         let raw = record.raw().clone();
@@ -349,12 +495,32 @@ fn apply_typed_import(
                 let annotation = prepared.annotations.get(&canonical_id);
                 let confidence = native_confidence(annotation, &raw)?;
                 let input = decorate_node_input(object.to_node_input(), annotation, confidence);
-                let node_id = if let Some(existing) = node_index.get(&canonical_id) {
-                    graph.replace_node(existing, input)?
+                let status = if let Some(existing_id) = node_index.get(&canonical_id) {
+                    let existing = graph
+                        .get_node(existing_id)?
+                        .ok_or_else(|| GraphError::NodeNotFound(existing_id.clone()))?;
+                    if node_matches_import(&existing, &raw, annotation, confidence) {
+                        ImportOutcomeStatus::Duplicate
+                    } else {
+                        graph.replace_node(existing_id, input)?;
+                        ImportOutcomeStatus::Updated
+                    }
                 } else {
-                    graph.create_node(input)?
+                    let node_id = graph.create_node(input)?;
+                    node_index.insert(canonical_id.clone(), node_id);
+                    ImportOutcomeStatus::Created
                 };
-                node_index.insert(canonical_id, node_id);
+                outcomes.push(ImportObjectOutcome {
+                    id: canonical_id,
+                    record_type: raw
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .unwrap_or("object")
+                        .to_owned(),
+                    status,
+                    reference: None,
+                    error_code: None,
+                });
             }
             relationship @ MappedRecord::Relationship(_) => relationships.push(relationship),
         }
@@ -369,35 +535,114 @@ fn apply_typed_import(
         let source = node_index
             .get(relationship.source_ref())
             .cloned()
-            .ok_or_else(|| {
-                GraphError::InvalidPropertyValue(format!(
-                    "relationship source is unavailable: {}",
-                    relationship.source_ref()
-                ))
-            })?;
+            .expect("relationship endpoints were preflighted");
         let target = node_index
             .get(relationship.target_ref())
             .cloned()
-            .ok_or_else(|| {
-                GraphError::InvalidPropertyValue(format!(
-                    "relationship target is unavailable: {}",
-                    relationship.target_ref()
-                ))
-            })?;
+            .expect("relationship endpoints were preflighted");
         let annotation = prepared.annotations.get(&canonical_id);
         let confidence = native_confidence(annotation, &raw)?;
         let input = relationship
-            .to_relationship_input(source, target)
+            .to_relationship_input(source.clone(), target.clone())
             .map_err(|error| GraphError::InvalidPropertyValue(error.to_string()))?;
         let input = decorate_relationship_input(input, annotation, confidence);
-        let relationship_id = if let Some(existing) = relationship_index.get(&canonical_id) {
-            graph.replace_relationship(existing, input)?
+        let status = if let Some(existing_id) = relationship_index.get(&canonical_id) {
+            let existing = graph
+                .get_relationship(existing_id)?
+                .ok_or_else(|| GraphError::RelationshipNotFound(existing_id.clone()))?;
+            if relationship_matches_import(
+                &existing, &raw, &source, &target, annotation, confidence,
+            ) {
+                ImportOutcomeStatus::Duplicate
+            } else {
+                graph.replace_relationship(existing_id, input)?;
+                ImportOutcomeStatus::Updated
+            }
         } else {
-            graph.create_relationship(input)?
+            let relationship_id = graph.create_relationship(input)?;
+            relationship_index.insert(canonical_id.clone(), relationship_id);
+            ImportOutcomeStatus::Created
         };
-        relationship_index.insert(canonical_id, relationship_id);
+        outcomes.push(ImportObjectOutcome {
+            id: canonical_id,
+            record_type: "relationship".to_owned(),
+            status,
+            reference: None,
+            error_code: None,
+        });
     }
-    Ok(applied)
+
+    canonicalize_outcomes(&mut outcomes);
+    Ok(receipt_from_outcomes(outcomes))
+}
+
+fn stix_record_type(record: &MappedRecord) -> String {
+    record
+        .raw()
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("object")
+        .to_owned()
+}
+
+fn canonicalize_outcomes(outcomes: &mut [ImportObjectOutcome]) {
+    outcomes.sort_by(|left, right| {
+        left.id
+            .cmp(&right.id)
+            .then_with(|| left.record_type.cmp(&right.record_type))
+    });
+}
+
+fn receipt_from_outcomes(outcomes: Vec<ImportObjectOutcome>) -> ImportMutationReceipt {
+    let mut metrics = ImportMutationMetrics {
+        requested: outcomes.len(),
+        ..ImportMutationMetrics::default()
+    };
+    for outcome in &outcomes {
+        match outcome.status {
+            ImportOutcomeStatus::Created => metrics.created += 1,
+            ImportOutcomeStatus::Updated => metrics.updated += 1,
+            ImportOutcomeStatus::Duplicate => metrics.duplicate += 1,
+            ImportOutcomeStatus::Rejected => metrics.rejected += 1,
+            ImportOutcomeStatus::UnresolvedReference => metrics.unresolved_reference += 1,
+            ImportOutcomeStatus::Failed => metrics.failed += 1,
+        }
+    }
+    ImportMutationReceipt { outcomes, metrics }
+}
+
+fn node_matches_import(
+    node: &graph_core::Node,
+    raw: &Value,
+    annotation: Option<&NativeImportAnnotation>,
+    confidence: Option<Confidence>,
+) -> bool {
+    node.property("opencti.raw") == Some(&PropertyValue::Json(raw.clone()))
+        && node.status() == RecordStatus::Candidate
+        && node.confidence() == confidence
+        && node.evidence_refs()
+            == annotation
+                .map(|annotation| annotation.evidence_refs.as_slice())
+                .unwrap_or_default()
+}
+
+fn relationship_matches_import(
+    relationship: &graph_core::Relationship,
+    raw: &Value,
+    source: &NodeId,
+    target: &NodeId,
+    annotation: Option<&NativeImportAnnotation>,
+    confidence: Option<Confidence>,
+) -> bool {
+    relationship.source() == source
+        && relationship.target() == target
+        && relationship.property("opencti.raw") == Some(&PropertyValue::Json(raw.clone()))
+        && relationship.status() == RecordStatus::Candidate
+        && relationship.confidence() == confidence
+        && relationship.evidence_refs()
+            == annotation
+                .map(|annotation| annotation.evidence_refs.as_slice())
+                .unwrap_or_default()
 }
 
 fn native_confidence(
@@ -628,7 +873,9 @@ mod evidence_aware_tests {
     use graph_core::{EvidenceId, PropertyValue, RecordStatus};
     use serde_json::json;
 
-    use super::{ImportStixRequest, import_bundle_with_context, import_stix_bundle};
+    use super::{
+        ImportOutcomeStatus, ImportStixRequest, import_bundle_with_context, import_stix_bundle,
+    };
     use crate::{app::AppState, config::ServerConfig};
 
     fn test_state() -> AppState {
@@ -1006,6 +1253,343 @@ mod evidence_aware_tests {
         assert!(matches!(
             relationships[0].property("opencti.raw"),
             Some(PropertyValue::Json(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn relationship_native_metadata_survives_persistent_restart() {
+        let storage = unique_dir("relationship-restart-storage");
+        let sessions = unique_dir("relationship-restart-sessions");
+        let payload = json!({
+            "bundle": {
+                "type": "bundle",
+                "objects": [
+                    {"type": "identity", "id": "identity--restart-source", "name": "Source"},
+                    {"type": "identity", "id": "identity--restart-target", "name": "Target"},
+                    {
+                        "type": "relationship",
+                        "id": "relationship--restart-grounded",
+                        "relationship_type": "uses",
+                        "source_ref": "identity--restart-source",
+                        "target_ref": "identity--restart-target"
+                    }
+                ]
+            },
+            "evidence": {
+                "schema_version": "1.0",
+                "records": [{
+                    "id": "evidence--restart-relationship",
+                    "source_id": "document--restart",
+                    "content_sha256": "abababababababababababababababababababababababababababababababab",
+                    "payload": "Restart relationship evidence",
+                    "locator": {"type": "page", "page": 2}
+                }],
+                "annotations": {
+                    "relationship--restart-grounded": {
+                        "evidence_refs": ["evidence--restart-relationship"],
+                        "confidence": 65,
+                        "status": "candidate"
+                    }
+                }
+            }
+        });
+        {
+            let state = persistent_state(&storage, &sessions);
+            let request: ImportStixRequest = serde_json::from_value(payload)
+                .expect("persistent relationship request should deserialize");
+            let _ = import_stix_bundle(State(state), Json(request))
+                .await
+                .expect("persistent relationship import should succeed");
+        }
+
+        let restored = persistent_state(&storage, &sessions);
+        let mut engine = restored.engine.lock().expect("engine lock should succeed");
+        engine
+            .read("MATCH (n)-[r]->(m) RETURN n, r, m")
+            .expect("persistent relationship projection should hydrate");
+        let relationships = engine
+            .graph()
+            .list_relationships()
+            .expect("relationships should load");
+        assert_eq!(relationships.len(), 1);
+        assert_eq!(relationships[0].status(), RecordStatus::Candidate);
+        assert_eq!(
+            relationships[0]
+                .confidence()
+                .map(|confidence| confidence.value()),
+            Some(0.65)
+        );
+        assert_eq!(
+            relationships[0].evidence_refs()[0].as_str(),
+            "evidence--restart-relationship"
+        );
+        drop(engine);
+        drop(restored);
+        let _ = fs::remove_dir_all(storage);
+        let _ = fs::remove_dir_all(sessions);
+    }
+
+    fn dependency_safe_bundle(relationship_first: bool) -> serde_json::Value {
+        let source =
+            json!({"type": "identity", "id": "identity--receipt-source", "name": "Source"});
+        let target =
+            json!({"type": "identity", "id": "identity--receipt-target", "name": "Target"});
+        let relationship = json!({
+            "type": "relationship",
+            "id": "relationship--receipt-1",
+            "relationship_type": "related-to",
+            "source_ref": "identity--receipt-source",
+            "target_ref": "identity--receipt-target"
+        });
+        let objects = if relationship_first {
+            vec![relationship, source, target]
+        } else {
+            vec![source, target, relationship]
+        };
+        json!({"type": "bundle", "objects": objects})
+    }
+
+    #[tokio::test]
+    async fn receipt_is_order_independent_and_replay_is_explicitly_duplicate() {
+        let relationship_first = test_state();
+        let node_first = test_state();
+
+        let reversed = import_bundle_with_context(
+            &relationship_first,
+            dependency_safe_bundle(true),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("relationship-first bundle should succeed");
+        let ordered = import_bundle_with_context(
+            &node_first,
+            dependency_safe_bundle(false),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("node-first bundle should succeed");
+
+        assert_eq!(
+            serde_json::to_value(&reversed).expect("reversed receipt should serialize"),
+            serde_json::to_value(&ordered).expect("ordered receipt should serialize"),
+            "receipt must be canonical rather than input-order dependent"
+        );
+        assert_eq!(reversed.metrics.requested, 3);
+        assert_eq!(reversed.metrics.created, 3);
+        assert_eq!(reversed.metrics.updated, 0);
+        assert_eq!(reversed.applied_mutations, 3);
+
+        let replay = import_bundle_with_context(
+            &relationship_first,
+            dependency_safe_bundle(false),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("idempotent replay should succeed");
+        assert_eq!(replay.metrics.duplicate, 3);
+        assert_eq!(replay.applied_mutations, 0);
+        assert!(
+            replay
+                .outcomes
+                .iter()
+                .all(|outcome| outcome.status == ImportOutcomeStatus::Duplicate)
+        );
+        let engine = relationship_first
+            .engine
+            .lock()
+            .expect("engine lock should succeed");
+        assert_eq!(
+            engine
+                .graph()
+                .list_nodes()
+                .expect("nodes should load")
+                .len(),
+            2
+        );
+        assert_eq!(
+            engine
+                .graph()
+                .list_relationships()
+                .expect("relationships should load")
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn unresolved_endpoint_returns_accountable_receipt_without_partial_commit() {
+        let state = test_state();
+        let bundle = json!({
+            "type": "bundle",
+            "objects": [
+                {"type": "identity", "id": "identity--would-be-partial", "name": "Not committed"},
+                {
+                    "type": "relationship",
+                    "id": "relationship--missing-target",
+                    "relationship_type": "related-to",
+                    "source_ref": "identity--would-be-partial",
+                    "target_ref": "identity--missing"
+                }
+            ]
+        });
+
+        let receipt = import_bundle_with_context(&state, bundle, None, None, None)
+            .await
+            .expect("unresolved references should return a bounded receipt");
+        assert_eq!(receipt.applied_mutations, 0);
+        assert_eq!(receipt.metrics.requested, 2);
+        assert_eq!(receipt.metrics.unresolved_reference, 1);
+        let unresolved = receipt
+            .outcomes
+            .iter()
+            .find(|outcome| outcome.id == "relationship--missing-target")
+            .expect("relationship outcome should be present");
+        assert_eq!(unresolved.status, ImportOutcomeStatus::UnresolvedReference);
+        assert_eq!(unresolved.reference.as_deref(), Some("identity--missing"));
+        assert!(
+            state
+                .engine
+                .lock()
+                .expect("engine lock should succeed")
+                .graph()
+                .list_nodes()
+                .expect("nodes should load")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn thirty_relationships_are_exact_and_can_target_existing_nodes() {
+        let state = test_state();
+        let nodes = (0..6)
+            .map(|index| {
+                json!({
+                    "type": "identity",
+                    "id": format!("identity--matrix-{index}"),
+                    "name": format!("Identity {index}")
+                })
+            })
+            .collect::<Vec<_>>();
+        import_bundle_with_context(
+            &state,
+            json!({"type": "bundle", "objects": nodes}),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("endpoint nodes should import");
+
+        let mut relationships = Vec::new();
+        for source in 0..6 {
+            for target in 0..6 {
+                if source == target {
+                    continue;
+                }
+                relationships.push(json!({
+                    "type": "relationship",
+                    "id": format!("relationship--matrix-{source}-{target}"),
+                    "relationship_type": if (source + target) % 2 == 0 { "uses" } else { "related-to" },
+                    "source_ref": format!("identity--matrix-{source}"),
+                    "target_ref": format!("identity--matrix-{target}")
+                }));
+            }
+        }
+        relationships.reverse();
+        let receipt = import_bundle_with_context(
+            &state,
+            json!({"type": "bundle", "objects": relationships}),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("relationship-only bundle should resolve canonical endpoints");
+
+        assert_eq!(receipt.metrics.requested, 30);
+        assert_eq!(receipt.metrics.created, 30);
+        let engine = state.engine.lock().expect("engine lock should succeed");
+        let stored = engine
+            .graph()
+            .list_relationships()
+            .expect("relationships should load");
+        assert_eq!(stored.len(), 30);
+        let distinct_ids = stored
+            .iter()
+            .filter_map(
+                |relationship| match relationship.property("opencti.canonical_id") {
+                    Some(PropertyValue::String(value)) => Some(value.clone()),
+                    _ => None,
+                },
+            )
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(distinct_ids.len(), 30);
+        assert!(stored.iter().all(|relationship| {
+            matches!(relationship.rel_type().as_str(), "uses" | "related-to")
+        }));
+    }
+
+    #[tokio::test]
+    async fn conflicting_stix_ids_fail_preflight_and_reference_arrays_remain_typed() {
+        let state = test_state();
+        let conflict = json!({
+            "type": "bundle",
+            "objects": [
+                {"type": "identity", "id": "identity--conflict", "name": "First"},
+                {"type": "identity", "id": "identity--conflict", "name": "Second"}
+            ]
+        });
+        let error = import_bundle_with_context(&state, conflict, None, None, None)
+            .await
+            .expect_err("conflicting canonical IDs must fail before commit");
+        assert_eq!(error.code, "CONFLICTING_STIX_ID");
+        assert!(
+            state
+                .engine
+                .lock()
+                .expect("engine lock should succeed")
+                .graph()
+                .list_nodes()
+                .expect("nodes should load")
+                .is_empty()
+        );
+
+        let report = json!({
+            "type": "report",
+            "id": "report--reference-policy",
+            "name": "Reference policy",
+            "created_by_ref": "identity--external-creator",
+            "object_marking_refs": ["marking-definition--external"],
+            "object_refs": ["indicator--external", "malware--external"]
+        });
+        import_bundle_with_context(
+            &state,
+            json!({"type": "bundle", "objects": [report.clone()]}),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("non-endpoint references should remain external typed fields");
+        let engine = state.engine.lock().expect("engine lock should succeed");
+        let node = engine
+            .graph()
+            .list_nodes()
+            .expect("nodes should load")
+            .remove(0);
+        assert_eq!(
+            node.property("opencti.raw"),
+            Some(&PropertyValue::Json(report))
+        );
+        assert!(matches!(
+            node.property("opencti.field.object_refs"),
+            Some(PropertyValue::StringList(values)) if values.len() == 2
         ));
     }
 }

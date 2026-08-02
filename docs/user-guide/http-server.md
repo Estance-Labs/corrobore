@@ -361,7 +361,26 @@ not evidence.
 }
 ```
 
-The result reports `processed_objects`, `applied_mutations`, `rejected_mutations`, and `errors`.
+The result keeps the compatibility counters `processed_objects`,
+`applied_mutations`, `rejected_mutations`, and `errors`, and adds a canonical
+`outcomes` list plus fixed-cardinality `metrics`. Each requested STIX ID is
+classified as `created`, `updated`, `duplicate`, `rejected`,
+`unresolved_reference`, or `failed`. Only `created` and `updated` count as
+applied mutations.
+
+The whole bundle is preflighted and committed atomically. Node-like records are
+resolved before relationships regardless of input order, and relationship
+endpoints may refer to either the same bundle or the existing canonical graph.
+If any endpoint is missing, the relationship names the missing reference as
+`unresolved_reference`, the remaining records are `rejected` with
+`ATOMIC_IMPORT_ABORTED`, and nothing is committed. Conflicting payloads under
+the same STIX ID fail with `CONFLICTING_STIX_ID` before mutation.
+
+Only `source_ref` and `target_ref` are authoritative graph endpoints. Other
+STIX references such as `created_by_ref`, `object_marking_refs`, report
+`object_refs`, and future reference arrays remain losslessly available in
+`opencti.raw` and in the adapter's typed properties; they may intentionally
+refer to records outside the imported graph and are not silently discarded.
 
 Extraction agents can add the optional versioned `evidence` envelope. Evidence
 IDs are caller-owned and stable; every annotation key must be a STIX ID in the

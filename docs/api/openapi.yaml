@@ -242,7 +242,7 @@ components:
           description: Import cannot assert validated, exportable or exported authority.
     ImportResult:
       type: object
-      required: [processed_objects, applied_mutations, rejected_mutations, errors]
+      required: [processed_objects, applied_mutations, rejected_mutations, errors, outcomes, metrics]
       properties:
         processed_objects: {type: integer, minimum: 0}
         applied_mutations: {type: integer, minimum: 0}
@@ -250,6 +250,36 @@ components:
         errors:
           type: array
           items: {type: string}
+        outcomes:
+          type: array
+          description: Canonically ordered, bounded per-record outcomes independent of bundle order.
+          items: {$ref: '#/components/schemas/StixImportObjectOutcome'}
+        metrics: {$ref: '#/components/schemas/StixImportMutationMetrics'}
+    StixImportOutcomeStatus:
+      type: string
+      enum: [created, updated, duplicate, rejected, unresolved_reference, failed]
+    StixImportObjectOutcome:
+      type: object
+      required: [id, record_type, status]
+      properties:
+        id: {type: string}
+        record_type: {type: string}
+        status: {$ref: '#/components/schemas/StixImportOutcomeStatus'}
+        reference:
+          type: string
+          description: Missing canonical reference for unresolved_reference.
+        error_code: {type: string}
+    StixImportMutationMetrics:
+      type: object
+      required: [requested, created, updated, duplicate, rejected, unresolved_reference, failed]
+      properties:
+        requested: {type: integer, minimum: 0}
+        created: {type: integer, minimum: 0}
+        updated: {type: integer, minimum: 0}
+        duplicate: {type: integer, minimum: 0}
+        rejected: {type: integer, minimum: 0}
+        unresolved_reference: {type: integer, minimum: 0}
+        failed: {type: integer, minimum: 0}
     SessionStatus:
       type: string
       enum: [idle, working, processing, degraded, stopped]
