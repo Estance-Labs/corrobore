@@ -18,7 +18,7 @@ and writes through embedded Rust and HTTP interfaces.
 
 ## Current baseline
 
-- Workspace version: `0.3.0`.
+- Workspace version: `0.3.1`.
 - Public API contract: `docs/api/openapi.yaml`.
 - Runtime behavior documentation: `docs/user-guide/http-server.md`.
 - Release notes: `docs/release-notes/`.

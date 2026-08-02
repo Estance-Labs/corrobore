@@ -71,6 +71,43 @@ function extractPathsFromOpenApi(source) {
   return sorted([...paths]);
 }
 
+/**
+ * Report every repeated path key together with its one-based source lines.
+ *
+ * It inspects only direct children of the OpenAPI `paths`
+ * mapping so nested schema properties cannot be mistaken for HTTP routes.
+ */
+function findDuplicateOpenApiPaths(source) {
+  const occurrences = new Map();
+  let inPaths = false;
+
+  source.split('\n').forEach((line, index) => {
+    if (!inPaths && line === 'paths:') {
+      inPaths = true;
+      return;
+    }
+    if (!inPaths) {
+      return;
+    }
+    if (/^[A-Za-z]/.test(line)) {
+      inPaths = false;
+      return;
+    }
+
+    const match = line.match(/^  (\/[^:]+):\s*(?:#.*)?$/);
+    if (!match) {
+      return;
+    }
+    const lines = occurrences.get(match[1]) ?? [];
+    lines.push(index + 1);
+    occurrences.set(match[1], lines);
+  });
+
+  return sorted([...occurrences.keys()])
+    .filter((path) => occurrences.get(path).length > 1)
+    .map((path) => ({ path, lines: occurrences.get(path) }));
+}
+
 function extractRoutesFromHttpGuide(source) {
   const routes = new Set();
   for (const match of source.matchAll(/## `((?:GET|POST|PUT|PATCH|DELETE)\s+\/[A-Za-z0-9_\-{}\/*]+)`/g)) {
@@ -126,6 +163,7 @@ function runChecks() {
 
   const appRoutes = extractRoutesFromApp(appRs);
   const openApiPaths = extractPathsFromOpenApi(openApi);
+  const duplicateOpenApiPaths = findDuplicateOpenApiPaths(openApi);
   const httpGuideRoutes = extractRoutesFromHttpGuide(httpGuide);
 
   const envDiff = diff(configEnvVars, documentedEnvVars);
@@ -133,6 +171,20 @@ function runChecks() {
   const guideDiff = diff(appRoutes, httpGuideRoutes);
 
   const failures = [];
+  const hasMinimumOpenApiStructure =
+    /^openapi:\s+3\.1\.\d+\s*$/m.test(openApi) &&
+    /^info:\s*$/m.test(openApi) &&
+    /^paths:\s*$/m.test(openApi);
+  if (!hasMinimumOpenApiStructure) {
+    failures.push('docs/api/openapi.yaml must declare OpenAPI 3.1, info, and paths mappings.');
+  }
+  if (duplicateOpenApiPaths.length) {
+    failures.push(
+      `Duplicate path keys in docs/api/openapi.yaml:\n${duplicateOpenApiPaths
+        .map(({ path, lines }) => `  - ${path} at lines ${lines.join(', ')}`)
+        .join('\n')}`,
+    );
+  }
   if (envDiff.missing.length) {
     failures.push(
       formatDiff('Environment variables in config.rs missing from docs/user-guide/http-server.md', envDiff),
@@ -175,6 +227,7 @@ export {
   extractEnvVarsFromConfig,
   extractEnvVarsFromHttpGuide,
   extractPathsFromOpenApi,
+  findDuplicateOpenApiPaths,
   extractRoutesFromApp,
   extractRoutesFromHttpGuide,
   runChecks,

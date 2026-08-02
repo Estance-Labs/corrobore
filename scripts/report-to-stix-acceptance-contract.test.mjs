@@ -55,7 +55,7 @@ test('the acceptance harness is a bounded release gate and the docs state the bo
     read('.github/workflows/standalone-acceptance.yml'),
     read('scripts/report-to-stix-acceptance.sh'),
     read('docs/acceptance/report-to-stix.md'),
-    read('docs/release-notes/v0.3.0.md'),
+    read('docs/release-notes/v0.3.1.md'),
   ]);
 
   assert.match(workflow, /report-to-stix-acceptance/);

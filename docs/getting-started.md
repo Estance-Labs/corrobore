@@ -1,6 +1,6 @@
 # Getting Started
 
-This guide targets the current `0.2.x` release.
+This guide targets the current `0.3.x` release.
 
 ## Startup mode overview
 

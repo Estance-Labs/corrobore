@@ -38,9 +38,14 @@ function localPackageVersions(lockfile) {
  * The implementation reads repository files from the script's parent root,
  * reports every drift together, and returns structural evidence for tests.
  */
-function checkReleaseDocumentation(version) {
+function checkReleaseDocumentation(version, previousVersion) {
+  if (!previousVersion) {
+    throw new Error('previousVersion is required');
+  }
   const tag = `v${version}`;
-  const previousTag = 'v0.2.2';
+  // The caller supplies the immediately preceding version so consecutive
+  // releases validate their own comparison link instead of a stale constant.
+  const previousTag = `v${previousVersion}`;
   const releaseNotePath = `docs/release-notes/${tag}.md`;
   const comparison = `https://github.com/Estance-Labs/corrobore/compare/${previousTag}...${tag}`;
 
@@ -48,6 +53,7 @@ function checkReleaseDocumentation(version) {
   const cargoLock = read('Cargo.lock');
   const readme = read('README.md');
   const docsIndex = read('docs/index.md');
+  const openApi = read('docs/api/openapi.yaml');
   const mkdocs = read('mkdocs.yml');
   const changelog = read('CHANGELOG.md');
   const cliContract = read('crates/corrobore-http-server/tests/cli_configuration_contract.rs');
@@ -57,6 +63,7 @@ function checkReleaseDocumentation(version) {
   requireText(failures, cargoToml, `version = "${version}"`, 'Cargo.toml');
   requireText(failures, readme, `Workspace version: \`${version}\``, 'README.md');
   requireText(failures, docsIndex, `(release-notes/${tag}.md)`, 'docs/index.md');
+  requireText(failures, openApi, `  version: ${version}`, 'OpenAPI info');
   requireText(failures, cliContract, `"version":"${version}"`, 'CLI contract test');
   requireText(failures, cliContract, `version=${version}`, 'CLI contract test');
   requireText(failures, mkdocs, `- ${tag}: release-notes/${tag}.md`, 'mkdocs.yml');
@@ -99,6 +106,7 @@ function checkReleaseDocumentation(version) {
   return {
     version,
     tag,
+    previousTag,
     localPackageCount: localPackageVersions(cargoLock).length,
     releaseNoteSectionCount: [...releaseNote.matchAll(/^## /gm)].length,
   };
@@ -106,10 +114,11 @@ function checkReleaseDocumentation(version) {
 
 function main() {
   const version = process.argv[2];
-  if (!version) {
-    throw new Error('usage: node scripts/release-notes-contract.mjs <version>');
+  const previousVersion = process.argv[3];
+  if (!version || !previousVersion) {
+    throw new Error('usage: node scripts/release-notes-contract.mjs <version> <previous-version>');
   }
-  const result = checkReleaseDocumentation(version);
+  const result = checkReleaseDocumentation(version, previousVersion);
   console.log(
     `release-notes-contract OK: ${result.tag}, ${result.localPackageCount} local packages, ${result.releaseNoteSectionCount} sections.`,
   );
