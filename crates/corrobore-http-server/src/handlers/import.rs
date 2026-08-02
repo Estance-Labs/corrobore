@@ -37,6 +37,12 @@ use serde_json::Value;
 
 use crate::{app::AppState, error::ApiError};
 
+// The STIX adapter owns the only public 0-100 to native 0-1 conversion. Keep
+// this guidance shared by typed annotations and plain STIX object imports so
+// tool builders receive one stable boundary contract.
+const STIX_CONFIDENCE_GUIDANCE: &str =
+    "STIX import confidence uses the 0..=100 scale; 90 is stored as native 0.9";
+
 #[derive(Debug, Deserialize)]
 pub struct ImportStixRequest {
     pub bundle: Value,
@@ -405,7 +411,7 @@ fn normalize_stix_confidence(value: f64) -> Result<Confidence, ApiError> {
     if !value.is_finite() || !(0.0..=100.0).contains(&value) {
         return Err(ApiError::bad_request(
             "INVALID_STIX_CONFIDENCE",
-            "STIX confidence must be finite and within 0..=100",
+            STIX_CONFIDENCE_GUIDANCE,
         ));
     }
     Confidence::new(value / 100.0)
@@ -663,7 +669,7 @@ fn native_confidence(
     };
     if !value.is_finite() || !(0.0..=100.0).contains(&value) {
         return Err(GraphError::InvalidPropertyValue(
-            "STIX confidence must be finite and within 0..=100".to_owned(),
+            STIX_CONFIDENCE_GUIDANCE.to_owned(),
         ));
     }
     Confidence::new(value / 100.0).map(Some)
@@ -764,7 +770,7 @@ fn map_typed_import_error(error: EngineError) -> ApiError {
             ApiError::bad_request("DUPLICATE_EVIDENCE_ID", message)
         }
         EngineError::Graph(GraphError::InvalidPropertyValue(message))
-            if message.contains("STIX confidence") =>
+            if message.contains(STIX_CONFIDENCE_GUIDANCE) =>
         {
             ApiError::bad_request("INVALID_STIX_CONFIDENCE", message)
         }
@@ -1149,6 +1155,16 @@ mod evidence_aware_tests {
             .await
             .expect_err("out-of-range confidence must fail");
         assert_eq!(confidence_error.code, "INVALID_STIX_CONFIDENCE");
+        assert!(
+            confidence_error
+                .message
+                .contains("STIX import confidence uses the 0..=100 scale")
+        );
+        assert!(
+            confidence_error
+                .message
+                .contains("90 is stored as native 0.9")
+        );
 
         let engine = state.engine.lock().expect("engine lock should succeed");
         assert!(
@@ -1228,7 +1244,7 @@ mod evidence_aware_tests {
                 "annotations": {
                     "relationship--grounded-1": {
                         "evidence_refs": ["evidence--relationship-1"],
-                        "confidence": 50,
+                        "confidence": 90,
                         "status": "candidate"
                     }
                 }
@@ -1253,7 +1269,7 @@ mod evidence_aware_tests {
             relationships[0]
                 .confidence()
                 .map(|confidence| confidence.value()),
-            Some(0.5)
+            Some(0.9)
         );
         assert_eq!(relationships[0].evidence_refs(), &[evidence_id]);
         assert!(matches!(

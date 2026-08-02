@@ -2,7 +2,8 @@
 
 Corrobore is your external, structured working memory for intelligence work. Use it to store and retrieve entities, relationships, evidence, confidence, time, versions, and audit history instead of carrying a growing graph as JSON in context.
 
-This guide targets the current `0.1.x` runtime baseline.
+This guide describes the current runtime contract. Check `GET /version` when a
+workflow depends on a particular deployed release.
 
 ```text
 You                                      Corrobore
@@ -18,8 +19,11 @@ ask focused graph questions         <-   return the bounded result you need
 3. Read the smallest subgraph that can answer the question.
 4. Inspect source material and distinguish observation from inference.
 5. `MERGE` new entities and relationships with evidence, confidence, and status.
-6. Read back the changed subgraph.
-7. Validate STIX before export and leave uncertain claims for human review.
+6. Read back entities and run an explicit relationship coverage pass.
+7. Finish every authorized write before promotion.
+8. Promote eligible nodes and relationships, then attempt strict export.
+9. If a late write is necessary, repeat read-back, validation, and promotion.
+10. Leave uncertain claims for human review.
 
 ## Request discipline
 
@@ -62,6 +66,16 @@ Query narrowly and include a bound. If no supported answer exists, report the ga
 
 ## Write evidence-backed intelligence
 
+### Confidence boundary
+
+| Surface | Accepted scale | Example |
+| :--- | :---: | :--- |
+| Native Cypher and memory operations | `0..=1` | `0.9` means 90% |
+| STIX objects and STIX import annotations | `0..=100` | `90` is stored as native 0.9 |
+
+Never copy a STIX value such as `90` directly into Cypher. Corrobore rejects it
+rather than guessing which boundary the caller intended.
+
 ```cypher
 MATCH (a:ThreatActor {name: "APT28"})
 MATCH (m:Malware {name: "X-Agent"})
@@ -74,7 +88,8 @@ RETURN r
 ```
 
 - Prefer `MERGE` for identities that may already exist.
-- Attach evidence and confidence to important assertions.
+- Every relationship assertion owns its own evidence and confidence; endpoint
+  metadata does not transfer to the relationship.
 - Mark inference as `candidate`; do not silently promote it to fact.
 - Use domain vocabulary from [Intelligence Domains](user-guide/domains.md).
 - Never use unsupported clauses such as `DETACH DELETE`, `LOAD CSV`, `UNWIND`, `FOREACH`, `CALL APOC`, or `CALL DBMS`.
@@ -89,11 +104,40 @@ Do not bypass policy outcomes by switching route shape or query wording. If the
 runtime rejects a mutation, return the rejection reason and request explicit
 authorization.
 
+## CTI relationship coverage
+
+For STIX 2.1 Indicator modeling, keep these assertions distinct:
+
+- `Indicator -> Observed Data: based-on` states which observation supports the
+  Indicator.
+- `Indicator -> CTI domain object (SDO): indicates` states what threat object,
+  such as Malware, the Indicator detects or characterizes.
+
+Each is a Relationship SRO with its own STIX ID, retained evidence annotation,
+confidence, and candidate lifecycle status. After importing, compare the
+expected relationship inventory from the source with the graph. Do not fabricate
+a relationship merely to improve coverage; report an unsupported bridge as a
+gap.
+
+```cypher
+MATCH (source)-[r]->(target)
+WHERE r.confidence IS NULL OR r.evidence_refs IS NULL
+RETURN r
+LIMIT 100
+```
+
+```cypher
+MATCH (source)-[r]->(target)
+WHERE r.status = "candidate"
+RETURN r
+LIMIT 100
+```
+
 ## Validate and export
 
 `POST /v1/stix/validate` accepts either an explicit bundle or current graph CTI nodes. For explicit bundles, built-in playbooks may correct supported missing fields; corrected objects are imported whenever at least one playbook runs. `valid` reports whether the validation pass found an error, not a second verdict after fixes. Inspect `issues`, `playbooks_applied`, `corrections_summary`, and `persistence`, then revalidate when you need a post-correction verdict.
 
-Use `GET /v1/export/stix` for deterministic, CTI-scoped STIX projection after validation. The route fails closed unless the licensed CTI provider is ready. Strict mode returns named readiness failures; permissive mode returns bounded `export_diagnostics.exclusions`. An operator may explicitly pass `force=true` to include otherwise eligible records rejected only by semantic validation (for example, the confidence threshold); validation still runs and each bypassed finding remains in the diagnostics. Force does not bypass lifecycle, identity, evidence-integrity, endpoint, provider, or license gates. Preserve the returned object identities and `x_corrobore_evidence_refs` instead of inventing replacements. Logical export metadata identifies the snapshot and transaction, but the current HTTP export does not roll the graph back in time.
+Use `GET /v1/export/stix` for deterministic, CTI-scoped STIX projection after validation. The route is read-only and strict is the default correctness gate. Late writes remain candidate and require a new readiness and promotion pass before another strict attempt. Permissive is only for an explicit caller request for a diagnostic partial bundle. `force=true` is an explicit operator decision and never an automatic LLM fallback. Validation still runs and each bypassed semantic finding remains in diagnostics; force does not bypass lifecycle, identity, evidence-integrity, endpoint, provider, or license gates. Preserve the returned object identities and `x_corrobore_evidence_refs` instead of inventing replacements. Logical export metadata identifies the snapshot and transaction, but the current HTTP export does not roll the graph back in time.
 
 ## Recover safely
 

@@ -306,7 +306,8 @@ fn openapi_versions_the_evidence_aware_stix_import_contract() {
         "const: '1.0'",
         "content_sha256:",
         "const: candidate",
-        "STIX 0-100 confidence normalized deterministically to native 0-1",
+        "STIX import confidence uses 0..=100",
+        "90 is stored as native 0.9",
     ] {
         assert!(
             openapi.contains(contract),

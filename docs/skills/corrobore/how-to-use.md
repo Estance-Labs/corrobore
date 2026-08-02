@@ -27,9 +27,12 @@ executable correction and export flow.
 2. Search semantic seeds when the task provides an objective but no graph id.
 3. Read the smallest bounded subgraph that answers the question.
 4. Compare graph state with source evidence.
-5. Write only authorized, evidence-backed changes.
-6. Read back changes and validate before export.
-7. Stop named sessions when the workflow ends.
+5. Write only authorized, evidence-backed entities and relationships.
+6. Read back changes and audit expected relationship coverage.
+7. Complete every authorized write before promotion.
+8. Promote eligible nodes and relationships, then attempt strict export.
+9. Repeat readiness and promotion after any late write.
+10. Stop named sessions when the workflow ends.
 
 ## HTTP mapping
 
@@ -47,6 +50,16 @@ executable correction and export flow.
 - `POST /v1/sessions/start`, `GET /v1/sessions/{session_id}/health`, `GET /v1/sessions/{session_id}/logs`, `POST /v1/sessions/{session_id}/stop`: durable session lifecycle and audit.
 
 Protected routes require `Authorization: Bearer <token>`.
+
+## Confidence boundary
+
+| Surface | Accepted scale | Example |
+| :--- | :---: | :--- |
+| Native Cypher and memory operations | `0..=1` | `0.9` means 90% |
+| STIX objects and STIX import annotations | `0..=100` | `90` is stored as native 0.9 |
+
+Do not copy `90` from STIX into `SET r.confidence = 90`. Cypher rejects it;
+write `0.9` at the native boundary.
 
 ## Tool boundary
 
@@ -86,6 +99,9 @@ SET r.confidence = 0.82,
 RETURN r
 ```
 
+Every relationship assertion owns its own evidence and confidence. Evidence or
+confidence on either endpoint does not make the relationship export-ready.
+
 ### Diagnostic reads
 
 ```cypher
@@ -96,10 +112,16 @@ LIMIT 50
 ```
 
 ```cypher
-MATCH ()-[r]->()
-WHERE r.confidence < 0.6
+MATCH (source)-[r]->(target)
+WHERE r.confidence IS NULL OR r.evidence_refs IS NULL
 RETURN r
-ORDER BY r.confidence ASC
+LIMIT 100
+```
+
+```cypher
+MATCH (source)-[r]->(target)
+WHERE r.status = "candidate"
+RETURN r
 LIMIT 100
 ```
 
@@ -109,6 +131,18 @@ LIMIT 100
 
 - Nodes: `ThreatActor`, `Malware`, `Indicator`, `Tool`, `Campaign`, `Infrastructure`, `Vulnerability`, `Identity`, `Location`, `Report`.
 - Relationships: `Indicates`, `Uses`, `Targets`, `AttributedTo`, `CommunicatesWith`, `RelatedTo`.
+
+For STIX relationship coverage, distinguish these source-backed assertions:
+
+- `Indicator -> Observed Data: based-on` links the Indicator to the observation
+  that supports it.
+- `Indicator -> CTI domain object (SDO): indicates` links the Indicator to what
+  it detects or characterizes, for example Malware.
+
+Each Relationship SRO needs its own STIX ID and import annotation with evidence,
+confidence, and candidate status. Compare the extracted relationship inventory
+with the imported graph. Do not fabricate missing bridges to improve a score;
+return the unsupported relationship as a gap.
 
 ### FIMI
 
@@ -128,12 +162,16 @@ Domain Rust functions are not automatically callable from Cypher. Do not invent 
 2. Extract candidate entities and relations with span ids and initial confidence.
 3. Start a named Corrobore session.
 4. Read or search for existing identities before merging candidates.
-5. Materialize pass A with idempotent `MERGE` statements.
-6. Query orphans, low-confidence links, contradictions, and missing bridges.
+5. Materialize all entities and Relationship SROs with idempotent writes.
+6. Query orphans, missing relationship metadata, contradictions, and expected
+   `based-on` / `indicates` coverage.
 7. Re-read only implicated source spans and write delta corrections.
-8. Validate the candidate STIX bundle or graph CTI nodes.
-9. Review issues, playbooks, correction summary, and persistence. Revalidate after corrections when a post-fix verdict is required.
-10. Export deterministic STIX and stop the session.
+8. Read back the final graph; late writes remain candidate and require a new
+   readiness and promotion pass.
+9. Validate, review issues and persistence, and revalidate after corrections
+   when a post-fix verdict is required.
+10. Promote eligible nodes and relationships, attempt strict export, and stop
+    the session.
 
 Example pass-A record:
 
@@ -150,6 +188,17 @@ Example pass-A record:
 ```
 
 Quality gates: source grounding, referential integrity, low orphan rate, evidence on key claims, honest confidence, bounded queries, stable export metadata, and no fabricated bridge entities.
+
+## Export decisions
+
+- Strict is the default correctness gate.
+- Permissive is allowed only for an explicit caller request for a diagnostic
+  partial bundle; inspect every exclusion.
+- `force=true` is an explicit operator decision and never an automatic LLM
+  fallback.
+- `GET /v1/export/stix` is read-only. It never promotes candidates. If any
+  authorized write occurs after promotion, run a new readiness and promotion
+  pass before retrying strict export.
 
 ## Trust rules
 

@@ -6,7 +6,19 @@ through `POST /v1/import/stix`. Consistent OpenCTI snapshots and ordered
 catch-up streams use `POST /v1/opencti/sync/batches`, which commits a bounded
 batch as one WAL transaction and acknowledges its source checkpoint afterward.
 
-This guide targets the current `0.1.x` runtime baseline.
+This guide describes the current runtime contract. Check `GET /version` for the
+deployed release before relying on version-specific behavior.
+
+## STIX confidence boundary
+
+STIX objects and STIX import annotations use `0..=100`. Corrobore normalizes
+them into native `0..=1` graph metadata: `90` is stored as native 0.9. Cypher
+and memory operations already use the native scale and must not receive the
+unconverted STIX value.
+
+Annotations are keyed by STIX ID, including Relationship SRO IDs. A relationship
+needs its own evidence references and confidence; endpoint annotations do not
+transfer to it.
 
 ## Deployment topology (multi-repo)
 
