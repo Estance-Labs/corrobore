@@ -74,6 +74,27 @@ pub struct DeterministicExportPlan {
     warnings: Vec<ValidationErrorRecord>,
 }
 
+/// Operator-selected controls for deterministic export planning.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ExportPlanOptions {
+    force_validation: bool,
+}
+
+impl ExportPlanOptions {
+    /// Chooses whether overridable semantic validation findings are retained
+    /// as diagnostics instead of excluding an otherwise eligible record.
+    pub fn with_force_validation(mut self, force_validation: bool) -> Self {
+        self.force_validation = force_validation;
+        self
+    }
+
+    /// Returns whether semantic validation findings are forced into diagnostic
+    /// output rather than enforced as record exclusions.
+    pub fn force_validation(self) -> bool {
+        self.force_validation
+    }
+}
+
 impl DeterministicExportPlan {
     /// Metadata.
     pub fn metadata(&self) -> &ExportMetadata {
@@ -115,6 +136,26 @@ pub fn build_deterministic_export_plan(
     metadata: ExportMetadata,
     findings: &[ValidationErrorRecord],
 ) -> Result<DeterministicExportPlan, GraphError> {
+    build_deterministic_export_plan_with_options(
+        graph,
+        metadata,
+        findings,
+        ExportPlanOptions::default(),
+    )
+}
+
+/// Builds a deterministic export plan with explicit operator controls.
+///
+/// Forced validation must preserve every bypassed finding in deterministic
+/// diagnostics while continuing to enforce lifecycle and structural safety.
+/// The implementation separates those categories before record selection so a
+/// force request cannot accidentally become a blanket export bypass.
+pub fn build_deterministic_export_plan_with_options(
+    graph: &Graph,
+    metadata: ExportMetadata,
+    findings: &[ValidationErrorRecord],
+    options: ExportPlanOptions,
+) -> Result<DeterministicExportPlan, GraphError> {
     let mode = metadata.mode();
     let blocking_by_record_id = collect_blocking_findings(findings);
 
@@ -155,7 +196,7 @@ pub fn build_deterministic_export_plan(
             continue;
         }
         let node_id = node.id().as_str();
-        let mut record_findings = profile_readiness_findings(
+        let readiness_findings = profile_readiness_findings(
             graph,
             metadata.profile(),
             mode,
@@ -165,9 +206,21 @@ pub fn build_deterministic_export_plan(
             node.evidence_refs(),
             ValidationTarget::node(node_id),
         );
+        let mut record_findings = readiness_findings.enforced;
+        collect_validation_findings(
+            options,
+            readiness_findings.overridable,
+            &mut record_findings,
+            &mut warnings,
+        );
         record_findings.extend(canonical_node_identity_findings(metadata.profile(), &node));
         if let Some(blocking_findings) = blocking_by_record_id.get(node_id) {
-            record_findings.extend(blocking_findings.iter().map(|finding| (*finding).clone()));
+            collect_validation_findings(
+                options,
+                blocking_findings.iter().map(|finding| (*finding).clone()),
+                &mut record_findings,
+                &mut warnings,
+            );
         }
 
         if record_findings.is_empty() {
@@ -212,7 +265,7 @@ pub fn build_deterministic_export_plan(
             continue;
         }
         let relationship_id = relationship.id().as_str();
-        let mut record_findings = profile_readiness_findings(
+        let readiness_findings = profile_readiness_findings(
             graph,
             metadata.profile(),
             mode,
@@ -221,6 +274,13 @@ pub fn build_deterministic_export_plan(
             relationship.confidence(),
             relationship.evidence_refs(),
             ValidationTarget::relationship(relationship_id),
+        );
+        let mut record_findings = readiness_findings.enforced;
+        collect_validation_findings(
+            options,
+            readiness_findings.overridable,
+            &mut record_findings,
+            &mut warnings,
         );
         record_findings.extend(canonical_relationship_identity_findings(
             metadata.profile(),
@@ -244,7 +304,12 @@ pub fn build_deterministic_export_plan(
             }
         }
         if let Some(blocking_findings) = blocking_by_record_id.get(relationship_id) {
-            record_findings.extend(blocking_findings.iter().map(|finding| (*finding).clone()));
+            collect_validation_findings(
+                options,
+                blocking_findings.iter().map(|finding| (*finding).clone()),
+                &mut record_findings,
+                &mut warnings,
+            );
         }
 
         if record_findings.is_empty() {
@@ -459,10 +524,10 @@ fn profile_readiness_findings(
     confidence: Option<Confidence>,
     evidence_refs: &[EvidenceId],
     target: ValidationTarget,
-) -> Vec<ValidationErrorRecord> {
-    let mut findings = Vec::new();
+) -> ProfileReadinessFindings {
+    let mut findings = ProfileReadinessFindings::default();
     if !export_readiness(status) {
-        findings.push(ValidationErrorRecord::new(
+        findings.enforced.push(ValidationErrorRecord::new(
             "EXPORT_STATUS_NOT_READY",
             ValidationErrorSeverity::Warning,
             format!(
@@ -476,22 +541,24 @@ fn profile_readiness_findings(
         return findings;
     }
     match confidence {
-        None => findings.push(ValidationErrorRecord::new(
+        None => findings.overridable.push(ValidationErrorRecord::new(
             "CTI_CONFIDENCE_REQUIRED",
             ValidationErrorSeverity::Error,
             format!("CTI record {record_id} requires native confidence"),
             target.clone(),
         )),
-        Some(value) if value.value() < 0.8 => findings.push(ValidationErrorRecord::new(
-            "CTI_CONFIDENCE_TOO_LOW",
-            ValidationErrorSeverity::Error,
-            format!("CTI record {record_id} confidence is below 0.8"),
-            target.clone(),
-        )),
+        Some(value) if value.value() < 0.8 => {
+            findings.overridable.push(ValidationErrorRecord::new(
+                "CTI_CONFIDENCE_TOO_LOW",
+                ValidationErrorSeverity::Error,
+                format!("CTI record {record_id} confidence is below 0.8"),
+                target.clone(),
+            ))
+        }
         Some(_) => {}
     }
     if evidence_refs.is_empty() {
-        findings.push(ValidationErrorRecord::new(
+        findings.overridable.push(ValidationErrorRecord::new(
             "CTI_EVIDENCE_REQUIRED",
             ValidationErrorSeverity::Error,
             format!("CTI record {record_id} requires native evidence"),
@@ -500,7 +567,7 @@ fn profile_readiness_findings(
     } else {
         for evidence_id in evidence_refs {
             if graph.evidence_by_id(evidence_id).is_none() {
-                findings.push(ValidationErrorRecord::new(
+                findings.enforced.push(ValidationErrorRecord::new(
                     "CTI_EVIDENCE_NOT_FOUND",
                     ValidationErrorSeverity::Error,
                     format!(
@@ -513,6 +580,25 @@ fn profile_readiness_findings(
         }
     }
     findings
+}
+
+#[derive(Default)]
+struct ProfileReadinessFindings {
+    overridable: Vec<ValidationErrorRecord>,
+    enforced: Vec<ValidationErrorRecord>,
+}
+
+fn collect_validation_findings(
+    options: ExportPlanOptions,
+    findings: impl IntoIterator<Item = ValidationErrorRecord>,
+    record_findings: &mut Vec<ValidationErrorRecord>,
+    warnings: &mut Vec<ValidationErrorRecord>,
+) {
+    if options.force_validation() {
+        warnings.extend(findings);
+    } else {
+        record_findings.extend(findings);
+    }
 }
 
 fn mode_label(mode: ExportMode) -> &'static str {

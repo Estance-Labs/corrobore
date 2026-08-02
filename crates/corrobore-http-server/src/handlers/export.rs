@@ -37,6 +37,7 @@ pub struct ExportQuery {
     pub exporter_version: Option<String>,
     pub mode: Option<String>,
     pub profile: Option<String>,
+    pub force: Option<bool>,
 }
 
 pub async fn export_stix(
@@ -81,6 +82,7 @@ pub async fn export_stix(
                 exporter_version,
                 profile,
                 mode,
+                force: query.force.unwrap_or(false),
             };
 
             let findings = collect_cti_export_findings(&validation_state, engine.graph())?;

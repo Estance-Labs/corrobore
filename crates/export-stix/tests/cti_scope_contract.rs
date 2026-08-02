@@ -3,9 +3,11 @@
 
 use export_stix::export_stix_subset_bundle;
 use graph_core::{
-    Confidence, EvidenceId, EvidenceInput, ExportMetadata, ExportMode, ExportProfile, Graph,
-    NodeId, NodeInput, PropertyValue, RecordStatus, RelationshipInput, TransactionId,
-    build_deterministic_export_plan,
+    Confidence, EvidenceId, EvidenceInput, ExportMetadata, ExportMode, ExportPlanOptions,
+    ExportProfile, Graph, GraphError, NodeId, NodeInput, PropertyValue, RecordStatus,
+    RelationshipInput, TransactionId, ValidationErrorRecord, ValidationErrorSeverity,
+    ValidationTarget, build_deterministic_export_plan,
+    build_deterministic_export_plan_with_options,
 };
 use serde_json::{Value, json};
 
@@ -69,6 +71,18 @@ fn exported_objects(graph: &Graph, mode: ExportMode) -> Vec<Value> {
         .as_array()
         .expect("objects should be an array")
         .clone()
+}
+
+fn forced_plan(
+    graph: &Graph,
+    findings: &[ValidationErrorRecord],
+) -> Result<graph_core::DeterministicExportPlan, GraphError> {
+    build_deterministic_export_plan_with_options(
+        graph,
+        metadata(ExportMode::Strict),
+        findings,
+        ExportPlanOptions::default().with_force_validation(true),
+    )
 }
 
 #[test]
@@ -296,6 +310,163 @@ fn strict_export_rejects_only_eligible_cti_candidates_with_named_readiness_issue
     assert!(
         !message.contains("CorroboreMemory"),
         "generic memory must not become a CTI readiness failure: {message}"
+    );
+}
+
+#[test]
+fn forced_export_includes_low_confidence_record_and_preserves_diagnostic() {
+    let mut graph = Graph::new();
+    let evidence = evidence_id("evidence--forced-low-confidence");
+    graph
+        .create_evidence(EvidenceInput::new(
+            evidence.clone(),
+            "synthetic-report",
+            "low-confidence forced-export evidence",
+        ))
+        .expect("evidence should be retained");
+    let node_id = graph
+        .create_node(
+            NodeInput::new(["OpenCtiObject", "OpenCtiStixDomainObject"])
+                .with_property(
+                    "opencti.family",
+                    PropertyValue::String("stix_domain_object".to_owned()),
+                )
+                .with_property(
+                    "opencti.raw",
+                    PropertyValue::Json(json!({
+                        "type": "indicator",
+                        "id": "indicator--13131313-1313-4131-8131-131313131313",
+                        "pattern": "[domain-name:value = 'forced.example']",
+                        "pattern_type": "stix",
+                        "valid_from": "2026-08-02T00:00:00.000Z"
+                    })),
+                )
+                .with_status(RecordStatus::Exportable)
+                .with_confidence(confidence(0.79))
+                .with_evidence_ref(evidence),
+        )
+        .expect("low-confidence CTI record should be created");
+
+    let error = build_deterministic_export_plan(&graph, metadata(ExportMode::Strict), &[])
+        .expect_err("unforced strict export should reject low confidence");
+    assert!(
+        error.to_string().contains("CTI_CONFIDENCE_TOO_LOW"),
+        "{error}"
+    );
+
+    let plan = forced_plan(&graph, &[])
+        .expect("forced export should include an otherwise export-ready record");
+    assert_eq!(plan.records().len(), 1);
+    assert_eq!(plan.records()[0].record_id(), node_id.as_str());
+    assert!(
+        plan.warnings()
+            .iter()
+            .any(|finding| finding.code() == "CTI_CONFIDENCE_TOO_LOW")
+    );
+
+    let bundle = serde_json::to_value(export_stix_subset_bundle(&graph, &plan))
+        .expect("forced bundle should serialize");
+    assert_eq!(
+        bundle["objects"][0]["id"],
+        "indicator--13131313-1313-4131-8131-131313131313"
+    );
+    assert!(
+        bundle["export_diagnostics"]["exclusions"]
+            .as_array()
+            .expect("forced diagnostics should be machine readable")
+            .iter()
+            .any(|finding| finding["code"] == "CTI_CONFIDENCE_TOO_LOW")
+    );
+}
+
+#[test]
+fn forced_export_records_provider_findings_without_excluding_the_record() {
+    let mut graph = Graph::new();
+    let node_id = imported_object(
+        &mut graph,
+        json!({
+            "type": "malware",
+            "id": "malware--13131313-aaaa-4131-8131-131313131313",
+            "name": "Provider-policy override",
+            "is_family": false
+        }),
+        "evidence--forced-provider-finding",
+    );
+    let finding = ValidationErrorRecord::new(
+        "CTI_PROVIDER_CONFIDENCE_POLICY",
+        ValidationErrorSeverity::Error,
+        "provider confidence policy rejected this record",
+        ValidationTarget::node(node_id.as_str()),
+    );
+
+    let plan = forced_plan(&graph, std::slice::from_ref(&finding))
+        .expect("forced export should retain a provider-rejected eligible record");
+
+    assert_eq!(plan.records().len(), 1);
+    assert_eq!(plan.warnings(), &[finding]);
+}
+
+#[test]
+fn forced_export_does_not_bypass_lifecycle_identity_or_evidence_integrity() {
+    let mut lifecycle_graph = Graph::new();
+    let lifecycle_evidence = evidence_id("evidence--forced-lifecycle");
+    lifecycle_graph
+        .create_evidence(EvidenceInput::new(
+            lifecycle_evidence.clone(),
+            "synthetic-report",
+            "lifecycle evidence",
+        ))
+        .expect("evidence should be retained");
+    lifecycle_graph
+        .create_node(
+            NodeInput::new(["Indicator"])
+                .with_status(RecordStatus::Candidate)
+                .with_confidence(confidence(0.9))
+                .with_evidence_ref(lifecycle_evidence),
+        )
+        .expect("candidate should be created");
+    let lifecycle_error = forced_plan(&lifecycle_graph, &[])
+        .expect_err("force must not bypass non-export-ready lifecycle status");
+    assert!(
+        lifecycle_error
+            .to_string()
+            .contains("EXPORT_STATUS_NOT_READY"),
+        "{lifecycle_error}"
+    );
+
+    let mut identity_graph = Graph::new();
+    imported_object(
+        &mut identity_graph,
+        json!({
+            "type": "malware",
+            "id": "identity--wrong-type-prefix",
+            "name": "Malformed forced identity"
+        }),
+        "evidence--forced-malformed-identity",
+    );
+    let identity_error = forced_plan(&identity_graph, &[])
+        .expect_err("force must not bypass malformed canonical identity");
+    assert!(
+        identity_error.to_string().contains("STIX_IDENTITY_INVALID"),
+        "{identity_error}"
+    );
+
+    let mut evidence_graph = Graph::new();
+    evidence_graph
+        .create_node(
+            NodeInput::new(["Indicator"])
+                .with_status(RecordStatus::Exportable)
+                .with_confidence(confidence(0.9))
+                .with_evidence_ref(evidence_id("evidence--forced-missing")),
+        )
+        .expect("record with dangling evidence should be created");
+    let evidence_error = forced_plan(&evidence_graph, &[])
+        .expect_err("force must not bypass dangling evidence references");
+    assert!(
+        evidence_error
+            .to_string()
+            .contains("CTI_EVIDENCE_NOT_FOUND"),
+        "{evidence_error}"
     );
 }
 
