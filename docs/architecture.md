@@ -2,7 +2,7 @@
 
 Corrobore separates graph semantics, query execution, runtime policy, transport, ingestion, and export so each boundary can be tested and replaced independently.
 
-This guide targets the current `0.1.x` runtime baseline.
+This guide describes the current runtime contract.
 
 ```mermaid
 flowchart TD

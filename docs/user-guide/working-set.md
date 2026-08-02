@@ -2,7 +2,7 @@
 
 Corrobore's working set is a bounded, explainable view used to navigate a graph without loading every node and relationship. Epic 0017 is implemented and benchmarked; its [migrated epic tracker #86](https://github.com/Estance-Labs/project-documents/issues/86) and [final acceptance issue #73](https://github.com/Estance-Labs/project-documents/issues/73) are complete.
 
-This guide targets the current `0.1.x` runtime baseline.
+This guide describes the current runtime contract.
 
 ## Implemented layers
 

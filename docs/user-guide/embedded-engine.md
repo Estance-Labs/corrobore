@@ -5,7 +5,7 @@
 See [Deployment Modes](deployment-modes.md) to compare this in-process model
 with the HTTP and standalone service layers.
 
-This guide targets the current `0.1.x` runtime baseline.
+This guide describes the current runtime contract.
 
 ## Basic use
 

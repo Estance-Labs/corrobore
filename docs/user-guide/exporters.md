@@ -2,7 +2,8 @@
 
 Corrobore builds deterministic interchange documents from an explicit export plan. Identical graph state, metadata, selection, and ordering produce stable output.
 
-This guide targets the current `0.1.x` runtime baseline.
+This guide describes the current runtime contract. Check `GET /version` for the
+deployed release before relying on version-specific behavior.
 
 ## STIX 2.1
 
@@ -42,6 +43,21 @@ diagnostics while including the otherwise eligible record. It does not bypass
 export status, unsupported profile selection, malformed canonical identities,
 dangling evidence references, excluded relationship endpoints, licensing, or
 provider readiness. The default is `false`.
+
+### Agent export choreography
+
+Strict is the default correctness gate. Complete authorized writes first, read
+back both nodes and relationships, audit native evidence and confidence, and
+then promote eligible records. Late writes remain candidate and require a new
+readiness and promotion pass.
+
+Permissive is only for an explicit caller request for a diagnostic partial
+bundle. `force=true` is an explicit operator decision and never an automatic LLM
+fallback.
+
+`GET /v1/export/stix` is read-only and never promotes graph records. A client
+may repair lifecycle bookkeeping and retry once through separately authorized
+write operations, but export itself does not promote or mutate state.
 
 The HTTP route is fail-closed: it requires enterprise CTI support, a valid
 `cti` license claim, and a ready provider exposing `node.validate/v1`. Missing

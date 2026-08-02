@@ -1246,16 +1246,22 @@ fn prepare_relationship_set(
 }
 
 fn parse_confidence(value: &LiteralValue) -> Result<Confidence, ExecutionError> {
+    // Cypher is a native graph boundary. STIX-scale conversion belongs to the
+    // import adapter, so rejected values must explain the conversion without
+    // accepting 0-100 values or changing normalized graph storage.
+    const GUIDANCE: &str =
+        "Cypher confidence uses the native 0..=1 scale; use 0.9 for 90% STIX confidence";
     let raw = match value {
         LiteralValue::Float(value) => value.parse::<f64>().ok(),
         LiteralValue::Integer(value) => Some(*value as f64),
         _ => None,
     }
     .ok_or_else(|| {
-        ExecutionError::InvalidQuery("confidence must be a number in 0..=1".to_owned())
+        ExecutionError::InvalidQuery(format!("confidence must be a number. {GUIDANCE}"))
     })?;
-    Confidence::new(raw)
-        .map_err(|error| ExecutionError::InvalidQuery(format!("invalid confidence: {error}")))
+    Confidence::new(raw).map_err(|error| {
+        ExecutionError::InvalidQuery(format!("invalid confidence: {error}. {GUIDANCE}"))
+    })
 }
 
 fn parse_record_status(value: &LiteralValue) -> Result<RecordStatus, ExecutionError> {
@@ -2323,6 +2329,63 @@ mod tests {
         assert_eq!(node.status(), RecordStatus::Exportable);
         assert_eq!(node.confidence(), Confidence::new(0.9).ok());
         assert_eq!(node.evidence_refs()[0].as_str(), "span--9");
+    }
+
+    #[test]
+    fn cypher_confidence_error_names_native_scale_and_stix_conversion() {
+        let mut graph = Graph::new();
+        graph
+            .create_node(NodeInput::new(["Indicator"]))
+            .expect("node should be created");
+        let mut executor = CypherPipelineExecutor::with_graph(
+            ExecutionPolicy {
+                read_only_by_default: false,
+            },
+            graph,
+        );
+
+        let error = executor
+            .execute("MATCH (n:Indicator) SET n.confidence = 90")
+            .expect_err("STIX-scale confidence must fail on the native Cypher boundary");
+        let message = error.to_string();
+
+        assert!(message.contains("Cypher confidence uses the native 0..=1 scale"));
+        assert!(message.contains("use 0.9 for 90% STIX confidence"));
+    }
+
+    #[test]
+    fn documented_relationship_metadata_diagnostics_are_executable() {
+        let mut graph = Graph::new();
+        let source = graph
+            .create_node(NodeInput::new(["Indicator"]))
+            .expect("source should be created");
+        let target = graph
+            .create_node(NodeInput::new(["Malware"]))
+            .expect("target should be created");
+        graph
+            .create_relationship(
+                RelationshipInput::new(source, "INDICATES", target)
+                    .expect("relationship input should be valid"),
+            )
+            .expect("candidate relationship should be created");
+        let mut executor =
+            CypherPipelineExecutor::with_graph(ExecutionPolicy::strict_default(), graph);
+
+        for query in [
+            "MATCH (source)-[r]->(target) WHERE r.confidence IS NULL OR r.evidence_refs IS NULL RETURN r LIMIT 100",
+            "MATCH (source)-[r]->(target) WHERE r.status = 'candidate' RETURN r LIMIT 100",
+        ] {
+            let result = executor
+                .execute(query)
+                .expect("documented relationship diagnostic should execute");
+            let ExecutionResultData::Records(records) = result.data else {
+                panic!("diagnostic query should return records");
+            };
+            assert!(
+                !records.is_empty(),
+                "diagnostic query returned no rows: {query}"
+            );
+        }
     }
 
     #[test]

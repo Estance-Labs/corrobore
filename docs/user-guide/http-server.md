@@ -222,7 +222,7 @@ Only `query` is required. When a real started session id is supplied, the server
 
 The response embeds the typed shared-runtime response, including `status`, `data`, mutation summary, validation errors, warnings, fix hints, budget usage, and audit references when present. `Rejected` and `ValidationFailed` are valid runtime results and can still arrive with HTTP 200; inspect the inner status.
 
-Cypher parameters preserve homogeneous JSON arrays of strings, integers, decimals, or booleans as bounded typed lists (1 to 256 items); arrays are never flattened into JSON text. Mutation summaries distinguish `matched_rows`, `native_fields_changed`, and `property_fields_changed`, alongside created, updated, and deleted node/relationship counts. The reserved fields `confidence`, `status`, and `evidence_refs` address native graph metadata; when such a field is updated, any legacy generic property with the same name is removed and native read-back takes precedence.
+Cypher parameters preserve homogeneous JSON arrays of strings, integers, decimals, or booleans as bounded typed lists (1 to 256 items); arrays are never flattened into JSON text. Mutation summaries distinguish `matched_rows`, `native_fields_changed`, and `property_fields_changed`, alongside created, updated, and deleted node/relationship counts. The reserved fields `confidence`, `status`, and `evidence_refs` address native graph metadata; when such a field is updated, any legacy generic property with the same name is removed and native read-back takes precedence. Cypher confidence uses native `0..=1`; use `0.9` for 90% STIX confidence.
 
 ## `POST /v1/cypher/write`
 
@@ -389,6 +389,11 @@ IDs are caller-owned and stable; every annotation key must be a STIX ID in the
 same bundle. Only `candidate` may be requested. Workspace, session, actor,
 permissions and export authority remain controlled by the authenticated runtime
 boundary, never by fields inside the bundle.
+
+STIX import annotations use `0..=100`, just like STIX object confidence, and
+are normalized into native `0..=1`; annotation `90` is stored as native `0.9`.
+Relationship SRO IDs need their own annotations because evidence and confidence
+do not transfer from either endpoint.
 
 ```json
 {
@@ -692,6 +697,10 @@ relationships preserve their original STIX identity and fields; unrelated
 memory and receipt nodes are excluded. Every exported record must carry native
 confidence and retained evidence. Relationship endpoints always reference the
 actual exported object identifiers.
+
+The route is read-only and never promotes candidates. Records written after a
+promotion pass remain candidate until a separately authorized write promotes
+them; clients must repeat readiness checks before retrying strict export.
 
 Strict mode returns `EXPORT_PLAN_FAILED` (HTTP 400) with named readiness,
 identity, evidence, provider-validation, or endpoint issue codes. Permissive

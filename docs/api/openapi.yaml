@@ -265,7 +265,8 @@ components:
           type: number
           minimum: 0
           maximum: 100
-          description: STIX 0-100 confidence normalized deterministically to native 0-1.
+          description: STIX import confidence uses 0..=100 and is normalized deterministically to native 0..=1. Example: 90 is stored as native 0.9.
+          examples: [90]
         status:
           type: string
           const: candidate

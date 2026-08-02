@@ -2,7 +2,8 @@
 
 Corrobore implements a bounded, agent-oriented subset of Cypher. Queries are parsed, classified as read/mutation/mixed, planned deterministically, and executed under host policy and runtime budgets.
 
-This guide targets the current `0.1.x` runtime baseline.
+This guide describes the current runtime contract. Check `GET /version` for the
+deployed release before relying on version-specific behavior.
 
 ## Supported clauses
 
@@ -64,6 +65,16 @@ RETURN a, r, m
 ```
 
 Use `/v1/cypher/write` or `CorroboreEngine::write`. A write route does not override a host-level mutation prohibition; read-only deployments return a rejected response.
+
+### Native confidence scale
+
+Cypher uses the native 0..=1 scale for node and relationship confidence.
+Use 0.9 for 90% STIX confidence. Values such as `90` are rejected with
+conversion guidance; only the STIX import adapter accepts and normalizes the
+`0..=100` scale.
+
+Confidence and retained evidence belong to each assertion. A relationship does
+not inherit either field from its source or target node.
 
 ## Parameters and modes
 
