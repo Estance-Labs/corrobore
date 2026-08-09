@@ -51,6 +51,8 @@ jobs:
               - 'scripts/rust-ci-cache-contract.test.mjs'
               - 'scripts/docs-contract-guard.mjs'
               - 'scripts/docs-contract-guard.test.mjs'
+              - 'scripts/agent-plugin-contract.test.mjs'
+              - 'plugins/corrobore/**'
               - 'scripts/open-source-readiness.test.mjs'
               - 'scripts/standalone-acceptance-contract.test.mjs'
               - 'scripts/standalone-docs-contract.test.mjs'
@@ -114,6 +116,7 @@ jobs:
 
       - name: Validate docs contracts against runtime code
         run: |
+          node --test scripts/agent-plugin-contract.test.mjs
           node --test scripts/docs-contract-guard.test.mjs
           node --test scripts/release-notes-contract.test.mjs
           node scripts/docs-contract-guard.mjs

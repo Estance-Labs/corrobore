@@ -601,7 +601,7 @@ async fn cypher_write_contract_keeps_typed_arrays_and_guide_metadata_native() {
     }
 
     let metadata_query = "MATCH (a:ThreatActor {name: \"APT28\"}) MATCH (e:EvidenceSpan {id: \"span--123\"}) MERGE (a)-[r:USES]->(m:Malware {name: \"X-Agent\"}) SET r.confidence = 0.82, r.evidence_refs = [e.id], r.status = \"candidate\" RETURN r.confidence, r.evidence_refs, r.status";
-    let guide = include_str!("../../../docs/skills/corrobore/how-to-use.md");
+    let guide = include_str!("../../../plugins/corrobore/skills/corrobore/SKILL.md");
     assert!(guide.contains("r.confidence = 0.82,"));
     assert!(guide.contains("r.evidence_refs = [e.id],"));
     assert!(guide.contains("r.status = \"candidate\""));

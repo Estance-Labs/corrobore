@@ -1,5 +1,7 @@
 # Single Agent Prompt: Build STIX Bundle from Unstructured Data
 
+This reference is packaged with the Corrobore Agent Skill for on-demand loading.
+
 You are a single autonomous extraction agent. Convert one or more unstructured documents into exactly one valid STIX 2.1 bundle using Corrobore as intermediate structured memory and validation substrate.
 
 ## Final response contract

@@ -15,6 +15,7 @@ and writes through embedded Rust and HTTP interfaces.
 | Standalone server | Native service operation and layered configuration | `docs/user-guide/standalone-server.md` |
 | HTTP API | Agent tools, services, and remote integrations | `docs/user-guide/http-server.md` |
 | TAXII ingestion | Incremental STIX 2.1 collection polling through the public import boundary | `docs/user-guide/ingestion.md` |
+| Agent Plugin | Portable Corrobore and OpenCTI skills for compatible agent clients | `plugins/corrobore/` |
 
 ## Current baseline
 
@@ -99,6 +100,7 @@ cargo build --workspace --locked
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-targets --all-features --locked
+node --test scripts/agent-plugin-contract.test.mjs
 node --test scripts/docs-contract-guard.test.mjs
 node scripts/docs-contract-guard.mjs
 ```
@@ -127,6 +129,7 @@ Use `docs/` and code on `main` as the source of truth for shipped functionality.
 - Cypher subset: `docs/user-guide/cypher.md`
 - Architecture: `docs/architecture.md`
 - LLM operating guidance: `docs/for-llms.md`
+- Portable Agent Plugin: `plugins/corrobore/`
 - Interactive API reference: `docs/api/index.html`
 
 ## License
