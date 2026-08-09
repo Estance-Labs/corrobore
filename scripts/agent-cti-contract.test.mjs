@@ -11,7 +11,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (name) => fs.readFileSync(path.join(root, name), 'utf8');
 
 test('agent surfaces explain confidence scales at their owning boundaries', () => {
-  const skill = read('docs/skills/corrobore/how-to-use.md');
+  const skill = read('plugins/corrobore/skills/corrobore/SKILL.md');
   const llmGuide = read('docs/for-llms.md');
   const cypherGuide = read('docs/user-guide/cypher.md');
   const ingestionGuide = read('docs/user-guide/ingestion.md');
@@ -32,7 +32,7 @@ test('agent surfaces explain confidence scales at their owning boundaries', () =
 });
 
 test('packaged skill requires relationship-owned metadata and coverage', () => {
-  const skill = read('docs/skills/corrobore/how-to-use.md');
+  const skill = read('plugins/corrobore/skills/corrobore/SKILL.md');
   const llmGuide = read('docs/for-llms.md');
 
   for (const guide of [skill, llmGuide]) {
@@ -49,7 +49,7 @@ test('packaged skill requires relationship-owned metadata and coverage', () => {
 });
 
 test('agent export choreography preserves read-only strict correctness', () => {
-  const skill = read('docs/skills/corrobore/how-to-use.md');
+  const skill = read('plugins/corrobore/skills/corrobore/SKILL.md');
   const llmGuide = read('docs/for-llms.md');
   const exporters = read('docs/user-guide/exporters.md');
   const combined = `${skill}\n${llmGuide}\n${exporters}`;

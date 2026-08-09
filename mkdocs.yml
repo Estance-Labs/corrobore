@@ -76,9 +76,9 @@ nav:
   - TAXII Ingestion: user-guide/ingestion.md
   - For LLM Agents: for-llms.md
   - Skills:
-    - Agent Skill: agent-skill.md
-    - How to Use: skills/corrobore/how-to-use.md
-    - OpenCTI Harvester Agent: skills/corrobore/AGENT.md
+    - Agent Plugin: agent-skill.md
+    - Corrobore Skill: skills/corrobore/how-to-use.md
+    - OpenCTI Harvester Skill: skills/corrobore/AGENT.md
   - Architecture: architecture.md
   - User Guide:
     - High-level Memory Operations: user-guide/memory-operations.md

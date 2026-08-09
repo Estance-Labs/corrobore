@@ -11,7 +11,7 @@ on:
       - "Dockerfile"
       - "crates/**"
       - "docs/acceptance/report-to-stix.md"
-      - "docs/skills/corrobore/**"
+      - "plugins/corrobore/**"
       - "packaging/**"
       - "scripts/report-to-stix-acceptance*"
       - "scripts/standalone-acceptance*"

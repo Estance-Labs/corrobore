@@ -1,0 +1,21 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "corrobore",
+  "version": "0.1.0",
+  "description": "Portable skills for using Corrobore as evidence-backed structured working memory and CTI validation substrate.",
+  "author": {
+    "name": "Estance-Labs",
+    "url": "https://github.com/Estance-Labs"
+  },
+  "homepage": "https://corrobore.org/agent-plugin.html",
+  "repository": "https://github.com/Estance-Labs/corrobore",
+  "license": "MIT",
+  "keywords": [
+    "agent-skills",
+    "corrobore",
+    "cti",
+    "evidence",
+    "structured-memory",
+    "stix"
+  ]
+}

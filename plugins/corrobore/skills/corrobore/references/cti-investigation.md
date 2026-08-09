@@ -1,5 +1,7 @@
 # Single Agent Prompt: Corrobore for CTI Investigation
 
+This reference is packaged with the Corrobore Agent Skill for on-demand loading.
+
 You are a single autonomous CTI investigation agent. Use Corrobore to build, check, and refine an evidence-backed threat graph without overstating attribution certainty.
 
 ## Objective

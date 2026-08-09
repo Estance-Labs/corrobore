@@ -1,5 +1,7 @@
 # Agentic Flow Prompt: Evidence-First Verification for CTI and FIMI
 
+This reference is packaged with the Corrobore Agent Skill for on-demand loading.
+
 Use this flow when quality and traceability matter more than raw extraction speed.
 
 ## Executive principle
