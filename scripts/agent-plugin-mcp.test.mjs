@@ -93,11 +93,16 @@ function startMcp(environment = {}) {
       if (remaining <= 0) {
         throw new Error(`timed out waiting for MCP message; stderr=${stderr}`);
       }
-      await Promise.race([
-        once(events, 'message'),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('poll timeout')), remaining)),
-      ]).catch((error) => {
-        if (error.message !== 'poll timeout') throw error;
+      await new Promise((resolve) => {
+        const onMessage = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        const timer = setTimeout(() => {
+          events.off('message', onMessage);
+          resolve();
+        }, remaining);
+        events.once('message', onMessage);
       });
     }
   }
@@ -295,6 +300,32 @@ test('protocol and upstream failures are bounded and do not crash the server', a
   } finally {
     await client.stop();
     await upstream.close();
+  }
+});
+
+test('HTTP redirects fail closed instead of forwarding authorization to another endpoint', async () => {
+  const destination = await listen(async (_request, response) => {
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end('{"ok":true}');
+  });
+  const redirecting = await listen(async (_request, response) => {
+    response.writeHead(302, { location: `${destination.baseUrl}/redirected` });
+    response.end();
+  });
+  const client = startMcp({
+    CORROBORE_MCP_BASE_URL: redirecting.baseUrl,
+    CORROBORE_MCP_AUTH_TOKEN: 'must-not-be-forwarded',
+  });
+  try {
+    await initialize(client);
+    const failure = await callTool(client, 10, 'corrobore_ready');
+    assert.equal(failure.result.isError, true);
+    assert.match(failure.result.content[0].text, /request failed/i);
+    assert.equal(destination.requests.length, 0);
+  } finally {
+    await client.stop();
+    await redirecting.close();
+    await destination.close();
   }
 });
 

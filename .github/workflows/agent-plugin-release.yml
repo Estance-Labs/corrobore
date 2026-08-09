@@ -7,6 +7,7 @@ on:
     paths:
       - 'plugins/corrobore/**'
       - 'scripts/agent-plugin-contract.test.mjs'
+      - 'scripts/agent-plugin-mcp.test.mjs'
       - '.github/workflows/agent-plugin-release.yml'
   push:
     branches:
@@ -16,6 +17,7 @@ on:
     paths:
       - 'plugins/corrobore/**'
       - 'scripts/agent-plugin-contract.test.mjs'
+      - 'scripts/agent-plugin-mcp.test.mjs'
       - '.github/workflows/agent-plugin-release.yml'
   workflow_dispatch:
 
@@ -35,7 +37,9 @@ jobs:
           node-version: 26.4.0
 
       - name: Validate Agent Plugins and Agent Skills contracts
-        run: node --test scripts/agent-plugin-contract.test.mjs
+        run: |
+          node --test scripts/agent-plugin-contract.test.mjs
+          node --test scripts/agent-plugin-mcp.test.mjs
 
   release:
     name: Publish versioned archive

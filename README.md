@@ -15,7 +15,7 @@ and writes through embedded Rust and HTTP interfaces.
 | Standalone server | Native service operation and layered configuration | `docs/user-guide/standalone-server.md` |
 | HTTP API | Agent tools, services, and remote integrations | `docs/user-guide/http-server.md` |
 | TAXII ingestion | Incremental STIX 2.1 collection polling through the public import boundary | `docs/user-guide/ingestion.md` |
-| Agent Plugin | Portable Corrobore and OpenCTI skills for compatible agent clients | `plugins/corrobore/` |
+| Agent Plugin | Portable Corrobore and OpenCTI skills plus an MCP-to-HTTP bridge for compatible agent clients | `plugins/corrobore/` |
 
 ## Current baseline
 

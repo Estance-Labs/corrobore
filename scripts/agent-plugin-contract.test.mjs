@@ -137,14 +137,11 @@ test('portable package has no escaping symlinks and declares a closed MCP server
   assert.deepEqual(Object.keys(manifest.mcpServers), ['corrobore']);
 
   const server = manifest.mcpServers.corrobore;
-  assert.deepEqual(Object.keys(server).sort(), ['args', 'command', 'cwd', 'env', 'type']);
+  assert.deepEqual(Object.keys(server).sort(), ['args', 'command', 'cwd', 'type']);
   assert.equal(server.type, 'stdio');
   assert.equal(server.command, 'node');
   assert.deepEqual(server.args, ['${PLUGIN_ROOT}/mcp-server/server.mjs']);
   assert.equal(server.cwd, '${PLUGIN_ROOT}');
-  assert.deepEqual(server.env, {
-    CORROBORE_MCP_BASE_URL: 'http://127.0.0.1:8080',
-  });
   assert.doesNotMatch(JSON.stringify(manifest), /token|secret|password|authorization/i);
 
   const entrypoint = path.join(pluginRoot, 'mcp-server', 'server.mjs');
