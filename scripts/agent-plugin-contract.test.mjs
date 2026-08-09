@@ -112,7 +112,7 @@ test('plugin discovers valid Corrobore and OpenCTI Agent Skills', () => {
   }
 });
 
-test('portable package has no escaping symlinks or undeclared MCP server', () => {
+test('portable package has no escaping symlinks and declares a closed MCP server', () => {
   const pending = [pluginRoot];
   while (pending.length > 0) {
     const current = pending.pop();
@@ -124,7 +124,32 @@ test('portable package has no escaping symlinks or undeclared MCP server', () =>
     }
   }
 
-  assert.equal(fs.existsSync(path.join(pluginRoot, 'mcp.json')), false);
+  const mcpPath = path.join(pluginRoot, 'mcp.json');
+  assert.ok(fs.statSync(mcpPath).isFile());
+  assert.equal(fs.lstatSync(mcpPath).isSymbolicLink(), false);
+
+  const manifest = JSON.parse(fs.readFileSync(mcpPath, 'utf8'));
+  assert.deepEqual(Object.keys(manifest).sort(), ['$schema', 'mcpServers']);
+  assert.equal(
+    manifest.$schema,
+    'https://agent-plugins.org/schemas/1.0.0/mcp.schema.json',
+  );
+  assert.deepEqual(Object.keys(manifest.mcpServers), ['corrobore']);
+
+  const server = manifest.mcpServers.corrobore;
+  assert.deepEqual(Object.keys(server).sort(), ['args', 'command', 'cwd', 'env', 'type']);
+  assert.equal(server.type, 'stdio');
+  assert.equal(server.command, 'node');
+  assert.deepEqual(server.args, ['${PLUGIN_ROOT}/mcp-server/server.mjs']);
+  assert.equal(server.cwd, '${PLUGIN_ROOT}');
+  assert.deepEqual(server.env, {
+    CORROBORE_MCP_BASE_URL: 'http://127.0.0.1:8080',
+  });
+  assert.doesNotMatch(JSON.stringify(manifest), /token|secret|password|authorization/i);
+
+  const entrypoint = path.join(pluginRoot, 'mcp-server', 'server.mjs');
+  assert.ok(fs.statSync(entrypoint).isFile());
+  assertPathInsidePlugin(entrypoint);
 });
 
 test('public documentation installs the plugin from its canonical package', () => {
@@ -132,7 +157,10 @@ test('public documentation installs the plugin from its canonical package', () =
   assert.match(guide, /Agent Plugins v1\.0\.0/);
   assert.match(guide, /plugins\/corrobore\/plugin\.json/);
   assert.match(guide, /agent-plugins\.org\/specification/);
-  assert.match(guide, /agent-plugin-v0\.1\.0\/corrobore-agent-plugin\.zip/);
+  assert.match(guide, /Agent Plugin v0\.2\.0/);
+  assert.match(guide, /agent-plugin-v0\.2\.0\/corrobore-agent-plugin\.zip/);
+  assert.match(guide, /mcp\.json/);
+  assert.match(guide, /Node\.js 20/);
 
   const legacyGuide = read('docs/skills/corrobore/how-to-use.md');
   assert.match(legacyGuide, /plugins\/corrobore\/skills\/corrobore\/SKILL\.md/);
@@ -140,9 +168,11 @@ test('public documentation installs the plugin from its canonical package', () =
   const workflow = read('.github/workflows/docs.yml');
   assert.match(workflow, /plugins\/corrobore\/\*\*/);
   assert.match(workflow, /node --test scripts\/agent-plugin-contract\.test\.mjs/);
+  assert.match(workflow, /scripts\/agent-plugin-mcp\.test\.mjs/);
 
   const rustWorkflow = read('.github/workflows/rust-ci.yml');
   assert.match(rustWorkflow, /scripts\/agent-plugin-contract\.test\.mjs/);
+  assert.match(rustWorkflow, /scripts\/agent-plugin-mcp\.test\.mjs/);
   assert.match(rustWorkflow, /plugins\/corrobore\/\*\*/);
 
   const releaseWorkflow = read('.github/workflows/agent-plugin-release.yml');
