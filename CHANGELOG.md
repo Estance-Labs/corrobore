@@ -26,6 +26,15 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   evidence records lift into sources idempotently through
   `EvidenceRecordStore::lift_sources`, and `EvidenceRecord` gains an optional
   `source_id`. `ValidationTarget::Source` is added (Epic 0029 WS-A, #148).
+- `graph-core`: immutable `Observation` record and `ObservationStore` bound to
+  a registered `Source` (selector, verbatim payload, modality, observation
+  time, payload SHA-256). Observations have no update path; a correction is a
+  superseding observation. `EvidenceLocator` gains `CharacterSpan` and
+  `RecordPath`, `EvidenceAttachmentTarget` gains `Observation`, and
+  `EvidenceRecord` gains an optional `observation_id` filled by the idempotent
+  `EvidenceRecordStore::lift_observations`. The legacy source lift no longer
+  copies a record's `observed_at` into the source acquisition time (Epic 0029
+  WS-A, #149).
 
 ## Releases
 

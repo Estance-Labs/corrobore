@@ -468,8 +468,9 @@ impl SourceStore {
     /// The source identity is the record's `source_ref`; the URI is the
     /// record's `source_url` when present, otherwise the `source_ref`; the
     /// type defaults to `Other`; the artifact hash is the record's
-    /// `content_sha256`; the acquisition time is the record's `observed_at`.
-    /// The resulting version is marked `derived_from_legacy`.
+    /// `content_sha256`; the acquisition time is left unset because a record's
+    /// `observed_at` belongs to its observation, not to the source. The
+    /// resulting version is marked `derived_from_legacy`.
     ///
     /// # Errors
     ///
@@ -488,9 +489,9 @@ impl SourceStore {
         if let Some(digest) = record.content_sha256() {
             input = input.with_artifact_sha256(digest);
         }
-        if let Some(observed_at) = record.observed_at() {
-            input = input.with_acquired_at(observed_at.clone());
-        }
+        // `observed_at` is a per-observation time and stays on the lifted
+        // `Observation`; copying it here would make two spans of the same
+        // document observed at different times conflict as sources.
 
         self.register(input, true)
     }

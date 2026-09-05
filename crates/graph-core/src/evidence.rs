@@ -23,8 +23,8 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ClaimId, Confidence, EvidenceId, ExtractionRunId, GraphError, NodeId, RelationshipId, SourceId,
-    SourceRegistration, SourceStore, TemporalTimestamp,
+    ClaimId, Confidence, EvidenceId, ExtractionRunId, GraphError, NodeId, ObservationId,
+    ObservationStore, RelationshipId, SourceId, SourceRegistration, SourceStore, TemporalTimestamp,
 };
 
 /// Provenance source category for first-class evidence metadata.
@@ -92,6 +92,84 @@ pub enum EvidenceLocator {
         /// Exclusive byte offset.
         end: u64,
     },
+    /// Half-open range of Unicode scalar values in the source text.
+    CharacterSpan {
+        /// Inclusive character offset.
+        start: u64,
+        /// Exclusive character offset.
+        end: u64,
+    },
+    /// Path to one field or record inside a structured source, for example a
+    /// JSON pointer or a STIX object path.
+    RecordPath {
+        /// Non-blank path expression.
+        path: String,
+    },
+}
+
+impl EvidenceLocator {
+    /// Validate the locator's shape: positive bounded ordinals, non-empty
+    /// half-open ranges, and a non-blank record path.
+    ///
+    /// # Errors
+    ///
+    /// [`GraphError::InvalidPropertyValue`] when the shape is invalid.
+    pub(crate) fn validate(&self) -> Result<(), GraphError> {
+        const MAX_PAGE: u32 = 1_000_000;
+        const MAX_ORDINAL: u32 = 1_000_000;
+        let valid_ordinal = |value: u32| (1..=MAX_ORDINAL).contains(&value);
+        let valid_page = |value: u32| (1..=MAX_PAGE).contains(&value);
+        let valid = match self {
+            Self::Page { page } => valid_page(*page),
+            Self::Paragraph { page, paragraph } => {
+                page.is_none_or(valid_page) && valid_ordinal(*paragraph)
+            }
+            Self::TableCell {
+                page,
+                table,
+                row,
+                column,
+            } => {
+                page.is_none_or(valid_page)
+                    && valid_ordinal(*table)
+                    && valid_ordinal(*row)
+                    && valid_ordinal(*column)
+            }
+            Self::ByteRange { start, end } | Self::CharacterSpan { start, end } => start < end,
+            Self::RecordPath { path } => !path.trim().is_empty(),
+        };
+        if !valid {
+            return Err(GraphError::InvalidPropertyValue(
+                "evidence locator must use positive bounded ordinals, a non-empty half-open \
+                 range, or a non-blank record path"
+                    .to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Render the locator as one stable token for projections.
+    pub fn render(&self) -> String {
+        match self {
+            Self::Page { page } => format!("page:{page}"),
+            Self::Paragraph { page, paragraph } => match page {
+                Some(page) => format!("paragraph:{page}/{paragraph}"),
+                None => format!("paragraph:{paragraph}"),
+            },
+            Self::TableCell {
+                page,
+                table,
+                row,
+                column,
+            } => match page {
+                Some(page) => format!("table_cell:{page}/{table}/{row}/{column}"),
+                None => format!("table_cell:{table}/{row}/{column}"),
+            },
+            Self::ByteRange { start, end } => format!("byte_range:{start}-{end}"),
+            Self::CharacterSpan { start, end } => format!("character_span:{start}-{end}"),
+            Self::RecordPath { path } => format!("record_path:{path}"),
+        }
+    }
 }
 
 /// First-class evidence record with full provenance metadata.
@@ -124,6 +202,11 @@ pub struct EvidenceRecord {
     /// [`EvidenceInput::with_source_id`] or by [`EvidenceRecordStore::lift_sources`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     source_id: Option<SourceId>,
+    /// Observation carrying this record's exact span, when known. Set through
+    /// [`EvidenceInput::with_observation_id`] or by
+    /// [`EvidenceRecordStore::lift_observations`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    observation_id: Option<ObservationId>,
 }
 
 impl EvidenceRecord {
@@ -212,6 +295,11 @@ impl EvidenceRecord {
         self.source_id.as_ref()
     }
 
+    /// Observation carrying this record's exact span, when known.
+    pub fn observation_id(&self) -> Option<&ObservationId> {
+        self.observation_id.as_ref()
+    }
+
     /// Returns the bounded locator for this excerpt.
     pub const fn locator(&self) -> Option<&EvidenceLocator> {
         self.locator.as_ref()
@@ -244,6 +332,8 @@ pub struct EvidenceInput {
     locator: Option<EvidenceLocator>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     source_id: Option<SourceId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    observation_id: Option<ObservationId>,
 }
 
 impl EvidenceInput {
@@ -281,12 +371,19 @@ impl EvidenceInput {
             content_sha256: None,
             locator: None,
             source_id: None,
+            observation_id: None,
         }
     }
 
     /// Sets the source identity behind this record.
     pub fn with_source_id(mut self, source_id: SourceId) -> Self {
         self.source_id = Some(source_id);
+        self
+    }
+
+    /// Sets the observation carrying this record's exact span.
+    pub fn with_observation_id(mut self, observation_id: ObservationId) -> Self {
+        self.observation_id = Some(observation_id);
         self
     }
 
@@ -456,37 +553,10 @@ impl EvidenceInput {
             ));
         }
 
-        let Some(locator) = self.locator.as_ref() else {
-            return Ok(());
-        };
-        const MAX_PAGE: u32 = 1_000_000;
-        const MAX_ORDINAL: u32 = 1_000_000;
-        let valid_ordinal = |value: u32| (1..=MAX_ORDINAL).contains(&value);
-        let valid_page = |value: u32| (1..=MAX_PAGE).contains(&value);
-        let valid = match locator {
-            EvidenceLocator::Page { page } => valid_page(*page),
-            EvidenceLocator::Paragraph { page, paragraph } => {
-                page.is_none_or(valid_page) && valid_ordinal(*paragraph)
-            }
-            EvidenceLocator::TableCell {
-                page,
-                table,
-                row,
-                column,
-            } => {
-                page.is_none_or(valid_page)
-                    && valid_ordinal(*table)
-                    && valid_ordinal(*row)
-                    && valid_ordinal(*column)
-            }
-            EvidenceLocator::ByteRange { start, end } => start < end,
-        };
-        if !valid {
-            return Err(GraphError::InvalidPropertyValue(
-                "evidence locator must use positive bounded ordinals or a non-empty byte range"
-                    .to_owned(),
-            ));
+        if let Some(locator) = self.locator.as_ref() {
+            locator.validate()?;
         }
+
         Ok(())
     }
 }
@@ -502,6 +572,8 @@ pub enum EvidenceAttachmentTarget {
     Claim(ClaimId),
     /// An export record identified by a string key.
     ExportRecord(String),
+    /// An observation record.
+    Observation(ObservationId),
 }
 
 impl EvidenceAttachmentTarget {
@@ -523,6 +595,11 @@ impl EvidenceAttachmentTarget {
     /// Creates an export record attachment target.
     pub fn export_record(id: impl Into<String>) -> Self {
         Self::ExportRecord(id.into())
+    }
+
+    /// Observation target.
+    pub fn observation(id: ObservationId) -> Self {
+        Self::Observation(id)
     }
 }
 
@@ -557,6 +634,8 @@ pub struct EvidenceRecordStore {
     known_relationship_targets: HashSet<RelationshipId>,
     known_claim_targets: HashSet<ClaimId>,
     known_export_record_targets: HashSet<String>,
+    #[serde(default)]
+    known_observation_targets: HashSet<ObservationId>,
 }
 
 impl EvidenceRecordStore {
@@ -593,6 +672,7 @@ impl EvidenceRecordStore {
             content_sha256: input.content_sha256,
             locator: input.locator,
             source_id: input.source_id,
+            observation_id: input.observation_id,
         };
 
         if let Some(existing) = self
@@ -641,6 +721,36 @@ impl EvidenceRecordStore {
         Ok(registrations)
     }
 
+    /// Lift every record that has a `source_id` but no `observation_id` into
+    /// `observations` and bind it. Records already naming an observation are
+    /// left as they are. Idempotent: a second call lifts nothing and returns an
+    /// empty list.
+    ///
+    /// # Errors
+    ///
+    /// [`GraphError::InvalidVersionState`] when a record has no `source_id`
+    /// (run [`Self::lift_sources`] first); otherwise the errors of
+    /// [`ObservationStore::lift_from_evidence`].
+    pub fn lift_observations(
+        &mut self,
+        observations: &mut ObservationStore,
+        sources: &SourceStore,
+    ) -> Result<Vec<ObservationId>, GraphError> {
+        let mut lifted = Vec::new();
+
+        for record in self.records.iter_mut() {
+            if record.observation_id.is_some() {
+                continue;
+            }
+
+            let observation_id = observations.lift_from_evidence(record, sources)?;
+            record.observation_id = Some(observation_id.clone());
+            lifted.push(observation_id);
+        }
+
+        Ok(lifted)
+    }
+
     /// Returns the evidence record for the given ID, if it exists.
     pub fn evidence_by_id(&self, evidence_id: &EvidenceId) -> Option<&EvidenceRecord> {
         self.records.iter().find(|record| &record.id == evidence_id)
@@ -675,6 +785,11 @@ impl EvidenceRecordStore {
     pub fn register_export_record_target(&mut self, export_record_id: impl Into<String>) {
         self.known_export_record_targets
             .insert(export_record_id.into());
+    }
+
+    /// Registers an observation as a valid attachment target.
+    pub fn register_observation_target(&mut self, observation_id: ObservationId) {
+        self.known_observation_targets.insert(observation_id);
     }
 
     /// Attaches an evidence record to a validated target.
@@ -715,6 +830,11 @@ impl EvidenceRecordStore {
                         "export record target not found: {}",
                         export_record_id
                     )));
+                }
+            }
+            EvidenceAttachmentTarget::Observation(observation_id) => {
+                if !self.known_observation_targets.contains(observation_id) {
+                    return Err(GraphError::ObservationNotFound(observation_id.clone()));
                 }
             }
         }
