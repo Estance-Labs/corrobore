@@ -267,6 +267,20 @@ impl ClaimLink {
         self.bitemporal.as_ref()
     }
 
+    /// Stable reference key of the link: `<source kind>:<source id>:<target
+    /// claim>:<kind token>`. Used by explanations and verification inputs.
+    pub fn reference_key(&self) -> String {
+        claim_link_explanation_key(self)
+    }
+
+    /// Whether the link is active at an as-of point. Links without a stamp are
+    /// always active; stamped links follow the bitemporal rule.
+    pub fn is_active_at(&self, as_of: &VerdictAsOf) -> bool {
+        self.bitemporal
+            .as_ref()
+            .is_none_or(|stamp| as_of.covers(stamp))
+    }
+
     /// Project the link into additive, namespaced properties for a
     /// relationship in the epistemic vocabulary.
     ///

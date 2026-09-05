@@ -152,6 +152,7 @@ mod trajectory_provenance;
 mod transaction;
 mod traversal_cost;
 mod validation;
+mod verdict;
 mod verification_probes;
 mod working_set;
 mod working_set_benchmark;
@@ -254,8 +255,8 @@ pub use hyperrelation::{
 pub use ids::{
     ActorId, ClaimId, ClaimVersionId, EvidenceId, ExtractionRunId, FactId, HypothesisWorkspaceId,
     NodeId, NodeVersionId, ObservationId, RelationshipId, RelationshipVersionId, RequestId,
-    RuntimeId, SessionId, SnapshotId, SourceId, SourceVersionId, TransactionId, ValidationErrorId,
-    WorkspaceId,
+    RuntimeId, SessionId, SnapshotId, SourceId, SourceVersionId, StateTransitionId, TransactionId,
+    ValidationErrorId, VerdictId, VerificationRecordId, WorkspaceId,
 };
 pub use immune_response::{ImmuneResponder, ImmuneResponse, ImmuneResponseAction};
 pub use information_gain::{
@@ -338,6 +339,11 @@ pub use traversal_cost::{
 pub use validation::{
     RuleId, ValidationErrorRecord, ValidationErrorSeverity, ValidationErrorStatus,
     ValidationRuleContext, ValidationRuleRegistry, ValidationTarget,
+};
+pub use verdict::{
+    ResolutionOutcome, StateTransition, TransitionTrigger, Verdict, VerdictAsOf, VerdictState,
+    VerdictStore, VerificationInputs, VerificationRecord, VerificationRecordStore,
+    VerificationResult, project_verdict_state, resolve_claim_verdict,
 };
 pub use verification_probes::{
     ProbeAnswer, ProbeKind, ProbeRegistry, ProbeStatus, ProbeTransition, VerificationProbe,

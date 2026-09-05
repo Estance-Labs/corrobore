@@ -839,6 +839,127 @@ impl ClaimStore {
             .ok_or_else(|| GraphError::ClaimNotFound(claim_id.clone()))
     }
 
+    /// Links targeting `claim_id` that are active at `as_of`.
+    pub fn links_active_at(&self, claim_id: &ClaimId, as_of: &VerdictAsOf) -> Vec<&ClaimLink> {
+        self.claim_links
+            .iter()
+            .filter(|link| link.target_claim_id() == claim_id && link.is_active_at(as_of))
+            .collect()
+    }
+
+    /// Close the valid time of a stamped link, the bitemporal way to end its
+    /// validity without deleting or rewriting the assertion. The link is
+    /// matched by source, target, and kind.
+    ///
+    /// # Errors
+    ///
+    /// [`GraphError::InvalidClaimLink`] when no such link exists, when it has
+    /// no bitemporal stamp, or when its validity is already closed;
+    /// [`GraphError::InvalidBitemporalStamp`] when `valid_to` does not follow
+    /// `valid_from`.
+    pub fn close_link_validity(
+        &mut self,
+        source: &ClaimLinkSource,
+        target_claim_id: &ClaimId,
+        kind: ClaimLinkKind,
+        valid_to: TemporalTimestamp,
+    ) -> Result<(), GraphError> {
+        let link = self
+            .claim_links
+            .iter_mut()
+            .find(|link| {
+                link.source() == source
+                    && link.target_claim_id() == target_claim_id
+                    && link.kind() == kind
+            })
+            .ok_or_else(|| {
+                GraphError::InvalidClaimLink(format!(
+                    "no {} link from {}:{} to {}",
+                    kind.as_str(),
+                    source.kind_token(),
+                    source.id_str(),
+                    target_claim_id.as_str()
+                ))
+            })?;
+
+        let Some(stamp) = link.bitemporal.take() else {
+            return Err(GraphError::InvalidClaimLink(
+                "link has no bitemporal stamp; only stamped links can close their validity"
+                    .to_owned(),
+            ));
+        };
+        if stamp.valid_to.is_some() {
+            link.bitemporal = Some(stamp);
+            return Err(GraphError::InvalidClaimLink(
+                "link validity is already closed".to_owned(),
+            ));
+        }
+
+        match stamp.clone().with_valid_to(valid_to) {
+            Ok(closed) => {
+                link.bitemporal = Some(closed);
+                Ok(())
+            }
+            Err(error) => {
+                link.bitemporal = Some(stamp);
+                Err(error)
+            }
+        }
+    }
+
+    /// Apply a lifecycle status projected from a computed verdict, as a new
+    /// claim version, when the `ClaimStatus` matrix allows the transition.
+    /// Returns `Ok(false)` when the matrix forbids it or the status is already
+    /// current, so callers can record the verdict without touching the
+    /// lifecycle.
+    ///
+    /// # Errors
+    ///
+    /// [`GraphError::ClaimNotFound`] for an unknown claim.
+    pub fn apply_verdict_projection(
+        &mut self,
+        claim_id: &ClaimId,
+        status: ClaimStatus,
+    ) -> Result<bool, GraphError> {
+        let current_claim = self
+            .claims
+            .get(claim_id)
+            .cloned()
+            .ok_or_else(|| GraphError::ClaimNotFound(claim_id.clone()))?;
+
+        if current_claim.status == status
+            || ClaimStatus::ensure_valid_transition(current_claim.status, status).is_err()
+        {
+            return Ok(false);
+        }
+
+        let next_version = current_claim.version + 1;
+        let next_version_id = ClaimVersionId::new(format!(
+            "claim-version--{}--{}",
+            claim_id.as_str(),
+            next_version
+        ))?;
+        self.claims.insert(
+            claim_id.clone(),
+            Claim {
+                version_id: next_version_id,
+                version: next_version,
+                status,
+                ..current_claim
+            },
+        );
+        self.record_claim_explanation(
+            claim_id,
+            EpistemicExplanation::new(
+                format!("claim:{}", claim_id.as_str()),
+                EpistemicExplanationKind::ClaimStateChange,
+            )
+            .with_consumed_input(format!("verdict-projection:{}", claim_id.as_str())),
+        );
+
+        Ok(true)
+    }
+
     /// Read all persisted claim support/refutation links.
     pub fn claim_links(&self) -> &[ClaimLink] {
         self.claim_links.as_slice()
