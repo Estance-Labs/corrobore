@@ -76,6 +76,15 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   `x_corrobore_lineage` and FIMI exports add `lineage` additively. The
   `compatibility/epistemic/v1` fixtures guard pre-WS-A payloads, and
   `epic_0029_ws_a_acceptance` closes workstream WS-A (Epic 0029 WS-A, #153).
+- `graph-core`: verifier framework, per ADR-0017. The `Verifier` trait reports
+  a `VerificationOutcome` (result, rationale, limits, evidence consumed) over a
+  read-only `VerificationRequest` built from a claim, its active evidence
+  links, the observations they resolve to, and the sources behind them.
+  `VerifierRegistry` owns provenance: it mints the `VerificationRecord`
+  identifier, stamp, and `deterministic` flag from the registration, keyed by
+  identifier and version so versions coexist and earlier records stay
+  reproducible. `VerificationContext` bundles the read-only stores
+  (Epic 0029 WS-B, #163).
 
 ## Releases
 
