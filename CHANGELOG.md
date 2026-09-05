@@ -92,6 +92,14 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   recompute SHA-256 over exact observation and evidence payload bytes and
   report recorded and computed digests on drift. Both verifiers are versioned,
   domain-neutral, and emit their limits on every result (Epic 0029 WS-B, #164).
+- `graph-core`: deterministic `verifier.temporal-ordering`,
+  `verifier.arithmetic-consistency`, `verifier.graph-consistency`, and
+  `verifier.schema-constraint` implementations. Propositions gain additive,
+  typed arithmetic declarations for bounds, units, and aggregate parts;
+  verification contexts can expose an immutable graph and an optional schema
+  provider. `domain-common` supplies the schema registry and keeps required
+  properties and type assertions owned by installed packs. Missing schemas
+  remain explicitly inconclusive (Epic 0029 WS-B, #165).
 
 ## Releases
 
