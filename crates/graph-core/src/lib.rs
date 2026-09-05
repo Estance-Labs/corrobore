@@ -155,6 +155,7 @@ mod traversal_cost;
 mod validation;
 mod verdict;
 mod verification_probes;
+mod verifier;
 mod working_set;
 mod working_set_benchmark;
 mod working_set_expansion;
@@ -353,6 +354,10 @@ pub use verdict::{
 };
 pub use verification_probes::{
     ProbeAnswer, ProbeKind, ProbeRegistry, ProbeStatus, ProbeTransition, VerificationProbe,
+};
+pub use verifier::{
+    VerificationContext, VerificationOutcome, VerificationRequest, Verifier, VerifierCostClass,
+    VerifierRegistry, VerifierSpec,
 };
 pub use working_set::{
     GraphWorkingSet, GraphWorkingSetStats, LoadingState, WarmAdjacencyEntry,

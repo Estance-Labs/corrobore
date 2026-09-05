@@ -88,6 +88,20 @@ pub enum GraphError {
     #[error("observation not found: {0:?}")]
     ObservationNotFound(ObservationId),
 
+    /// A verifier registration is invalid: blank identity, or a different
+    /// implementation under an identifier and version that already exist.
+    #[error("invalid verifier registration: {0}")]
+    InvalidVerifierRegistration(String),
+
+    /// No verifier is registered under this identifier and version.
+    #[error("verifier not found: {id} version {version}")]
+    VerifierNotFound {
+        /// Verifier identifier.
+        id: String,
+        /// Requested version.
+        version: String,
+    },
+
     /// A governed record (source, observation, verdict, state transition,
     /// verification record) was re-submitted with different content under an
     /// existing identifier. Governed records are append-only; correction goes
