@@ -34,7 +34,7 @@ pub(crate) use serde::{Deserialize, Serialize};
 pub(crate) use crate::{
     ActorId, BitemporalStamp, ClaimId, ClaimVersionId, Confidence, EvidenceId, ExtractionRunId,
     GraphError, HypothesisWorkspaceId, NodeId, ObservationId, PropertyMap, PropertyValue,
-    RelationshipId, TemporalMetadata, WorkspaceId,
+    RelationshipId, TemporalMetadata, TemporalTimestamp, VerdictAsOf, WorkspaceId,
 };
 
 mod epistemic;

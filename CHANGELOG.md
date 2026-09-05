@@ -44,6 +44,17 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   relationship types; `EpistemicExplanationKind` gains `ContextLink`,
   `DuplicateLink`, `DerivationLink`, `DependencyLink`. Links serialized before
   this change deserialize unchanged (Epic 0029 WS-A, #150).
+- `graph-core`: append-only `VerificationRecord`, `Verdict`, and
+  `StateTransition` records with their stores; `VerdictState` (`Supported`,
+  `Refuted`, `Mixed`, `Contested`, `Unknown`, `InsufficientEvidence`,
+  `Superseded`) and the ADR-0016 projection `project_verdict_state` onto the
+  lifecycle `ClaimStatus`; `resolve_claim_verdict` computes a verdict from
+  active evidence links and deterministic verification records with the
+  minimal WS-A policy, appends verdict and transition on change, and applies
+  the projected lifecycle status when the transition matrix allows it;
+  deterministic as-of replay through `VerdictAsOf`; `ClaimStore` gains
+  `links_active_at`, `close_link_validity`, and `apply_verdict_projection`
+  (Epic 0029 WS-A, #151).
 
 ## Releases
 
