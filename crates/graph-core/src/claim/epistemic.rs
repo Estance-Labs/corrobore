@@ -41,6 +41,14 @@ pub enum EpistemicExplanationKind {
     StanceUpdate,
     /// Resolution output.
     ResolutionOutput,
+    /// A context link was attached (Epic 0029).
+    ContextLink,
+    /// A duplicate link was attached (Epic 0029).
+    DuplicateLink,
+    /// A derivation link was attached (Epic 0029).
+    DerivationLink,
+    /// A dependency link was attached (Epic 0029).
+    DependencyLink,
 }
 
 /// Explanation metadata for epistemic operations.
@@ -384,7 +392,13 @@ impl EpistemicResolutionPolicy for ConservativeDeterministicPolicy {
             match link.kind() {
                 ClaimLinkKind::Supports => support_score += 1,
                 ClaimLinkKind::Refutes | ClaimLinkKind::Contradicts => refute_score += 1,
-                ClaimLinkKind::Supersedes => {}
+                // Supersession and the Epic 0029 structural kinds carry no
+                // support or refutation weight in this conservative policy.
+                ClaimLinkKind::Supersedes
+                | ClaimLinkKind::ContextFor
+                | ClaimLinkKind::Duplicates
+                | ClaimLinkKind::DerivedFrom
+                | ClaimLinkKind::DependsOn => {}
             }
 
             consumed_input_refs.push(format!(

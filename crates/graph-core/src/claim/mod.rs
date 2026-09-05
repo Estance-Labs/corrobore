@@ -32,8 +32,9 @@ pub(crate) use std::collections::{HashMap, HashSet};
 pub(crate) use serde::{Deserialize, Serialize};
 
 pub(crate) use crate::{
-    ActorId, ClaimId, ClaimVersionId, Confidence, EvidenceId, ExtractionRunId, GraphError,
-    HypothesisWorkspaceId, NodeId, RelationshipId, TemporalMetadata, WorkspaceId,
+    ActorId, BitemporalStamp, ClaimId, ClaimVersionId, Confidence, EvidenceId, ExtractionRunId,
+    GraphError, HypothesisWorkspaceId, NodeId, ObservationId, PropertyMap, PropertyValue,
+    RelationshipId, TemporalMetadata, WorkspaceId,
 };
 
 mod epistemic;
@@ -71,10 +72,7 @@ pub(crate) fn validate_trust_input_value(value: f64) -> Result<(), GraphError> {
 }
 
 pub(crate) fn claim_link_explanation_key(link: &ClaimLink) -> String {
-    let source_ref = match link.source() {
-        ClaimLinkSource::Evidence(evidence_id) => format!("evidence:{}", evidence_id.as_str()),
-        ClaimLinkSource::Claim(claim_id) => format!("claim:{}", claim_id.as_str()),
-    };
+    let source_ref = format!("{}:{}", link.source().kind_token(), link.source().id_str());
 
     format!(
         "{}:{}:{}",
@@ -90,6 +88,10 @@ pub(crate) fn claim_link_kind_to_explanation_kind(kind: ClaimLinkKind) -> Episte
         ClaimLinkKind::Refutes => EpistemicExplanationKind::RefutationLink,
         ClaimLinkKind::Contradicts => EpistemicExplanationKind::ContradictionLink,
         ClaimLinkKind::Supersedes => EpistemicExplanationKind::SupersessionLink,
+        ClaimLinkKind::ContextFor => EpistemicExplanationKind::ContextLink,
+        ClaimLinkKind::Duplicates => EpistemicExplanationKind::DuplicateLink,
+        ClaimLinkKind::DerivedFrom => EpistemicExplanationKind::DerivationLink,
+        ClaimLinkKind::DependsOn => EpistemicExplanationKind::DependencyLink,
     }
 }
 
@@ -99,6 +101,10 @@ pub(crate) fn claim_link_kind_token(kind: ClaimLinkKind) -> &'static str {
         ClaimLinkKind::Refutes => "refutes",
         ClaimLinkKind::Contradicts => "contradicts",
         ClaimLinkKind::Supersedes => "supersedes",
+        ClaimLinkKind::ContextFor => "context_for",
+        ClaimLinkKind::Duplicates => "duplicates",
+        ClaimLinkKind::DerivedFrom => "derived_from",
+        ClaimLinkKind::DependsOn => "depends_on",
     }
 }
 

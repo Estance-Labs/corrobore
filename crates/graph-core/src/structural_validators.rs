@@ -253,6 +253,14 @@ fn expected_endpoints(
         EpistemicRelationKind::Supersedes => {
             (&[EpistemicNodeKind::Claim], &[EpistemicNodeKind::Claim])
         }
+        // Epic 0029 evidence-link kinds: context and derivation come from any
+        // supporter; duplication and dependency are claim-to-claim.
+        EpistemicRelationKind::ContextFor | EpistemicRelationKind::DerivedFrom => {
+            (SUPPORTERS, CLAIM_LIKE)
+        }
+        EpistemicRelationKind::Duplicates | EpistemicRelationKind::DependsOn => {
+            (CLAIM_LIKE, CLAIM_LIKE)
+        }
         EpistemicRelationKind::Assesses => (&[EpistemicNodeKind::Assessment], CLAIM_LIKE),
         EpistemicRelationKind::Infers => (&[EpistemicNodeKind::Inference], CLAIM_LIKE),
         EpistemicRelationKind::Decides => (
