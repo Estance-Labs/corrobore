@@ -1482,9 +1482,13 @@ dependencies = [
 name = "graph-core"
 version = "0.3.3"
 dependencies = [
+ "chrono",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 2.0.19",
+ "url",
+ "uuid",
 ]
 
 [[package]]
