@@ -215,12 +215,15 @@ pub use cross_branch_scoring::{
     CrossBranchRanking, CrossBranchScoreBreakdown, CrossBranchScoreInput, CrossBranchScoreTerm,
     RankedBranchScore, rank_cross_branch_scores,
 };
-pub use epistemic_validators::{EpistemicValidationInputs, validate_graph_epistemics};
+pub use epistemic_validators::{
+    CLAIM_LIFECYCLE_WITHOUT_OBSERVATION_PATH_CODE, EpistemicValidationInputs,
+    validate_claim_reachability, validate_graph_epistemics,
+};
 pub use epistemic_vocabulary::{
     EpistemicNodeKind, EpistemicPrimitive, EpistemicRelationKind, classify_epistemic_node,
     epistemic_nodes_of_kind,
 };
-pub use error::GraphError;
+pub use error::{GraphError, ImmutableRecordKind};
 pub use evidence::{
     EvidenceAttachment, EvidenceAttachmentTarget, EvidenceInput, EvidenceLocator, EvidenceRecord,
     EvidenceRecordStore, EvidenceSourceType,
@@ -341,9 +344,10 @@ pub use validation::{
     ValidationRuleContext, ValidationRuleRegistry, ValidationTarget,
 };
 pub use verdict::{
-    ResolutionOutcome, StateTransition, TransitionTrigger, Verdict, VerdictAsOf, VerdictState,
-    VerdictStore, VerificationInputs, VerificationRecord, VerificationRecordStore,
-    VerificationResult, project_verdict_state, resolve_claim_verdict,
+    CLAIM_UNREACHABLE_EVIDENCE_CODE, ReachabilityGap, ResolutionInputs, ResolutionOutcome,
+    StateTransition, TransitionTrigger, Verdict, VerdictAsOf, VerdictState, VerdictStore,
+    VerificationInputs, VerificationRecord, VerificationRecordStore, VerificationResult,
+    project_verdict_state, resolve_claim_verdict,
 };
 pub use verification_probes::{
     ProbeAnswer, ProbeKind, ProbeRegistry, ProbeStatus, ProbeTransition, VerificationProbe,

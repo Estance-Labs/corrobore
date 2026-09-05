@@ -46,8 +46,8 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    EvidenceLocator, EvidenceRecord, GraphError, ObservationId, PropertyMap, PropertyValue,
-    SourceId, SourceStore, TemporalTimestamp,
+    EvidenceLocator, EvidenceRecord, GraphError, ImmutableRecordKind, ObservationId, PropertyMap,
+    PropertyValue, SourceId, SourceStore, TemporalTimestamp,
 };
 
 /// What kind of thing was observed.
@@ -407,11 +407,10 @@ impl ObservationStore {
             if existing.matches_input(&input) {
                 return Ok(input.id);
             }
-            return Err(GraphError::InvalidPropertyValue(format!(
-                "conflicting observation record for {}: observations have no update path; \
-                 supersede the observation instead",
-                input.id.as_str()
-            )));
+            return Err(GraphError::ImmutableRecordConflict {
+                kind: ImmutableRecordKind::Observation,
+                id: input.id.as_str().to_owned(),
+            });
         }
 
         let id = input.id.clone();

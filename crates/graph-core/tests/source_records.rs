@@ -28,9 +28,9 @@
 //! version and raises a content-drift validation issue. Legacy evidence records
 //! are lifted into sources idempotently.
 use graph_core::{
-    EvidenceId, EvidenceInput, EvidenceRecordStore, EvidenceSourceType, GraphError, PropertyValue,
-    Source, SourceId, SourceInput, SourceRegistrationOutcome, SourceStore, TemporalTimestamp,
-    ValidationErrorSeverity, ValidationTarget,
+    EvidenceId, EvidenceInput, EvidenceRecordStore, EvidenceSourceType, GraphError,
+    ImmutableRecordKind, PropertyValue, Source, SourceId, SourceInput, SourceRegistrationOutcome,
+    SourceStore, TemporalTimestamp, ValidationErrorSeverity, ValidationTarget,
 };
 
 const HASH_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -198,7 +198,8 @@ fn source_has_no_update_path() {
         .expect_err("metadata change without a new artifact is a conflict");
     assert!(matches!(
         error,
-        GraphError::InvalidPropertyValue(message) if message.contains("conflicting source")
+        GraphError::ImmutableRecordConflict { kind: ImmutableRecordKind::Source, id }
+            if id == "source--vendor-report-2026-08"
     ));
     assert_eq!(store.len(), 1);
     assert!(store.content_drift_issues().is_empty());

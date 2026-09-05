@@ -28,9 +28,9 @@
 //! observations idempotently once their source has been lifted.
 use graph_core::{
     EvidenceAttachmentTarget, EvidenceId, EvidenceInput, EvidenceLocator, EvidenceRecordStore,
-    EvidenceSourceType, GraphError, Observation, ObservationId, ObservationInput,
-    ObservationModality, ObservationStore, PropertyValue, SourceId, SourceInput, SourceStore,
-    TemporalTimestamp,
+    EvidenceSourceType, GraphError, ImmutableRecordKind, Observation, ObservationId,
+    ObservationInput, ObservationModality, ObservationStore, PropertyValue, SourceId, SourceInput,
+    SourceStore, TemporalTimestamp,
 };
 
 const HASH_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -212,7 +212,8 @@ fn observation_has_no_update_path_and_supersedes_explicitly() {
         .expect_err("changing an observation in place is a conflict");
     assert!(matches!(
         error,
-        GraphError::InvalidPropertyValue(message) if message.contains("conflicting observation")
+        GraphError::ImmutableRecordConflict { kind: ImmutableRecordKind::Observation, id }
+            if id == "observation--1"
     ));
 
     let corrected =

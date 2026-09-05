@@ -34,6 +34,32 @@ pub struct DomainValidationIssue {
 }
 
 impl DomainValidationIssue {
+    /// Convert a graph-core validation finding. The finding target becomes the
+    /// `field` as `<kind>:<id>`; `Info` findings map to `Warning` because the
+    /// domain severity vocabulary has no informational level.
+    pub fn from_validation_record(record: &graph_core::ValidationErrorRecord) -> Self {
+        let (kind, id) = match record.target() {
+            graph_core::ValidationTarget::Node(id) => ("node", id),
+            graph_core::ValidationTarget::Relationship(id) => ("relationship", id),
+            graph_core::ValidationTarget::Claim(id) => ("claim", id),
+            graph_core::ValidationTarget::ExportRecord(id) => ("export_record", id),
+            graph_core::ValidationTarget::Retrieval(id) => ("retrieval", id),
+            graph_core::ValidationTarget::Source(id) => ("source", id),
+        };
+        let severity = match record.severity() {
+            graph_core::ValidationErrorSeverity::Error => DomainValidationSeverity::Error,
+            graph_core::ValidationErrorSeverity::Warning
+            | graph_core::ValidationErrorSeverity::Info => DomainValidationSeverity::Warning,
+        };
+
+        Self {
+            code: record.code().to_owned(),
+            message: record.message().to_owned(),
+            field: Some(format!("{kind}:{id}")),
+            severity,
+        }
+    }
+
     /// Creates a new instance.
     pub fn new(
         code: impl Into<String>,
@@ -69,6 +95,22 @@ pub struct DomainValidationResult {
 }
 
 impl DomainValidationResult {
+    /// Build a result from graph-core validation findings, dropping `Info`
+    /// findings, which are not issues. Additive bridge for Epic 0029 records.
+    pub fn from_validation_records(records: &[graph_core::ValidationErrorRecord]) -> Self {
+        let issues = records
+            .iter()
+            .filter(|record| record.severity() != graph_core::ValidationErrorSeverity::Info)
+            .map(DomainValidationIssue::from_validation_record)
+            .collect::<Vec<_>>();
+
+        if issues.is_empty() {
+            Self::pass()
+        } else {
+            Self::fail(issues)
+        }
+    }
+
     /// Pass.
     pub fn pass() -> Self {
         Self::default()

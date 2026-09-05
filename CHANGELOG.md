@@ -55,6 +55,18 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   deterministic as-of replay through `VerdictAsOf`; `ClaimStore` gains
   `links_active_at`, `close_link_validity`, and `apply_verdict_projection`
   (Epic 0029 WS-A, #151).
+- `graph-core`: ADR-0016 reachability gate. `Supported`, `Refuted`, and `Mixed`
+  verdicts require an active signal whose source resolves to an `Observation`
+  bound to a `Source`; otherwise `resolve_claim_verdict` yields
+  `InsufficientEvidence` and records a `ReachabilityGap` (finding
+  `claim.verdict.unreachable_evidence`). `resolve_claim_verdict` now takes
+  `ResolutionInputs` (verification, evidence, observation, and source stores).
+  Governed records reject in-place changes with the typed
+  `GraphError::ImmutableRecordConflict`. `validate_claim_reachability` flags
+  `Supported` or `Validated` lifecycle claims without an observation path
+  (`claim.lifecycle.without_observation_path`) without mutating them.
+  `domain-common` gains `DomainValidationIssue::from_validation_record` and
+  `DomainValidationResult::from_validation_records` (Epic 0029 WS-A, #152).
 
 ## Releases
 
