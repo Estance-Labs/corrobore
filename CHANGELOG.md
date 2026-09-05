@@ -67,6 +67,15 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   (`claim.lifecycle.without_observation_path`) without mutating them.
   `domain-common` gains `DomainValidationIssue::from_validation_record` and
   `DomainValidationResult::from_validation_records` (Epic 0029 WS-A, #152).
+- `graph-core`: `EpistemicStores` bundles sources, observations, claims,
+  verification records, and verdicts on `Graph`, in `GraphPersistenceSnapshot`
+  (skipped when empty), and in a deterministic serialization of `ClaimStore`.
+  `Graph::epistemic_projection()` renders every governed record as a read-only
+  graph in the epistemic vocabulary for Cypher reads. `graph-storage` persists
+  the stores in the `epistemic-records-v1.json` sidecar. STIX exports add
+  `x_corrobore_lineage` and FIMI exports add `lineage` additively. The
+  `compatibility/epistemic/v1` fixtures guard pre-WS-A payloads, and
+  `epic_0029_ws_a_acceptance` closes workstream WS-A (Epic 0029 WS-A, #153).
 
 ## Releases
 

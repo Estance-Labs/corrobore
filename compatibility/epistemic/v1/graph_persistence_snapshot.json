@@ -1,0 +1,36 @@
+{
+  "nodes": [],
+  "relationships": [],
+  "next_node_sequence": 0,
+  "next_node_version_sequence": 0,
+  "next_relationship_sequence": 0,
+  "next_relationship_version_sequence": 0,
+  "evidence": {
+    "records": [
+      {
+        "id": { "value": "evidence--pre-ws-a" },
+        "source_ref": "source://report/2026-07-06",
+        "payload": "Actor A operates Campaign B.",
+        "source_type": "Document",
+        "chunk_id": null,
+        "offset_start": 100,
+        "offset_end": 128,
+        "source_url": null,
+        "extraction_run_id": null,
+        "extractor_id": null,
+        "model_version": null,
+        "observed_at": null,
+        "language": null,
+        "source_reliability": null,
+        "information_credibility": null,
+        "content_sha256": null,
+        "locator": null
+      }
+    ],
+    "attachments": [],
+    "known_node_targets": [],
+    "known_relationship_targets": [],
+    "known_claim_targets": [{ "value": "claim--pre-ws-a" }],
+    "known_export_record_targets": []
+  }
+}

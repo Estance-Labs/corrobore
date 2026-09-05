@@ -1,0 +1,27 @@
+{
+  "id": { "value": "claim--pre-ws-a" },
+  "version_id": { "value": "claim-version--claim--pre-ws-a--1" },
+  "version": 1,
+  "status": "Asserted",
+  "statement": { "text": "Actor A operates Campaign B" },
+  "target": {
+    "AnalyticalAssertion": { "summary": "attribution", "hypothesis_workspace_ref": null }
+  },
+  "confidence": 0.7,
+  "created_by": { "value": "analyst--1" },
+  "source_refs": ["source://report/2026-07-06"],
+  "evidence_refs": [{ "value": "evidence--pre-ws-a" }],
+  "workspace_id": null,
+  "extraction_run_id": null,
+  "temporal": {
+    "created_at": "2026-07-06T08:00:00Z",
+    "updated_at": null,
+    "recorded_at": null,
+    "superseded_at": null,
+    "observed_at": null,
+    "first_seen": null,
+    "last_seen": null,
+    "valid_from": null,
+    "valid_until": null
+  }
+}

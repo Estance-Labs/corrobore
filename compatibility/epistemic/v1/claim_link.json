@@ -1,0 +1,6 @@
+{
+  "source": { "Evidence": { "value": "evidence--pre-ws-a" } },
+  "target_claim_id": { "value": "claim--pre-ws-a" },
+  "kind": "Supports",
+  "explanation_ref": null
+}

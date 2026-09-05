@@ -22,6 +22,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::EpistemicStores;
 use crate::{
     EvidenceId, EvidenceInput, EvidenceRecord, EvidenceRecordStore, GraphError, Node, NodeId,
     NodeInput, NodePatch, NodeVersionId, RecordStatus, Relationship, RelationshipId,
@@ -41,6 +42,7 @@ pub struct Graph {
     next_relationship_sequence: u64,
     next_relationship_version_sequence: u64,
     evidence: EvidenceRecordStore,
+    epistemic: EpistemicStores,
 }
 
 /// Serializable, version-preserving snapshot of one in-memory graph.
@@ -57,6 +59,10 @@ pub struct GraphPersistenceSnapshot {
     next_relationship_version_sequence: u64,
     #[serde(default)]
     evidence: EvidenceRecordStore,
+    /// Epic 0029 governed stores. Skipped when empty so snapshots written
+    /// before WS-A stay byte-identical.
+    #[serde(default, skip_serializing_if = "EpistemicStores::is_empty")]
+    epistemic: EpistemicStores,
 }
 
 /// Global identifier sequence floors carried by a paged graph projection.
@@ -108,6 +114,7 @@ impl Graph {
             next_relationship_sequence: self.next_relationship_sequence,
             next_relationship_version_sequence: self.next_relationship_version_sequence,
             evidence: self.evidence.clone(),
+            epistemic: self.epistemic.clone(),
         }
     }
 
@@ -121,6 +128,7 @@ impl Graph {
             next_relationship_sequence: snapshot.next_relationship_sequence,
             next_relationship_version_sequence: snapshot.next_relationship_version_sequence,
             evidence: snapshot.evidence,
+            epistemic: snapshot.epistemic,
             ..Graph::default()
         };
 
@@ -212,6 +220,7 @@ impl Graph {
             next_relationship_sequence: sequence_floor.relationship,
             next_relationship_version_sequence: sequence_floor.relationship_version,
             evidence: EvidenceRecordStore::new(),
+            epistemic: EpistemicStores::default(),
         };
         Self::from_persistence_snapshot(snapshot)
     }
@@ -284,6 +293,265 @@ impl Graph {
     /// Returns the complete first-class evidence store for durable adapters.
     pub fn evidence_store(&self) -> &EvidenceRecordStore {
         &self.evidence
+    }
+
+    /// Epic 0029 governed stores carried by this graph.
+    pub fn epistemic_stores(&self) -> &EpistemicStores {
+        &self.epistemic
+    }
+
+    /// Mutable access to the governed stores for engine-side resolution and
+    /// ingestion. Not a client-facing surface.
+    pub fn epistemic_stores_mut(&mut self) -> &mut EpistemicStores {
+        &mut self.epistemic
+    }
+
+    /// Replaces the governed stores loaded by a durable adapter.
+    pub fn replace_epistemic_stores(&mut self, epistemic: EpistemicStores) {
+        self.epistemic = epistemic;
+    }
+
+    /// Build a read-only graph rendering every governed record as nodes and
+    /// relationships of the epistemic vocabulary, so Cypher reads can
+    /// traverse claims, sources, observations, evidence, verdicts,
+    /// verification records, and state transitions.
+    ///
+    /// Node identifiers are generated; record identifiers are properties
+    /// (`claim_id`, `source_id`, ...). Labels: `Source`, `Observation`,
+    /// `Claim`, `Evidence`, `Verdict` + `Assessment`,
+    /// `VerificationRecord` + `Assessment`, `StateTransition` + `Decision`.
+    /// Relationships: `REPORTS` (source to observation), the evidence-link
+    /// kinds (link source to claim), `ASSESSES` (verdict and verification
+    /// record to claim), `DECIDES` (transition to claim). The source graph is
+    /// not mutated and the projection carries no stores.
+    ///
+    /// # Errors
+    ///
+    /// Propagates graph construction errors.
+    pub fn epistemic_projection(&self) -> Result<Graph, GraphError> {
+        use std::collections::HashMap;
+
+        use crate::{
+            ClaimLinkSource, ClaimTarget, EpistemicNodeKind, EpistemicRelationKind, NodeInput,
+            PropertyMap, PropertyValue, RelationshipInput, SourceId, lifecycle_token,
+            project_verdict_state,
+        };
+
+        let stores = &self.epistemic;
+        let mut projection = Graph::new();
+        let with_properties = |labels: &[&str], properties: PropertyMap| {
+            let mut input = NodeInput::new(labels.iter().copied());
+            for (key, value) in properties {
+                input = input.with_property(key, value);
+            }
+            input
+        };
+
+        // Sources: every version is a node; the current version anchors REPORTS.
+        let mut source_nodes: HashMap<String, NodeId> = HashMap::new();
+        let mut source_ids: Vec<&SourceId> = stores.sources.source_ids().into_iter().collect();
+        source_ids.sort();
+        for source_id in source_ids {
+            for version in stores.sources.source_versions(source_id) {
+                let node_id = projection.create_node(with_properties(
+                    &[EpistemicNodeKind::Source.canonical_label()],
+                    version.to_property_map(),
+                ))?;
+                if stores
+                    .sources
+                    .current_source(source_id)
+                    .map(|current| current.version_id())
+                    == Some(version.version_id())
+                {
+                    source_nodes.insert(source_id.as_str().to_owned(), node_id);
+                }
+            }
+        }
+
+        // Observations, with the verbatim payload available to reads.
+        let mut observation_nodes: HashMap<String, NodeId> = HashMap::new();
+        for observation in stores.observations.observations() {
+            let mut properties = observation.to_property_map();
+            properties.insert(
+                "observation_payload".to_owned(),
+                PropertyValue::String(observation.payload().to_owned()),
+            );
+            let node_id = projection.create_node(with_properties(
+                &[EpistemicNodeKind::Observation.canonical_label()],
+                properties,
+            ))?;
+            observation_nodes.insert(observation.id().as_str().to_owned(), node_id.clone());
+            if let Some(source_node) = source_nodes.get(observation.source_id().as_str()) {
+                projection.create_relationship(RelationshipInput::new(
+                    source_node.clone(),
+                    EpistemicRelationKind::Reports
+                        .canonical_relationship_type()
+                        .as_str(),
+                    node_id,
+                )?)?;
+            }
+        }
+
+        // Evidence records.
+        let mut evidence_nodes: HashMap<String, NodeId> = HashMap::new();
+        for record in self.evidence.records() {
+            let mut properties = PropertyMap::new();
+            properties.insert(
+                "evidence_id".to_owned(),
+                PropertyValue::String(record.id().as_str().to_owned()),
+            );
+            properties.insert(
+                "evidence_source_ref".to_owned(),
+                PropertyValue::String(record.source_ref().to_owned()),
+            );
+            if let Some(source_id) = record.source_id() {
+                properties.insert(
+                    "evidence_source".to_owned(),
+                    PropertyValue::String(source_id.as_str().to_owned()),
+                );
+            }
+            if let Some(observation_id) = record.observation_id() {
+                properties.insert(
+                    "evidence_observation".to_owned(),
+                    PropertyValue::String(observation_id.as_str().to_owned()),
+                );
+            }
+            let node_id = projection.create_node(with_properties(
+                &[EpistemicNodeKind::Evidence.canonical_label()],
+                properties,
+            ))?;
+            evidence_nodes.insert(record.id().as_str().to_owned(), node_id);
+        }
+
+        // Claims with their current verdict.
+        let mut claim_nodes: HashMap<String, NodeId> = HashMap::new();
+        for claim in stores.claims.claims() {
+            let mut properties = PropertyMap::new();
+            properties.insert(
+                "claim_id".to_owned(),
+                PropertyValue::String(claim.id().as_str().to_owned()),
+            );
+            properties.insert(
+                "claim_version".to_owned(),
+                PropertyValue::Integer(i64::try_from(claim.version()).unwrap_or(i64::MAX)),
+            );
+            properties.insert(
+                "claim_status".to_owned(),
+                PropertyValue::String(lifecycle_token(claim.status())),
+            );
+            properties.insert(
+                "claim_statement".to_owned(),
+                PropertyValue::String(claim.statement().as_str().to_owned()),
+            );
+            if let ClaimTarget::Node(target) = claim.target() {
+                properties.insert(
+                    "claim_target_node".to_owned(),
+                    PropertyValue::String(target.as_str().to_owned()),
+                );
+            }
+            if let Some(proposition) = claim.proposition() {
+                properties.extend(proposition.to_property_map());
+            }
+            if let Some(verdict) = stores.verdicts.current_verdict(claim.id()) {
+                properties.insert(
+                    "verdict_state".to_owned(),
+                    PropertyValue::String(verdict.state().as_str().to_owned()),
+                );
+                properties.insert(
+                    "verdict_lifecycle_projection".to_owned(),
+                    PropertyValue::String(lifecycle_token(project_verdict_state(
+                        verdict.state(),
+                        false,
+                    ))),
+                );
+                properties.insert(
+                    "verdict_id".to_owned(),
+                    PropertyValue::String(verdict.id().as_str().to_owned()),
+                );
+            }
+            let node_id = projection.create_node(with_properties(
+                &[EpistemicNodeKind::Claim.canonical_label()],
+                properties,
+            ))?;
+            claim_nodes.insert(claim.id().as_str().to_owned(), node_id);
+        }
+
+        // Evidence links as vocabulary relationships.
+        for link in stores.claims.claim_links() {
+            let source_node = match link.source() {
+                ClaimLinkSource::Observation(id) => observation_nodes.get(id.as_str()),
+                ClaimLinkSource::Evidence(id) => evidence_nodes.get(id.as_str()),
+                ClaimLinkSource::Claim(id) => claim_nodes.get(id.as_str()),
+            };
+            let Some(source_node) = source_node else {
+                continue;
+            };
+            let Some(target_node) = claim_nodes.get(link.target_claim_id().as_str()) else {
+                continue;
+            };
+            let mut input = RelationshipInput::new(
+                source_node.clone(),
+                EpistemicRelationKind::from(link.kind())
+                    .canonical_relationship_type()
+                    .as_str(),
+                target_node.clone(),
+            )?;
+            for (key, value) in link.to_property_map() {
+                input = input.with_property(key, value);
+            }
+            projection.create_relationship(input)?;
+        }
+
+        // Verdicts and verification records assess claims; transitions decide.
+        let assesses = EpistemicRelationKind::Assesses.canonical_relationship_type();
+        let decides = EpistemicRelationKind::Decides.canonical_relationship_type();
+        for claim in stores.claims.claims() {
+            let claim_id = claim.id();
+            let Some(target_node) = claim_nodes.get(claim_id.as_str()).cloned() else {
+                continue;
+            };
+            for verdict in stores.verdicts.verdicts_for_claim(claim_id) {
+                let node_id = projection.create_node(with_properties(
+                    &["Verdict", EpistemicNodeKind::Assessment.canonical_label()],
+                    verdict.to_property_map(),
+                ))?;
+                projection.create_relationship(RelationshipInput::new(
+                    node_id,
+                    assesses.as_str(),
+                    target_node.clone(),
+                )?)?;
+            }
+            for record in stores.verifications.records_for_claim(claim_id) {
+                let node_id = projection.create_node(with_properties(
+                    &[
+                        "VerificationRecord",
+                        EpistemicNodeKind::Assessment.canonical_label(),
+                    ],
+                    record.to_property_map(),
+                ))?;
+                projection.create_relationship(RelationshipInput::new(
+                    node_id,
+                    assesses.as_str(),
+                    target_node.clone(),
+                )?)?;
+            }
+            for transition in stores.verdicts.transitions_for_claim(claim_id) {
+                let node_id = projection.create_node(with_properties(
+                    &[
+                        "StateTransition",
+                        EpistemicNodeKind::Decision.canonical_label(),
+                    ],
+                    transition.to_property_map(),
+                ))?;
+                projection.create_relationship(RelationshipInput::new(
+                    node_id,
+                    decides.as_str(),
+                    target_node.clone(),
+                )?)?;
+            }
+        }
+
+        Ok(projection)
     }
 
     /// Replaces the evidence projection loaded by a durable adapter.
