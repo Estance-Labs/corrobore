@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
+### Added
+
+- `graph-core`: optional structured `ClaimProposition` beside the claim text
+  statement (subject, predicate, entity or literal object, polarity, modality,
+  valid-time scope, extraction version), with reference validation against the
+  claim target context and an additive `proposition_*` property projection.
+  Claims serialized before this change deserialize unchanged (Epic 0029 WS-A,
+  #154).
+
 ## Releases
 
 - **[v0.3.3]** — see [docs/release-notes/v0.3.3.md](docs/release-notes/v0.3.3.md).
