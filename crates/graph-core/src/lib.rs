@@ -203,15 +203,16 @@ pub use bandit_controller::{
 };
 pub use claim::{
     AgentStance, AgentStanceInput, AgentStancePatch, BeliefState, Claim, ClaimAnalyticalTarget,
-    ClaimConfidenceTarget, ClaimDecision, ClaimDecisionKind, ClaimEvidenceTargetRef, ClaimInput,
-    ClaimLink, ClaimLinkKind, ClaimLinkSource, ClaimModality, ClaimPolarity, ClaimProposition,
-    ClaimPropositionObject, ClaimSourceTargetRef, ClaimStatement, ClaimStatus, ClaimStore,
-    ClaimTarget, ClaimTargetKind, ClaimTargetMetadata, ClaimTargetValidationContext,
-    ClaimTemporalTarget, ClaimValidTimeScope, EpistemicExplanation, EpistemicExplanationKind,
-    EpistemicResolution, EpistemicResolutionContext, EpistemicResolutionPolicy,
-    EpistemicResolutionPolicyKind, EpistemicResolutionPolicyRegistration, HypothesisWorkspace,
-    HypothesisWorkspaceInput, HypothesisWorkspaceStatus, RegisteredEpistemicResolutionPolicy,
-    ResolutionTrustInput, StanceKind, TrustInput, TrustInputInput, TrustInputKind,
+    ClaimArithmeticConstraint, ClaimArithmeticPart, ClaimConfidenceTarget, ClaimDecision,
+    ClaimDecisionKind, ClaimEvidenceTargetRef, ClaimInput, ClaimLink, ClaimLinkKind,
+    ClaimLinkSource, ClaimModality, ClaimPolarity, ClaimProposition, ClaimPropositionObject,
+    ClaimSourceTargetRef, ClaimStatement, ClaimStatus, ClaimStore, ClaimTarget, ClaimTargetKind,
+    ClaimTargetMetadata, ClaimTargetValidationContext, ClaimTemporalTarget, ClaimValidTimeScope,
+    EpistemicExplanation, EpistemicExplanationKind, EpistemicResolution,
+    EpistemicResolutionContext, EpistemicResolutionPolicy, EpistemicResolutionPolicyKind,
+    EpistemicResolutionPolicyRegistration, HypothesisWorkspace, HypothesisWorkspaceInput,
+    HypothesisWorkspaceStatus, RegisteredEpistemicResolutionPolicy, ResolutionTrustInput,
+    StanceKind, TrustInput, TrustInputInput, TrustInputKind,
 };
 pub use confidence::Confidence;
 pub use cross_branch_scoring::{
@@ -219,8 +220,13 @@ pub use cross_branch_scoring::{
     RankedBranchScore, rank_cross_branch_scores,
 };
 pub use deterministic_verifiers::{
-    CONTENT_HASH_VERIFIER_ID, CONTENT_HASH_VERIFIER_VERSION, ContentHashVerifier,
-    IDENTIFIER_SYNTAX_VERIFIER_ID, IDENTIFIER_SYNTAX_VERIFIER_VERSION, IdentifierSyntaxVerifier,
+    ARITHMETIC_CONSISTENCY_VERIFIER_ID, ARITHMETIC_CONSISTENCY_VERIFIER_VERSION,
+    ArithmeticConsistencyVerifier, CONTENT_HASH_VERIFIER_ID, CONTENT_HASH_VERIFIER_VERSION,
+    ContentHashVerifier, GRAPH_CONSISTENCY_VERIFIER_ID, GRAPH_CONSISTENCY_VERIFIER_VERSION,
+    GraphConsistencyVerifier, IDENTIFIER_SYNTAX_VERIFIER_ID, IDENTIFIER_SYNTAX_VERIFIER_VERSION,
+    IdentifierSyntaxVerifier, SCHEMA_CONSTRAINT_VERIFIER_ID, SCHEMA_CONSTRAINT_VERIFIER_VERSION,
+    SchemaConstraintVerifier, TEMPORAL_ORDERING_VERIFIER_ID, TEMPORAL_ORDERING_VERIFIER_VERSION,
+    TemporalOrderingVerifier,
 };
 pub use epistemic_stores::EpistemicStores;
 pub use epistemic_validators::{
@@ -361,6 +367,7 @@ pub use verification_probes::{
     ProbeAnswer, ProbeKind, ProbeRegistry, ProbeStatus, ProbeTransition, VerificationProbe,
 };
 pub use verifier::{
+    SchemaConstraintEvaluation, SchemaConstraintProvider, SchemaConstraintTarget,
     VerificationContext, VerificationOutcome, VerificationRequest, Verifier, VerifierCostClass,
     VerifierRegistry, VerifierSpec,
 };

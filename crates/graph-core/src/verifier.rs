@@ -40,11 +40,73 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    BitemporalStamp, ClaimId, ClaimLink, ClaimStore, EvidenceRecord, EvidenceRecordStore,
-    GraphError, Observation, ObservationStore, Source, SourceStore, VerdictAsOf,
-    VerificationInputs, VerificationRecord, VerificationRecordId, VerificationRecordStore,
-    VerificationResult,
+    BitemporalStamp, ClaimId, ClaimLink, ClaimStore, EvidenceRecord, EvidenceRecordStore, Graph,
+    GraphError, Node, Observation, ObservationStore, Relationship, Source, SourceStore,
+    VerdictAsOf, VerificationInputs, VerificationRecord, VerificationRecordId,
+    VerificationRecordStore, VerificationResult,
 };
+
+/// Immutable graph record presented to a domain-supplied schema provider.
+#[derive(Clone, Copy, Debug)]
+pub enum SchemaConstraintTarget<'a> {
+    /// Node targeted by the claim.
+    Node(&'a Node),
+    /// Relationship targeted by the claim.
+    Relationship(&'a Relationship),
+}
+
+/// Result returned by an installed schema provider before the verifier maps it
+/// to a persisted verification outcome.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SchemaConstraintEvaluation {
+    /// The installed schemas do not apply to this graph record.
+    NotApplicable,
+    /// A matching schema accepted the record and identifies its rule.
+    Pass {
+        /// Stable human-readable rule identity.
+        rule: String,
+    },
+    /// A matching schema rejected the record with deterministic violations.
+    Fail {
+        /// Stable human-readable rule identity.
+        rule: String,
+        /// Missing or inconsistent schema declarations.
+        violations: Vec<String>,
+    },
+}
+
+impl SchemaConstraintEvaluation {
+    /// Report that no installed schema applies.
+    pub const fn not_applicable() -> Self {
+        Self::NotApplicable
+    }
+
+    /// Report a successful schema check.
+    pub fn pass(rule: impl Into<String>) -> Self {
+        Self::Pass { rule: rule.into() }
+    }
+
+    /// Report one or more schema violations.
+    pub fn fail<I, S>(rule: impl Into<String>, violations: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self::Fail {
+            rule: rule.into(),
+            violations: violations.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+/// Read-only boundary implemented by `domain-common` schema registries.
+///
+/// `graph-core` owns execution and outcome provenance; installed packs own the
+/// required properties and type assertions exposed through this trait.
+pub trait SchemaConstraintProvider: std::fmt::Debug + Send + Sync {
+    /// Evaluate the exact immutable target record against installed schemas.
+    fn evaluate(&self, target: SchemaConstraintTarget<'_>) -> SchemaConstraintEvaluation;
+}
 
 /// Cost class of a verifier, mirroring the typed function registry vocabulary
 /// so the two registries stay coherent.
@@ -78,6 +140,11 @@ pub struct VerificationRequest<'a> {
     observations: Vec<&'a Observation>,
     sources: Vec<&'a Source>,
     evidence_records: Vec<&'a EvidenceRecord>,
+    claim_store: &'a ClaimStore,
+    observation_store: &'a ObservationStore,
+    evidence_store: &'a EvidenceRecordStore,
+    graph: Option<&'a Graph>,
+    schema_constraints: Option<&'a dyn SchemaConstraintProvider>,
     as_of: VerdictAsOf,
 }
 
@@ -160,6 +227,11 @@ impl<'a> VerificationRequest<'a> {
             observations: seen_observations,
             sources: seen_sources,
             evidence_records: seen_evidence,
+            claim_store: claims,
+            observation_store: observations,
+            evidence_store: evidence,
+            graph: context.graph(),
+            schema_constraints: context.schema_constraints(),
             as_of,
         })
     }
@@ -200,6 +272,42 @@ impl<'a> VerificationRequest<'a> {
             .iter()
             .find(|source| source.id() == observation.source_id())
             .copied()
+    }
+
+    /// Resolve another claim named by an active claim-to-claim link.
+    pub fn claim_by_id(&self, claim_id: &ClaimId) -> Option<&'a crate::Claim> {
+        self.claim_store.claim_by_id(claim_id).ok()
+    }
+
+    /// Resolve an observation named by an active link.
+    pub fn observation_by_id(
+        &self,
+        observation_id: &crate::ObservationId,
+    ) -> Option<&'a Observation> {
+        self.observation_store.observation_by_id(observation_id)
+    }
+
+    /// Resolve the replacement of a superseded observation.
+    pub fn observation_superseded_by(
+        &self,
+        observation_id: &crate::ObservationId,
+    ) -> Option<&'a crate::ObservationId> {
+        self.observation_store.superseded_by(observation_id)
+    }
+
+    /// Resolve an evidence record named by an active link.
+    pub fn evidence_by_id(&self, evidence_id: &crate::EvidenceId) -> Option<&'a EvidenceRecord> {
+        self.evidence_store.evidence_by_id(evidence_id)
+    }
+
+    /// Graph snapshot supplied for target-resolution checks, when available.
+    pub fn graph(&self) -> Option<&'a Graph> {
+        self.graph
+    }
+
+    /// Installed domain schema provider, when available.
+    pub fn schema_constraints(&self) -> Option<&'a dyn SchemaConstraintProvider> {
+        self.schema_constraints
     }
 }
 
@@ -259,6 +367,8 @@ pub struct VerificationContext<'a> {
     observations: &'a ObservationStore,
     sources: &'a SourceStore,
     evidence: &'a EvidenceRecordStore,
+    graph: Option<&'a Graph>,
+    schema_constraints: Option<&'a dyn SchemaConstraintProvider>,
 }
 
 impl<'a> VerificationContext<'a> {
@@ -274,7 +384,25 @@ impl<'a> VerificationContext<'a> {
             observations,
             sources,
             evidence,
+            graph: None,
+            schema_constraints: None,
         }
+    }
+
+    /// Supply the immutable graph snapshot used to resolve node and
+    /// relationship claim targets.
+    pub fn with_graph(mut self, graph: &'a Graph) -> Self {
+        self.graph = Some(graph);
+        self
+    }
+
+    /// Supply the schemas registered by installed domain packs.
+    pub fn with_schema_constraints(
+        mut self,
+        schema_constraints: &'a dyn SchemaConstraintProvider,
+    ) -> Self {
+        self.schema_constraints = Some(schema_constraints);
+        self
     }
 
     /// Claim store.
@@ -295,6 +423,16 @@ impl<'a> VerificationContext<'a> {
     /// Evidence store.
     pub fn evidence(&self) -> &'a EvidenceRecordStore {
         self.evidence
+    }
+
+    /// Graph snapshot, when supplied.
+    pub fn graph(&self) -> Option<&'a Graph> {
+        self.graph
+    }
+
+    /// Installed domain schema provider, when supplied.
+    pub fn schema_constraints(&self) -> Option<&'a dyn SchemaConstraintProvider> {
+        self.schema_constraints
     }
 }
 

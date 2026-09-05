@@ -7,7 +7,10 @@
 //! This crate provides reusable abstractions for domain-level validation flows
 //! that can be shared by CTI, FIMI, and crisis modules.
 
-use graph_core::Confidence;
+use graph_core::{
+    Confidence, PropertyValue, SchemaConstraintEvaluation, SchemaConstraintProvider,
+    SchemaConstraintTarget,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -412,6 +415,198 @@ pub fn validate_multi_typing(
     }
 }
 
+/// Graph-record selector owned by one domain schema rule.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DomainSchemaSelector {
+    /// Apply to nodes carrying the named base label.
+    NodeLabel(String),
+    /// Apply to relationships carrying the named relationship type.
+    RelationshipType(String),
+}
+
+/// Required properties and type assertions supplied by one installed domain
+/// pack.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DomainSchemaRule {
+    provider: String,
+    selector: DomainSchemaSelector,
+    required_properties: Vec<String>,
+    required_type_assertions: Vec<String>,
+}
+
+impl DomainSchemaRule {
+    /// Start a rule applying to nodes with `label`.
+    pub fn for_node_label(provider: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            provider: provider.into(),
+            selector: DomainSchemaSelector::NodeLabel(label.into()),
+            required_properties: Vec::new(),
+            required_type_assertions: Vec::new(),
+        }
+    }
+
+    /// Start a rule applying to relationships with `relationship_type`.
+    pub fn for_relationship_type(
+        provider: impl Into<String>,
+        relationship_type: impl Into<String>,
+    ) -> Self {
+        Self {
+            provider: provider.into(),
+            selector: DomainSchemaSelector::RelationshipType(relationship_type.into()),
+            required_properties: Vec::new(),
+            required_type_assertions: Vec::new(),
+        }
+    }
+
+    /// Require one property to be present with a non-null value.
+    pub fn with_required_property(mut self, property: impl Into<String>) -> Self {
+        self.required_properties.push(property.into());
+        self
+    }
+
+    /// Require one node label or relationship type assertion.
+    pub fn with_required_type_assertion(mut self, assertion: impl Into<String>) -> Self {
+        self.required_type_assertions.push(assertion.into());
+        self
+    }
+}
+
+/// Schemas contributed by installed domain packs.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DomainSchemaRegistry {
+    rules: Vec<DomainSchemaRule>,
+}
+
+impl DomainSchemaRegistry {
+    /// Create an empty registry. Supplying this registry with no matching rule
+    /// remains inconclusive at verification time.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register one validated rule.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DomainValidationError::InvalidDomainSchemaField`] for blank
+    /// identifiers or duplicate provider/selector pairs.
+    pub fn register(&mut self, mut rule: DomainSchemaRule) -> Result<(), DomainValidationError> {
+        if rule.provider.trim().is_empty() {
+            return Err(DomainValidationError::InvalidDomainSchemaField("provider"));
+        }
+        let selector = match &rule.selector {
+            DomainSchemaSelector::NodeLabel(label) => label,
+            DomainSchemaSelector::RelationshipType(relationship_type) => relationship_type,
+        };
+        if selector.trim().is_empty() {
+            return Err(DomainValidationError::InvalidDomainSchemaField("selector"));
+        }
+        if rule
+            .required_properties
+            .iter()
+            .any(|property| property.trim().is_empty())
+        {
+            return Err(DomainValidationError::InvalidDomainSchemaField(
+                "required_properties",
+            ));
+        }
+        if rule
+            .required_type_assertions
+            .iter()
+            .any(|assertion| assertion.trim().is_empty())
+        {
+            return Err(DomainValidationError::InvalidDomainSchemaField(
+                "required_type_assertions",
+            ));
+        }
+        if self.rules.iter().any(|existing| {
+            existing.provider == rule.provider && existing.selector == rule.selector
+        }) {
+            return Err(DomainValidationError::InvalidDomainSchemaField(
+                "duplicate_provider_selector",
+            ));
+        }
+
+        rule.required_properties.sort();
+        rule.required_properties.dedup();
+        rule.required_type_assertions.sort();
+        rule.required_type_assertions.dedup();
+        self.rules.push(rule);
+        Ok(())
+    }
+}
+
+impl SchemaConstraintProvider for DomainSchemaRegistry {
+    fn evaluate(&self, target: SchemaConstraintTarget<'_>) -> SchemaConstraintEvaluation {
+        let applicable = self
+            .rules
+            .iter()
+            .filter(|rule| match (&rule.selector, target) {
+                (DomainSchemaSelector::NodeLabel(label), SchemaConstraintTarget::Node(node)) => {
+                    node.has_label(label)
+                }
+                (
+                    DomainSchemaSelector::RelationshipType(expected),
+                    SchemaConstraintTarget::Relationship(relationship),
+                ) => relationship.rel_type().as_str() == expected,
+                _ => false,
+            })
+            .collect::<Vec<_>>();
+
+        if applicable.is_empty() {
+            return SchemaConstraintEvaluation::not_applicable();
+        }
+
+        let mut identities = Vec::new();
+        let mut violations = Vec::new();
+        for rule in applicable {
+            let selector = match &rule.selector {
+                DomainSchemaSelector::NodeLabel(label) => format!("node-label:{label}"),
+                DomainSchemaSelector::RelationshipType(relationship_type) => {
+                    format!("relationship-type:{relationship_type}")
+                }
+            };
+            let identity = format!("{}:{selector}", rule.provider);
+            identities.push(identity.clone());
+
+            for property in &rule.required_properties {
+                let value = match target {
+                    SchemaConstraintTarget::Node(node) => node.property(property),
+                    SchemaConstraintTarget::Relationship(relationship) => {
+                        relationship.property(property)
+                    }
+                };
+                if value.is_none() || value == Some(&PropertyValue::Null) {
+                    violations.push(format!(
+                        "{identity}: required property '{property}' is missing"
+                    ));
+                }
+            }
+
+            for assertion in &rule.required_type_assertions {
+                let present = match target {
+                    SchemaConstraintTarget::Node(node) => node.has_label(assertion),
+                    SchemaConstraintTarget::Relationship(relationship) => {
+                        relationship.rel_type().as_str() == assertion
+                    }
+                };
+                if !present {
+                    violations.push(format!(
+                        "{identity}: required type assertion '{assertion}' is missing"
+                    ));
+                }
+            }
+        }
+
+        let identity = identities.join(",");
+        if violations.is_empty() {
+            SchemaConstraintEvaluation::pass(identity)
+        } else {
+            SchemaConstraintEvaluation::fail(identity, violations)
+        }
+    }
+}
+
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 /// Domain validation error.
 pub enum DomainValidationError {
@@ -426,6 +621,10 @@ pub enum DomainValidationError {
     #[error("invalid multi-typing field: {0}")]
     /// Invalid multi-typing field.
     InvalidMultiTypingField(&'static str),
+
+    #[error("invalid domain schema field: {0}")]
+    /// Invalid domain schema field.
+    InvalidDomainSchemaField(&'static str),
 }
 
 #[cfg(test)]
@@ -560,5 +759,23 @@ mod tests {
     fn domain_type_assertion_rejects_empty_fields() {
         assert!(DomainTypeAssertion::new("", "Study").is_err());
         assert!(DomainTypeAssertion::new("medical", "  ").is_err());
+    }
+
+    #[test]
+    fn domain_schema_registry_rejects_blank_and_duplicate_rules() {
+        let mut registry = DomainSchemaRegistry::new();
+        assert!(
+            registry
+                .register(DomainSchemaRule::for_node_label("", "Entity"))
+                .is_err()
+        );
+        registry
+            .register(DomainSchemaRule::for_node_label("research", "Entity"))
+            .expect("first rule");
+        assert!(
+            registry
+                .register(DomainSchemaRule::for_node_label("research", "Entity"))
+                .is_err()
+        );
     }
 }

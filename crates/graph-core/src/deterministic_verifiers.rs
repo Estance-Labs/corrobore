@@ -18,12 +18,12 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
-//! Deterministic public-format verifiers (Epic 0029, WS-B item 2).
+//! Deterministic core verifiers (Epic 0029, WS-B items 2 and 3).
 //!
-//! This module is deliberately domain-neutral. Identifier checks use only
-//! public syntax specifications and content hashes compare bytes already held
-//! by governed records. Neither verifier resolves an identifier in an external
-//! registry, assigns semantic meaning, or adjudicates the claim's verdict.
+//! This module is deliberately domain-neutral. It checks public identifier
+//! syntax, governed payload hashes, temporal and arithmetic declarations,
+//! graph references, and schemas supplied through the `domain-common`
+//! boundary. No verifier assigns domain meaning or adjudicates a verdict.
 
 use std::{collections::BTreeSet, net::IpAddr};
 
@@ -33,8 +33,9 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::{
-    ClaimPropositionObject, EvidenceLocator, GraphError, PropertyValue, VerificationOutcome,
-    VerificationRequest, VerificationResult, Verifier, VerifierCostClass,
+    ClaimLinkKind, ClaimLinkSource, ClaimPropositionObject, ClaimTarget, EvidenceLocator,
+    GraphError, PropertyValue, SchemaConstraintEvaluation, SchemaConstraintTarget,
+    VerificationOutcome, VerificationRequest, VerificationResult, Verifier, VerifierCostClass,
 };
 
 /// Stable identifier of the public identifier-syntax verifier.
@@ -45,6 +46,708 @@ pub const IDENTIFIER_SYNTAX_VERIFIER_VERSION: &str = "1.0.0";
 pub const CONTENT_HASH_VERIFIER_ID: &str = "verifier.content-hash";
 /// First replayable version of the governed-payload SHA-256 rules.
 pub const CONTENT_HASH_VERIFIER_VERSION: &str = "1.0.0";
+/// Stable identifier of the temporal and bitemporal ordering verifier.
+pub const TEMPORAL_ORDERING_VERIFIER_ID: &str = "verifier.temporal-ordering";
+/// First replayable version of the temporal ordering rules.
+pub const TEMPORAL_ORDERING_VERIFIER_VERSION: &str = "1.0.0";
+/// Stable identifier of the numeric bounds, unit, and aggregate verifier.
+pub const ARITHMETIC_CONSISTENCY_VERIFIER_ID: &str = "verifier.arithmetic-consistency";
+/// First replayable version of the arithmetic consistency rules.
+pub const ARITHMETIC_CONSISTENCY_VERIFIER_VERSION: &str = "1.0.0";
+/// Stable identifier of the governed-record graph consistency verifier.
+pub const GRAPH_CONSISTENCY_VERIFIER_ID: &str = "verifier.graph-consistency";
+/// First replayable version of the graph consistency rules.
+pub const GRAPH_CONSISTENCY_VERIFIER_VERSION: &str = "1.0.0";
+/// Stable identifier of the domain-supplied schema constraint verifier.
+pub const SCHEMA_CONSTRAINT_VERIFIER_ID: &str = "verifier.schema-constraint";
+/// First replayable version of the schema constraint execution rules.
+pub const SCHEMA_CONSTRAINT_VERIFIER_VERSION: &str = "1.0.0";
+
+/// Checks every available temporal ordering carried by a verification request.
+///
+/// Collects proposition scopes, observation/acquisition pairs, superseding
+/// claim creation times, and link bitemporal dimensions;
+/// any incoherent pair will become a named deterministic failure.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TemporalOrderingVerifier;
+
+impl TemporalOrderingVerifier {
+    /// Creates the stateless verifier.
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl Verifier for TemporalOrderingVerifier {
+    fn id(&self) -> &str {
+        TEMPORAL_ORDERING_VERIFIER_ID
+    }
+
+    fn version(&self) -> &str {
+        TEMPORAL_ORDERING_VERIFIER_VERSION
+    }
+
+    fn deterministic(&self) -> bool {
+        true
+    }
+
+    fn cost_class(&self) -> VerifierCostClass {
+        VerifierCostClass::Medium
+    }
+
+    fn verify(&self, request: &VerificationRequest<'_>) -> Result<VerificationOutcome, GraphError> {
+        let mut checked = BTreeSet::new();
+        let mut failures = Vec::new();
+        let mut consumed = Vec::new();
+
+        if let Some(scope) = request
+            .claim()
+            .proposition()
+            .and_then(|proposition| proposition.valid_time())
+        {
+            checked.insert("valid-time");
+            if let (Some(from), Some(until)) = (scope.valid_from(), scope.valid_until()) {
+                check_not_after(
+                    "proposition valid-time valid_from",
+                    from.as_str(),
+                    "valid_until",
+                    until.as_str(),
+                    &mut failures,
+                );
+            }
+        }
+
+        for observation in request.observations() {
+            if let (Some(observed_at), Some(acquired_at)) = (
+                observation.observed_at(),
+                request
+                    .source_of(observation)
+                    .and_then(|source| source.acquired_at()),
+            ) {
+                checked.insert("acquisition");
+                consumed.push(format!("observation:{}", observation.id().as_str()));
+                check_not_after(
+                    &format!(
+                        "source acquisition for observation {}",
+                        observation.id().as_str()
+                    ),
+                    acquired_at.as_str(),
+                    "observed_at",
+                    observed_at.as_str(),
+                    &mut failures,
+                );
+            }
+        }
+
+        for link in request.links() {
+            if let Some(stamp) = link.bitemporal() {
+                checked.insert("bitemporal");
+                consumed.push(format!("link:{}", link.reference_key()));
+                if let Some(valid_to) = stamp.valid_to.as_ref() {
+                    check_strictly_before(
+                        "bitemporal valid_from",
+                        stamp.valid_from.as_str(),
+                        "valid_to",
+                        valid_to.as_str(),
+                        &mut failures,
+                    );
+                }
+                if let (Some(observation_time), Some(publication_time)) = (
+                    stamp.observation_time.as_ref(),
+                    stamp.publication_time.as_ref(),
+                ) {
+                    check_not_after(
+                        "bitemporal observation_time",
+                        observation_time.as_str(),
+                        "publication_time",
+                        publication_time.as_str(),
+                        &mut failures,
+                    );
+                }
+                if let Some(observation_time) = stamp.observation_time.as_ref() {
+                    check_not_after(
+                        "bitemporal observation_time",
+                        observation_time.as_str(),
+                        "transaction_time",
+                        stamp.transaction_time.as_str(),
+                        &mut failures,
+                    );
+                }
+                if let Some(publication_time) = stamp.publication_time.as_ref() {
+                    check_not_after(
+                        "bitemporal publication_time",
+                        publication_time.as_str(),
+                        "transaction_time",
+                        stamp.transaction_time.as_str(),
+                        &mut failures,
+                    );
+                }
+            }
+
+            if link.kind() == ClaimLinkKind::Supersedes
+                && let ClaimLinkSource::Claim(superseding_id) = link.source()
+                && let Some(superseding) = request.claim_by_id(superseding_id)
+                && let (
+                    Some((superseding_field, superseding_time)),
+                    Some((older_field, older_time)),
+                ) = (
+                    claim_ordering_time(superseding),
+                    claim_ordering_time(request.claim()),
+                )
+            {
+                checked.insert("supersession");
+                consumed.push(format!("link:{}", link.reference_key()));
+                check_not_after(
+                    &format!(
+                        "superseded claim {} {older_field}",
+                        request.claim().id().as_str()
+                    ),
+                    older_time,
+                    &format!(
+                        "superseding claim {} {superseding_field}",
+                        superseding_id.as_str()
+                    ),
+                    superseding_time,
+                    &mut failures,
+                );
+            }
+        }
+
+        Ok(consistency_outcome(
+            checked,
+            failures,
+            consumed,
+            "no proposition scope, observation/acquisition pair, supersession clock, or bitemporal stamp was available",
+            TEMPORAL_ORDERING_LIMIT,
+        ))
+    }
+}
+
+/// Checks typed numeric bounds, units, and aggregate-part equality.
+///
+/// Inspects only numeric proposition literals carrying an
+/// explicit arithmetic declaration, keeping ordinary prose and unannotated
+/// numbers inconclusive.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ArithmeticConsistencyVerifier;
+
+impl ArithmeticConsistencyVerifier {
+    /// Creates the stateless verifier.
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl Verifier for ArithmeticConsistencyVerifier {
+    fn id(&self) -> &str {
+        ARITHMETIC_CONSISTENCY_VERIFIER_ID
+    }
+
+    fn version(&self) -> &str {
+        ARITHMETIC_CONSISTENCY_VERIFIER_VERSION
+    }
+
+    fn deterministic(&self) -> bool {
+        true
+    }
+
+    fn cost_class(&self) -> VerifierCostClass {
+        VerifierCostClass::Low
+    }
+
+    fn verify(&self, request: &VerificationRequest<'_>) -> Result<VerificationOutcome, GraphError> {
+        let Some(proposition) = request.claim().proposition() else {
+            return Ok(inconclusive_outcome(
+                "no arithmetic declaration was available on the claim proposition",
+                ARITHMETIC_CONSISTENCY_LIMIT,
+            ));
+        };
+        let Some(arithmetic) = proposition.arithmetic_constraint() else {
+            return Ok(inconclusive_outcome(
+                "no arithmetic declaration was available on the claim proposition",
+                ARITHMETIC_CONSISTENCY_LIMIT,
+            ));
+        };
+        if arithmetic.is_empty() {
+            return Ok(inconclusive_outcome(
+                "the arithmetic declaration carried no bound, unit, or aggregate part to check",
+                ARITHMETIC_CONSISTENCY_LIMIT,
+            ));
+        }
+
+        let mut checked = BTreeSet::new();
+        let mut failures = Vec::new();
+        let value = match proposition.object() {
+            ClaimPropositionObject::Literal(PropertyValue::Integer(value)) => Some(*value as f64),
+            ClaimPropositionObject::Literal(PropertyValue::Float(value)) => Some(*value),
+            _ => None,
+        };
+        let Some(value) = value else {
+            return Ok(VerificationOutcome::new(VerificationResult::Fail)
+                .with_rationale("arithmetic metadata requires a numeric proposition literal")
+                .with_limit(ARITHMETIC_CONSISTENCY_LIMIT)
+                .with_evidence_consumed(format!(
+                    "claim:{}:proposition",
+                    request.claim().id().as_str()
+                )));
+        };
+
+        if !value.is_finite() {
+            failures.push(format!("proposition value {value} is not finite"));
+        }
+        if arithmetic.minimum().is_some() || arithmetic.maximum().is_some() {
+            checked.insert("bounds");
+        }
+        if let (Some(minimum), Some(maximum)) = (arithmetic.minimum(), arithmetic.maximum())
+            && minimum > maximum
+        {
+            failures.push(format!(
+                "declared minimum {minimum} exceeds declared maximum {maximum}"
+            ));
+        }
+        if let Some(minimum) = arithmetic.minimum() {
+            if !minimum.is_finite() {
+                failures.push(format!("declared minimum {minimum} is not finite"));
+            } else if value < minimum {
+                failures.push(format!(
+                    "proposition value {value} is below declared minimum {minimum}"
+                ));
+            }
+        }
+        if let Some(maximum) = arithmetic.maximum() {
+            if !maximum.is_finite() {
+                failures.push(format!("declared maximum {maximum} is not finite"));
+            } else if value > maximum {
+                failures.push(format!(
+                    "proposition value {value} exceeds declared maximum {maximum}"
+                ));
+            }
+        }
+
+        let aggregate_unit = arithmetic.unit();
+        if aggregate_unit.is_some() || arithmetic.parts().iter().any(|part| part.unit().is_some()) {
+            checked.insert("unit");
+        }
+        if aggregate_unit.is_some_and(|unit| unit.trim().is_empty()) {
+            failures.push("aggregate unit is blank".to_owned());
+        }
+        for (index, part) in arithmetic.parts().iter().enumerate() {
+            if !part.value().is_finite() {
+                failures.push(format!("aggregate part {} is not finite", index + 1));
+            }
+            match (aggregate_unit, part.unit()) {
+                (Some(expected), Some(actual)) if actual.trim().is_empty() => {
+                    failures.push(format!(
+                        "aggregate part {} unit is blank; expected '{expected}'",
+                        index + 1
+                    ))
+                }
+                (Some(expected), Some(actual)) if actual != expected => failures.push(format!(
+                    "aggregate part {} unit '{actual}' differs from aggregate unit '{expected}'",
+                    index + 1
+                )),
+                (Some(expected), None) => failures.push(format!(
+                    "aggregate part {} has no unit; expected '{expected}'",
+                    index + 1
+                )),
+                _ => {}
+            }
+        }
+        if aggregate_unit.is_none() {
+            let mut part_units = BTreeSet::new();
+            for (index, part) in arithmetic.parts().iter().enumerate() {
+                if let Some(unit) = part.unit() {
+                    if unit.trim().is_empty() {
+                        failures.push(format!("aggregate part {} unit is blank", index + 1));
+                    } else {
+                        part_units.insert(unit);
+                    }
+                }
+            }
+            if part_units.len() > 1 {
+                failures.push(format!(
+                    "aggregate parts declare inconsistent units: {}",
+                    part_units.into_iter().collect::<Vec<_>>().join(", ")
+                ));
+            }
+        }
+
+        if !arithmetic.parts().is_empty() {
+            checked.insert("aggregate");
+            let sum = arithmetic
+                .parts()
+                .iter()
+                .map(|part| part.value())
+                .sum::<f64>();
+            if !approximately_equal(sum, value) {
+                failures.push(format!(
+                    "sum of parts {sum} does not equal proposition value {value}"
+                ));
+            }
+        }
+
+        Ok(consistency_outcome(
+            checked,
+            failures,
+            vec![format!(
+                "claim:{}:proposition",
+                request.claim().id().as_str()
+            )],
+            "the arithmetic declaration carried no bound, unit, or aggregate part to check",
+            ARITHMETIC_CONSISTENCY_LIMIT,
+        ))
+    }
+}
+
+/// Checks graph targets, link sources, and superseded observation links.
+///
+/// Resolves every target and source against the immutable
+/// stores on the request and name the exact missing or superseded record.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GraphConsistencyVerifier;
+
+impl GraphConsistencyVerifier {
+    /// Creates the stateless verifier.
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl Verifier for GraphConsistencyVerifier {
+    fn id(&self) -> &str {
+        GRAPH_CONSISTENCY_VERIFIER_ID
+    }
+
+    fn version(&self) -> &str {
+        GRAPH_CONSISTENCY_VERIFIER_VERSION
+    }
+
+    fn deterministic(&self) -> bool {
+        true
+    }
+
+    fn cost_class(&self) -> VerifierCostClass {
+        VerifierCostClass::Medium
+    }
+
+    fn verify(&self, request: &VerificationRequest<'_>) -> Result<VerificationOutcome, GraphError> {
+        let mut checked = BTreeSet::new();
+        let mut failures = Vec::new();
+        let mut consumed = Vec::new();
+
+        if let Some(graph) = request.graph() {
+            match request.claim().target() {
+                ClaimTarget::Node(node_id) => {
+                    checked.insert("claim target");
+                    consumed.push(format!("node:{}", node_id.as_str()));
+                    if graph.get_node(node_id)?.is_none() {
+                        failures.push(format!(
+                            "claim target node {} is dangling",
+                            node_id.as_str()
+                        ));
+                    }
+                }
+                ClaimTarget::Relationship(relationship_id) => {
+                    checked.insert("claim target");
+                    consumed.push(format!("relationship:{}", relationship_id.as_str()));
+                    if graph.get_relationship(relationship_id)?.is_none() {
+                        failures.push(format!(
+                            "claim target relationship {} is dangling",
+                            relationship_id.as_str()
+                        ));
+                    }
+                }
+                _ => {}
+            }
+            if let Some(ClaimPropositionObject::Entity(node_id)) = request
+                .claim()
+                .proposition()
+                .map(|proposition| proposition.object())
+            {
+                checked.insert("proposition entity");
+                consumed.push(format!("node:{}", node_id.as_str()));
+                if graph.get_node(node_id)?.is_none() {
+                    failures.push(format!(
+                        "proposition entity node {} is dangling",
+                        node_id.as_str()
+                    ));
+                }
+            }
+        }
+
+        for link in request.links() {
+            checked.insert("evidence link");
+            consumed.push(format!("link:{}", link.reference_key()));
+            match link.source() {
+                ClaimLinkSource::Evidence(evidence_id) => {
+                    if request.evidence_by_id(evidence_id).is_none() {
+                        failures.push(format!(
+                            "evidence link is dangling: missing record {}",
+                            evidence_id.as_str()
+                        ));
+                    }
+                }
+                ClaimLinkSource::Observation(observation_id) => {
+                    if request.observation_by_id(observation_id).is_none() {
+                        failures.push(format!(
+                            "observation link is dangling: missing record {}",
+                            observation_id.as_str()
+                        ));
+                    } else if let Some(replacement) =
+                        request.observation_superseded_by(observation_id)
+                    {
+                        failures.push(format!(
+                            "observation link is dangling after supersession: {} was replaced by {}",
+                            observation_id.as_str(),
+                            replacement.as_str()
+                        ));
+                    }
+                }
+                ClaimLinkSource::Claim(claim_id) => {
+                    if request.claim_by_id(claim_id).is_none() {
+                        failures.push(format!(
+                            "claim link is dangling: missing record {}",
+                            claim_id.as_str()
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok(consistency_outcome(
+            checked,
+            failures,
+            consumed,
+            "no node or relationship target, proposition entity, or evidence link was available to check",
+            GRAPH_CONSISTENCY_LIMIT,
+        ))
+    }
+}
+
+/// Runs the schema supplied by an installed domain pack against the exact
+/// immutable graph record named by the claim.
+///
+/// Preserves absence as `Inconclusive`, maps an applicable
+/// provider result to pass/fail, and never interpret domain vocabulary in core.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SchemaConstraintVerifier;
+
+impl SchemaConstraintVerifier {
+    /// Creates the stateless verifier.
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl Verifier for SchemaConstraintVerifier {
+    fn id(&self) -> &str {
+        SCHEMA_CONSTRAINT_VERIFIER_ID
+    }
+
+    fn version(&self) -> &str {
+        SCHEMA_CONSTRAINT_VERIFIER_VERSION
+    }
+
+    fn deterministic(&self) -> bool {
+        true
+    }
+
+    fn cost_class(&self) -> VerifierCostClass {
+        VerifierCostClass::Medium
+    }
+
+    fn verify(&self, request: &VerificationRequest<'_>) -> Result<VerificationOutcome, GraphError> {
+        let Some(provider) = request.schema_constraints() else {
+            return Ok(inconclusive_outcome(
+                "no schema provider is installed",
+                SCHEMA_CONSTRAINT_LIMIT,
+            ));
+        };
+        let Some(graph) = request.graph() else {
+            return Ok(inconclusive_outcome(
+                "no graph snapshot was supplied for schema verification",
+                SCHEMA_CONSTRAINT_LIMIT,
+            ));
+        };
+
+        let (evaluation, reference) = match request.claim().target() {
+            ClaimTarget::Node(node_id) => {
+                let Some(node) = graph.get_node(node_id)? else {
+                    return Ok(inconclusive_outcome(
+                        &format!("schema target node {} does not resolve", node_id.as_str()),
+                        SCHEMA_CONSTRAINT_LIMIT,
+                    ));
+                };
+                (
+                    provider.evaluate(SchemaConstraintTarget::Node(&node)),
+                    format!("node:{}", node_id.as_str()),
+                )
+            }
+            ClaimTarget::Relationship(relationship_id) => {
+                let Some(relationship) = graph.get_relationship(relationship_id)? else {
+                    return Ok(inconclusive_outcome(
+                        &format!(
+                            "schema target relationship {} does not resolve",
+                            relationship_id.as_str()
+                        ),
+                        SCHEMA_CONSTRAINT_LIMIT,
+                    ));
+                };
+                (
+                    provider.evaluate(SchemaConstraintTarget::Relationship(&relationship)),
+                    format!("relationship:{}", relationship_id.as_str()),
+                )
+            }
+            _ => {
+                return Ok(inconclusive_outcome(
+                    "the claim target does not name a node or relationship for schema verification",
+                    SCHEMA_CONSTRAINT_LIMIT,
+                ));
+            }
+        };
+
+        let outcome = match evaluation {
+            SchemaConstraintEvaluation::NotApplicable => inconclusive_outcome(
+                "no installed schema applies to the target record",
+                SCHEMA_CONSTRAINT_LIMIT,
+            ),
+            SchemaConstraintEvaluation::Pass { rule } => {
+                VerificationOutcome::new(VerificationResult::Pass)
+                    .with_rationale(format!("target record satisfies schema rule {rule}"))
+                    .with_limit(SCHEMA_CONSTRAINT_LIMIT)
+                    .with_evidence_consumed(reference)
+            }
+            SchemaConstraintEvaluation::Fail { rule, violations } => {
+                VerificationOutcome::new(VerificationResult::Fail)
+                    .with_rationale(format!(
+                        "schema rule {rule} failed: {}",
+                        if violations.is_empty() {
+                            "provider returned no violation detail".to_owned()
+                        } else {
+                            violations.join("; ")
+                        }
+                    ))
+                    .with_limit(SCHEMA_CONSTRAINT_LIMIT)
+                    .with_evidence_consumed(reference)
+            }
+        };
+        Ok(outcome)
+    }
+}
+
+const TEMPORAL_ORDERING_LIMIT: &str = "ordering only; timestamps do not establish that an event occurred or that a source reported it accurately";
+const ARITHMETIC_CONSISTENCY_LIMIT: &str = "declared arithmetic only; the verifier does not infer units, bounds, parts, or semantic meaning";
+const GRAPH_CONSISTENCY_LIMIT: &str = "reference integrity only; a resolved graph record or current link does not establish the claim's truth";
+const SCHEMA_CONSTRAINT_LIMIT: &str = "installed schema only; absence or non-applicability is inconclusive and domain semantics remain pack-owned";
+
+fn inconclusive_outcome(rationale: &str, limit: &str) -> VerificationOutcome {
+    VerificationOutcome::new(VerificationResult::Inconclusive)
+        .with_rationale(rationale)
+        .with_limit(limit)
+}
+
+fn consistency_outcome(
+    checked: BTreeSet<&str>,
+    failures: Vec<String>,
+    consumed: Vec<String>,
+    empty_rationale: &str,
+    limit: &str,
+) -> VerificationOutcome {
+    let (result, rationale) = if checked.is_empty() {
+        (VerificationResult::Inconclusive, empty_rationale.to_owned())
+    } else if failures.is_empty() {
+        (
+            VerificationResult::Pass,
+            format!(
+                "validated {} consistency check(s): {}",
+                checked.len(),
+                checked.into_iter().collect::<Vec<_>>().join(", ")
+            ),
+        )
+    } else {
+        (VerificationResult::Fail, failures.join("; "))
+    };
+
+    let mut outcome = VerificationOutcome::new(result)
+        .with_rationale(rationale)
+        .with_limit(limit);
+    let mut unique = BTreeSet::new();
+    for reference in consumed {
+        if unique.insert(reference.clone()) {
+            outcome = outcome.with_evidence_consumed(reference);
+        }
+    }
+    outcome
+}
+
+fn parse_timestamp(
+    label: &str,
+    value: &str,
+    failures: &mut Vec<String>,
+) -> Option<DateTime<chrono::FixedOffset>> {
+    match DateTime::parse_from_rfc3339(value) {
+        Ok(timestamp) => Some(timestamp),
+        Err(_) => {
+            failures.push(format!("{label} is not a valid RFC3339 timestamp: {value}"));
+            None
+        }
+    }
+}
+
+fn check_not_after(
+    earlier_label: &str,
+    earlier: &str,
+    later_label: &str,
+    later: &str,
+    failures: &mut Vec<String>,
+) {
+    let parsed_earlier = parse_timestamp(earlier_label, earlier, failures);
+    let parsed_later = parse_timestamp(later_label, later, failures);
+    if let (Some(parsed_earlier), Some(parsed_later)) = (parsed_earlier, parsed_later)
+        && parsed_earlier > parsed_later
+    {
+        failures.push(format!(
+            "{earlier_label} {earlier} is after {later_label} {later}"
+        ));
+    }
+}
+
+fn check_strictly_before(
+    earlier_label: &str,
+    earlier: &str,
+    later_label: &str,
+    later: &str,
+    failures: &mut Vec<String>,
+) {
+    let before = failures.len();
+    check_not_after(earlier_label, earlier, later_label, later, failures);
+    if failures.len() == before
+        && DateTime::parse_from_rfc3339(earlier).ok() == DateTime::parse_from_rfc3339(later).ok()
+    {
+        failures.push(format!(
+            "{earlier_label} {earlier} must strictly precede {later_label} {later}"
+        ));
+    }
+}
+
+fn claim_ordering_time(claim: &crate::Claim) -> Option<(&'static str, &str)> {
+    let temporal = claim.temporal();
+    temporal
+        .created_at
+        .as_deref()
+        .map(|value| ("created_at", value))
+        .or_else(|| {
+            temporal
+                .recorded_at
+                .as_deref()
+                .map(|value| ("recorded_at", value))
+        })
+}
+
+fn approximately_equal(left: f64, right: f64) -> bool {
+    let scale = left.abs().max(right.abs()).max(1.0);
+    (left - right).abs() <= f64::EPSILON * scale * 8.0
+}
 
 /// Validates identifier-shaped proposition literals and selected observation
 /// payloads against public formats only.

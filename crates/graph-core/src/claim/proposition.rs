@@ -122,6 +122,118 @@ pub struct ClaimValidTimeScope {
     pub(crate) valid_until: Option<TemporalTimestamp>,
 }
 
+/// One numeric component of an aggregate proposition.
+///
+/// The verifier compares the component value with the proposition's numeric
+/// literal and checks an optional unit against the aggregate unit. Keeping the
+/// declaration typed avoids conventions hidden in free-form JSON payloads.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ClaimArithmeticPart {
+    value: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    unit: Option<String>,
+}
+
+impl ClaimArithmeticPart {
+    /// Declare one aggregate component.
+    pub fn new(value: f64) -> Self {
+        Self { value, unit: None }
+    }
+
+    /// Declare the component's unit.
+    pub fn with_unit(mut self, unit: impl Into<String>) -> Self {
+        self.unit = Some(unit.into());
+        self
+    }
+
+    /// Numeric component value.
+    pub fn value(&self) -> f64 {
+        self.value
+    }
+
+    /// Declared unit, when present.
+    pub fn unit(&self) -> Option<&str> {
+        self.unit.as_deref()
+    }
+}
+
+/// Optional arithmetic declarations attached to a numeric proposition.
+///
+/// Bounds, units, and parts are declarations rather than constructor
+/// invariants: persisted or imported data may be inconsistent, and the
+/// deterministic verifier must report that inconsistency instead of making the
+/// invalid state impossible to inspect.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ClaimArithmeticConstraint {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    minimum: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    maximum: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    unit: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    parts: Vec<ClaimArithmeticPart>,
+}
+
+impl ClaimArithmeticConstraint {
+    /// Start an empty arithmetic declaration.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Declare the inclusive lower bound.
+    pub fn with_minimum(mut self, minimum: f64) -> Self {
+        self.minimum = Some(minimum);
+        self
+    }
+
+    /// Declare the inclusive upper bound.
+    pub fn with_maximum(mut self, maximum: f64) -> Self {
+        self.maximum = Some(maximum);
+        self
+    }
+
+    /// Declare the aggregate unit.
+    pub fn with_unit(mut self, unit: impl Into<String>) -> Self {
+        self.unit = Some(unit.into());
+        self
+    }
+
+    /// Append one aggregate component.
+    pub fn with_part(mut self, part: ClaimArithmeticPart) -> Self {
+        self.parts.push(part);
+        self
+    }
+
+    /// Inclusive lower bound, when declared.
+    pub fn minimum(&self) -> Option<f64> {
+        self.minimum
+    }
+
+    /// Inclusive upper bound, when declared.
+    pub fn maximum(&self) -> Option<f64> {
+        self.maximum
+    }
+
+    /// Aggregate unit, when declared.
+    pub fn unit(&self) -> Option<&str> {
+        self.unit.as_deref()
+    }
+
+    /// Aggregate components.
+    pub fn parts(&self) -> &[ClaimArithmeticPart] {
+        self.parts.as_slice()
+    }
+
+    /// Whether the declaration carries nothing to check.
+    pub fn is_empty(&self) -> bool {
+        self.minimum.is_none()
+            && self.maximum.is_none()
+            && self.unit.is_none()
+            && self.parts.is_empty()
+    }
+}
+
 impl ClaimValidTimeScope {
     /// Build a scope from optional bounds.
     ///
@@ -184,6 +296,8 @@ pub struct ClaimProposition {
     pub(crate) valid_time: Option<ClaimValidTimeScope>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) extraction_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) arithmetic: Option<ClaimArithmeticConstraint>,
 }
 
 impl ClaimProposition {
@@ -218,6 +332,7 @@ impl ClaimProposition {
             modality: ClaimModality::Asserted,
             valid_time: None,
             extraction_version: None,
+            arithmetic: None,
         })
     }
 
@@ -236,6 +351,13 @@ impl ClaimProposition {
     /// Set the valid-time scope.
     pub fn with_valid_time(mut self, valid_time: ClaimValidTimeScope) -> Self {
         self.valid_time = Some(valid_time);
+        self
+    }
+
+    /// Attach bounds, unit, and optional aggregate parts for deterministic
+    /// arithmetic verification.
+    pub fn with_arithmetic_constraint(mut self, arithmetic: ClaimArithmeticConstraint) -> Self {
+        self.arithmetic = Some(arithmetic);
         self
     }
 
@@ -292,6 +414,11 @@ impl ClaimProposition {
     /// Extraction version, when present.
     pub fn extraction_version(&self) -> Option<&str> {
         self.extraction_version.as_deref()
+    }
+
+    /// Arithmetic declarations, when present.
+    pub fn arithmetic_constraint(&self) -> Option<&ClaimArithmeticConstraint> {
+        self.arithmetic.as_ref()
     }
 
     /// Resolve graph references carried by the proposition.
