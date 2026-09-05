@@ -832,6 +832,13 @@ impl ClaimStore {
         self.insert_claim(input, ClaimStatus::Asserted)
     }
 
+    /// Every current claim version, ordered by identifier for determinism.
+    pub fn claims(&self) -> Vec<&Claim> {
+        let mut claims: Vec<&Claim> = self.claims.values().collect();
+        claims.sort_by(|left, right| left.id.as_str().cmp(right.id.as_str()));
+        claims
+    }
+
     /// Read a claim by typed ID.
     pub fn claim_by_id(&self, claim_id: &ClaimId) -> Result<&Claim, GraphError> {
         self.claims

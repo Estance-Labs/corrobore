@@ -259,3 +259,70 @@ fn reporting_sources(graph: &Graph, observation: &NodeId) -> Result<Vec<NodeId>,
 
     Ok(sources)
 }
+
+/// Validation code for a claim whose lifecycle status says `Supported` or
+/// `Validated` while its current verdict has no observation path (legacy
+/// data written before Epic 0029).
+pub const CLAIM_LIFECYCLE_WITHOUT_OBSERVATION_PATH_CODE: &str =
+    "claim.lifecycle.without_observation_path";
+
+/// Report claims whose lifecycle status is `Supported` or `Validated` while
+/// no active support link resolves to an observation bound to a source.
+///
+/// Read-only: the rule never mutates claims or verdicts. Repair belongs to
+/// WS-C re-ingestion; analyst overrides belong to WS-F.
+pub fn validate_claim_reachability(
+    claims: &crate::ClaimStore,
+    verdicts: &crate::VerdictStore,
+    evidence: &crate::EvidenceRecordStore,
+    observations: &crate::ObservationStore,
+    sources: &crate::SourceStore,
+) -> Vec<ValidationErrorRecord> {
+    let no_verifications = crate::VerificationRecordStore::new();
+    let inputs = crate::ResolutionInputs::new(&no_verifications, evidence, observations, sources);
+    let mut findings = Vec::new();
+
+    for claim in claims.claims() {
+        if !matches!(
+            claim.status(),
+            crate::ClaimStatus::Supported | crate::ClaimStatus::Validated
+        ) {
+            continue;
+        }
+
+        let support_links: Vec<&crate::ClaimLink> = claims
+            .claim_links()
+            .iter()
+            .filter(|link| {
+                link.target_claim_id() == claim.id()
+                    && link.kind() == crate::ClaimLinkKind::Supports
+            })
+            .collect();
+        if support_links
+            .iter()
+            .any(|link| inputs.resolves_to_observation(link.source()))
+        {
+            continue;
+        }
+
+        let verdict_state = verdicts
+            .current_verdict(claim.id())
+            .map(|verdict| verdict.state().as_str())
+            .unwrap_or("none");
+        findings.push(ValidationErrorRecord::new(
+            CLAIM_LIFECYCLE_WITHOUT_OBSERVATION_PATH_CODE,
+            ValidationErrorSeverity::Warning,
+            format!(
+                "claim {} carries lifecycle status {:?} without an observation path (legacy \
+                 data; current verdict: {}; support links: {})",
+                claim.id().as_str(),
+                claim.status(),
+                verdict_state,
+                support_links.len()
+            ),
+            ValidationTarget::claim(claim.id().as_str()),
+        ));
+    }
+
+    findings
+}

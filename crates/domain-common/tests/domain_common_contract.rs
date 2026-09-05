@@ -58,3 +58,55 @@ fn confidence_band_exportable_for_high_confidence() {
 
     assert_eq!(band, ConfidenceBand::Exportable);
 }
+
+//
+// Epic 0029 WS-A item 6: graph-core validation findings (for example the
+// verdict reachability gap) surface through the domain validation result
+// additively, keeping code, message, severity, and the target as the field.
+#[test]
+fn validation_records_surface_as_domain_validation_issues() {
+    use domain_common::{DomainValidationIssue, DomainValidationResult, DomainValidationSeverity};
+    use graph_core::{ValidationErrorRecord, ValidationErrorSeverity, ValidationTarget};
+
+    let warning = ValidationErrorRecord::new(
+        "claim.verdict.unreachable_evidence",
+        ValidationErrorSeverity::Warning,
+        "claim claim--x has no observation path",
+        ValidationTarget::claim("claim--x"),
+    );
+    let error = ValidationErrorRecord::new(
+        "source.content_drift",
+        ValidationErrorSeverity::Error,
+        "artifact changed",
+        ValidationTarget::source("source--y"),
+    );
+    let info = ValidationErrorRecord::new(
+        "note",
+        ValidationErrorSeverity::Info,
+        "informational",
+        ValidationTarget::node("node--z"),
+    );
+
+    let issue = DomainValidationIssue::from_validation_record(&warning);
+    assert_eq!(issue.code, "claim.verdict.unreachable_evidence");
+    assert_eq!(issue.message, "claim claim--x has no observation path");
+    assert_eq!(issue.field.as_deref(), Some("claim:claim--x"));
+    assert_eq!(issue.severity, DomainValidationSeverity::Warning);
+
+    let result = DomainValidationResult::from_validation_records(&[warning, error, info]);
+    assert_eq!(
+        result.issues().len(),
+        2,
+        "info findings do not become issues"
+    );
+    assert_eq!(result.issues()[1].severity, DomainValidationSeverity::Error);
+    assert_eq!(
+        result.issues()[1].field.as_deref(),
+        Some("source:source--y")
+    );
+    assert!(!result.is_valid());
+    assert!(result.has_warnings());
+
+    let clean = DomainValidationResult::from_validation_records(&[]);
+    assert!(clean.is_valid());
+}

@@ -46,9 +46,16 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BitemporalStamp, ClaimId, ClaimLinkKind, ClaimStatus, ClaimStore, Confidence, GraphError,
-    ObservationId, StateTransitionId, TemporalTimestamp, VerdictId, VerificationRecordId,
+    BitemporalStamp, ClaimId, ClaimLink, ClaimLinkKind, ClaimLinkSource, ClaimStatus, ClaimStore,
+    Confidence, EvidenceRecordStore, GraphError, ImmutableRecordKind, ObservationId,
+    ObservationStore, SourceStore, StateTransitionId, TemporalTimestamp, ValidationErrorRecord,
+    ValidationErrorSeverity, ValidationTarget, VerdictId, VerificationRecordId,
 };
+
+/// Validation code recorded when a verdict could not reach `Supported`,
+/// `Refuted`, or `Mixed` because no active signal resolved to an observation
+/// bound to a source.
+pub const CLAIM_UNREACHABLE_EVIDENCE_CODE: &str = "claim.verdict.unreachable_evidence";
 
 /// Computed epistemic state of a claim (ADR-0016).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -336,10 +343,10 @@ impl VerificationRecordStore {
             if existing == &record {
                 return Ok(record.id);
             }
-            return Err(GraphError::InvalidPropertyValue(format!(
-                "conflicting verification record for {}: records are append-only",
-                record.id.as_str()
-            )));
+            return Err(GraphError::ImmutableRecordConflict {
+                kind: ImmutableRecordKind::VerificationRecord,
+                id: record.id.as_str().to_owned(),
+            });
         }
 
         let id = record.id.clone();
@@ -526,6 +533,8 @@ impl VerdictAsOf {
 pub struct VerdictStore {
     verdicts: Vec<Verdict>,
     transitions: Vec<StateTransition>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    reachability_gaps: Vec<ReachabilityGap>,
 }
 
 impl VerdictStore {
@@ -557,10 +566,10 @@ impl VerdictStore {
             ));
         }
         if self.verdicts.iter().any(|verdict| verdict.id == id) {
-            return Err(GraphError::InvalidVersionState(format!(
-                "verdict {} already exists; verdicts are append-only",
-                id.as_str()
-            )));
+            return Err(GraphError::ImmutableRecordConflict {
+                kind: ImmutableRecordKind::Verdict,
+                id: id.as_str().to_owned(),
+            });
         }
 
         self.verdicts.push(Verdict {
@@ -585,10 +594,10 @@ impl VerdictStore {
             .iter()
             .any(|existing| existing.id == transition.id)
         {
-            return Err(GraphError::InvalidVersionState(format!(
-                "state transition {} already exists; transitions are append-only",
-                transition.id.as_str()
-            )));
+            return Err(GraphError::ImmutableRecordConflict {
+                kind: ImmutableRecordKind::StateTransition,
+                id: transition.id.as_str().to_owned(),
+            });
         }
         self.transitions.push(transition);
         Ok(())
@@ -638,6 +647,11 @@ impl VerdictStore {
         transitions
     }
 
+    /// Every recorded reachability gap, oldest first.
+    pub fn reachability_gaps(&self) -> &[ReachabilityGap] {
+        &self.reachability_gaps
+    }
+
     /// Deterministic order: transaction time, then identifier.
     fn verdict_order(left: &Verdict, right: &Verdict) -> std::cmp::Ordering {
         left.stamp
@@ -667,9 +681,17 @@ pub struct ResolutionOutcome {
     lifecycle_applied: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     verdict_id: Option<VerdictId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reachability_gap: Option<ReachabilityGap>,
 }
 
 impl ResolutionOutcome {
+    /// Gap recorded when the gate downgraded the verdict to
+    /// `InsufficientEvidence`.
+    pub fn reachability_gap(&self) -> Option<&ReachabilityGap> {
+        self.reachability_gap.as_ref()
+    }
+
     /// Claim resolved.
     pub fn claim_id(&self) -> &ClaimId {
         &self.claim_id
@@ -696,6 +718,108 @@ impl ResolutionOutcome {
     }
 }
 
+/// Read-only stores the resolution consults beside the claim and verdict
+/// stores.
+#[derive(Clone, Copy, Debug)]
+pub struct ResolutionInputs<'a> {
+    verifications: &'a VerificationRecordStore,
+    evidence: &'a EvidenceRecordStore,
+    observations: &'a ObservationStore,
+    sources: &'a SourceStore,
+}
+
+impl<'a> ResolutionInputs<'a> {
+    /// Bundle the read-only stores.
+    pub fn new(
+        verifications: &'a VerificationRecordStore,
+        evidence: &'a EvidenceRecordStore,
+        observations: &'a ObservationStore,
+        sources: &'a SourceStore,
+    ) -> Self {
+        Self {
+            verifications,
+            evidence,
+            observations,
+            sources,
+        }
+    }
+
+    /// Whether a link source resolves to an observation bound to a registered
+    /// source: an observation source directly, or an evidence record naming an
+    /// `observation_id`. Claim sources never do.
+    pub fn resolves_to_observation(&self, source: &ClaimLinkSource) -> bool {
+        match source {
+            ClaimLinkSource::Observation(observation_id) => self
+                .observations
+                .observation_by_id(observation_id)
+                .is_some_and(|observation| {
+                    self.sources
+                        .current_source(observation.source_id())
+                        .is_some()
+                }),
+            ClaimLinkSource::Evidence(evidence_id) => self
+                .evidence
+                .evidence_by_id(evidence_id)
+                .and_then(|record| record.observation_id())
+                .is_some_and(|observation_id| {
+                    self.resolves_to_observation(&ClaimLinkSource::Observation(
+                        observation_id.clone(),
+                    ))
+                }),
+            ClaimLinkSource::Claim(_) => false,
+        }
+    }
+}
+
+/// Recorded downgrade of a verdict to `InsufficientEvidence` because no active
+/// signal resolved to an observation bound to a source (ADR-0016 invariant).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReachabilityGap {
+    claim_id: ClaimId,
+    attempted_state: VerdictState,
+    unreachable_sources: Vec<String>,
+    stamp: BitemporalStamp,
+}
+
+impl ReachabilityGap {
+    /// Claim whose verdict was downgraded.
+    pub fn claim_id(&self) -> &ClaimId {
+        &self.claim_id
+    }
+
+    /// State the signals would have produced without the gate.
+    pub fn attempted_state(&self) -> VerdictState {
+        self.attempted_state
+    }
+
+    /// Signal sources lacking an observation path, as `<kind>:<id>` tokens.
+    pub fn unreachable_sources(&self) -> &[String] {
+        &self.unreachable_sources
+    }
+
+    /// Bitemporal stamp of the resolution that recorded the gap.
+    pub fn stamp(&self) -> &BitemporalStamp {
+        &self.stamp
+    }
+
+    /// Render the gap as a typed validation finding targeting the claim.
+    pub fn to_validation_record(&self) -> ValidationErrorRecord {
+        ValidationErrorRecord::new(
+            CLAIM_UNREACHABLE_EVIDENCE_CODE,
+            ValidationErrorSeverity::Warning,
+            format!(
+                "claim {} verdict downgraded from {} to {}: no active signal resolves to an \
+                 observation bound to a source (unreachable: {})",
+                self.claim_id.as_str(),
+                self.attempted_state.as_str(),
+                VerdictState::InsufficientEvidence.as_str(),
+                self.unreachable_sources.join(", ")
+            ),
+            ValidationTarget::claim(self.claim_id.as_str()),
+        )
+    }
+}
+
 /// Compute and record the verdict of a claim with the minimal WS-A policy.
 ///
 /// Active inputs are the links targeting the claim that `stamp` covers (links
@@ -706,7 +830,12 @@ impl ResolutionOutcome {
 /// - otherwise support signals (`Supports` links, deterministic `Pass`
 ///   records) and refutation signals (`Refutes` or `Contradicts` links,
 ///   deterministic `Fail` records) give `Supported`, `Refuted`, or `Mixed`;
-/// - no signal gives `Unknown`.
+/// - no signal gives `Unknown`;
+/// - ADR-0016 gate: `Supported`, `Refuted`, and `Mixed` require at least one
+///   active signal whose source resolves to an observation bound to a source
+///   (see [`ResolutionInputs::resolves_to_observation`]); otherwise the verdict
+///   is `InsufficientEvidence` and a [`ReachabilityGap`] is recorded, never a
+///   silent promotion.
 ///
 /// When the state differs from the current verdict, a verdict and a transition
 /// are appended and the projected lifecycle status is applied to the claim if
@@ -719,7 +848,7 @@ impl ResolutionOutcome {
 pub fn resolve_claim_verdict(
     claims: &mut ClaimStore,
     verdicts: &mut VerdictStore,
-    verifications: &VerificationRecordStore,
+    inputs: &ResolutionInputs<'_>,
     claim_id: &ClaimId,
     stamp: BitemporalStamp,
     policy_version: impl Into<String>,
@@ -744,7 +873,7 @@ pub fn resolve_claim_verdict(
     // newest one is remembered so the transition can name it when it drove the
     // change.
     let mut newest_record: Option<&VerificationRecord> = None;
-    for record in verifications.records_for_claim(claim_id) {
+    for record in inputs.verifications.records_for_claim(claim_id) {
         if record.stamp.transaction_time.as_str() > stamp.transaction_time.as_str()
             || !record.deterministic
         {
@@ -773,6 +902,66 @@ pub fn resolve_claim_verdict(
         }
     };
 
+    // ADR-0016 gate (WS-A item 6): a state derived from support or refutation
+    // signals needs at least one signal whose source resolves to an observation
+    // bound to a source. Otherwise the verdict is downgraded to
+    // InsufficientEvidence and the gap is recorded, never silently promoted.
+    let gate = match state {
+        VerdictState::Supported | VerdictState::Refuted | VerdictState::Mixed => {
+            let signal_links: Vec<&ClaimLink> = claims
+                .links_active_at(claim_id, &as_of)
+                .into_iter()
+                .filter(|link| {
+                    matches!(
+                        link_signal(link.kind()),
+                        LinkSignal::Support | LinkSignal::Refute
+                    )
+                })
+                .collect();
+            if signal_links
+                .iter()
+                .any(|link| inputs.resolves_to_observation(link.source()))
+            {
+                None
+            } else {
+                let mut unreachable: Vec<String> = signal_links
+                    .iter()
+                    .map(|link| {
+                        format!("{}:{}", link.source().kind_token(), link.source().id_str())
+                    })
+                    .collect();
+                unreachable.extend(
+                    inputs
+                        .verifications
+                        .records_for_claim(claim_id)
+                        .into_iter()
+                        .filter(|record| {
+                            record.deterministic
+                                && record.result != VerificationResult::Inconclusive
+                                && record.stamp.transaction_time.as_str()
+                                    <= stamp.transaction_time.as_str()
+                        })
+                        .map(|record| format!("verification:{}", record.id.as_str())),
+                );
+                Some(ReachabilityGap {
+                    claim_id: claim_id.clone(),
+                    attempted_state: state,
+                    unreachable_sources: unreachable,
+                    stamp: stamp.clone(),
+                })
+            }
+        }
+        VerdictState::Contested
+        | VerdictState::Unknown
+        | VerdictState::InsufficientEvidence
+        | VerdictState::Superseded => None,
+    };
+    let state = if gate.is_some() {
+        VerdictState::InsufficientEvidence
+    } else {
+        state
+    };
+
     let previous = verdicts.current_verdict(claim_id).map(Verdict::state);
     if previous == Some(state) {
         return Ok(ResolutionOutcome {
@@ -781,6 +970,7 @@ pub fn resolve_claim_verdict(
             changed: false,
             lifecycle_applied: false,
             verdict_id: None,
+            reachability_gap: gate,
         });
     }
 
@@ -818,6 +1008,10 @@ pub fn resolve_claim_verdict(
         stamp,
     })?;
 
+    if let Some(gap) = &gate {
+        verdicts.reachability_gaps.push(gap.clone());
+    }
+
     let lifecycle_applied =
         claims.apply_verdict_projection(claim_id, project_verdict_state(state, false))?;
 
@@ -827,6 +1021,7 @@ pub fn resolve_claim_verdict(
         changed: true,
         lifecycle_applied,
         verdict_id: Some(verdict_id),
+        reachability_gap: gate,
     })
 }
 

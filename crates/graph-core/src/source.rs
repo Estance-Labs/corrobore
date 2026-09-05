@@ -43,9 +43,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    EvidenceRecord, EvidenceSourceType, GraphError, PropertyMap, PropertyValue, SourceId,
-    SourceVersionId, TemporalTimestamp, ValidationErrorRecord, ValidationErrorSeverity,
-    ValidationTarget,
+    EvidenceRecord, EvidenceSourceType, GraphError, ImmutableRecordKind, PropertyMap,
+    PropertyValue, SourceId, SourceVersionId, TemporalTimestamp, ValidationErrorRecord,
+    ValidationErrorSeverity, ValidationTarget,
 };
 
 /// Validation code recorded when the artifact behind a source identity changes.
@@ -531,11 +531,10 @@ impl SourceStore {
         }
 
         if current.artifact_sha256 == input.artifact_sha256 {
-            return Err(GraphError::InvalidPropertyValue(format!(
-                "conflicting source record for {}: sources have no update path; register a \
-                 new artifact hash to supersede the current version",
-                input.id.as_str()
-            )));
+            return Err(GraphError::ImmutableRecordConflict {
+                kind: ImmutableRecordKind::Source,
+                id: input.id.as_str().to_owned(),
+            });
         }
 
         let next = Self::materialize(

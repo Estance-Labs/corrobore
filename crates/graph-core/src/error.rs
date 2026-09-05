@@ -88,6 +88,18 @@ pub enum GraphError {
     #[error("observation not found: {0:?}")]
     ObservationNotFound(ObservationId),
 
+    /// A governed record (source, observation, verdict, state transition,
+    /// verification record) was re-submitted with different content under an
+    /// existing identifier. Governed records are append-only; correction goes
+    /// through supersession, never through an in-place update.
+    #[error("immutable {kind} record conflict: {id}", kind = kind.as_str())]
+    ImmutableRecordConflict {
+        /// Record kind.
+        kind: ImmutableRecordKind,
+        /// Identifier of the existing record.
+        id: String,
+    },
+
     /// A claim-link request is invalid according to deterministic guard rules.
     #[error("invalid claim link: {0}")]
     InvalidClaimLink(String),
@@ -550,5 +562,34 @@ mod tests {
         let display = error.to_string();
 
         assert!(display.contains("invalid relationship type"));
+    }
+}
+
+/// Kinds of append-only governed records protected by
+/// [`GraphError::ImmutableRecordConflict`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum ImmutableRecordKind {
+    /// `Source` version.
+    Source,
+    /// `Observation`.
+    Observation,
+    /// `Verdict`.
+    Verdict,
+    /// `StateTransition`.
+    StateTransition,
+    /// `VerificationRecord`.
+    VerificationRecord,
+}
+
+impl ImmutableRecordKind {
+    /// Canonical lowercase token.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Source => "source",
+            Self::Observation => "observation",
+            Self::Verdict => "verdict",
+            Self::StateTransition => "state_transition",
+            Self::VerificationRecord => "verification_record",
+        }
     }
 }

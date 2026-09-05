@@ -29,20 +29,16 @@
 //! any system time.
 use graph_core::{
     BitemporalStamp, ClaimAnalyticalTarget, ClaimId, ClaimInput, ClaimLink, ClaimLinkKind,
-    ClaimLinkSource, ClaimStatement, ClaimStatus, ClaimStore, ClaimTarget, Confidence, EvidenceId,
-    EvidenceSourceType, GraphError, ObservationId, ObservationInput, ObservationModality,
-    ObservationStore, SourceId, SourceInput, SourceStore, TemporalTimestamp, TransitionTrigger,
-    VerdictAsOf, VerdictId, VerdictState, VerdictStore, VerificationInputs, VerificationRecord,
-    VerificationRecordId, VerificationRecordStore, VerificationResult, project_verdict_state,
-    resolve_claim_verdict,
+    ClaimLinkSource, ClaimStatement, ClaimStatus, ClaimStore, ClaimTarget, Confidence,
+    EvidenceRecordStore, EvidenceSourceType, GraphError, ObservationId, ObservationInput,
+    ObservationModality, ObservationStore, ResolutionInputs, SourceId, SourceInput, SourceStore,
+    TemporalTimestamp, TransitionTrigger, VerdictAsOf, VerdictId, VerdictState, VerdictStore,
+    VerificationInputs, VerificationRecord, VerificationRecordId, VerificationRecordStore,
+    VerificationResult, project_verdict_state, resolve_claim_verdict,
 };
 
 fn claim_id(value: &str) -> ClaimId {
     ClaimId::new(value).expect("test claim ID should be valid")
-}
-
-fn evidence_id(value: &str) -> EvidenceId {
-    EvidenceId::new(value).expect("test evidence ID should be valid")
 }
 
 fn observation_id(value: &str) -> ObservationId {
@@ -76,6 +72,65 @@ fn create_claim(store: &mut ClaimStore, id: &str, asserted: bool) -> ClaimId {
     }
     .expect("claim should be created");
     id
+}
+
+/// Observation-backed evidence: one source, observations `observation--<name>`.
+fn grounding(names: &[&str]) -> (SourceStore, ObservationStore) {
+    let mut sources = SourceStore::new();
+    sources
+        .register_source(SourceInput::new(
+            source_id("source--grounding"),
+            "https://grounding.example/doc",
+            EvidenceSourceType::Document,
+        ))
+        .expect("grounding source");
+    let mut observations = ObservationStore::new();
+    for name in names {
+        observations
+            .create_observation(
+                ObservationInput::new(
+                    observation_id(&format!("observation--{name}")),
+                    source_id("source--grounding"),
+                    format!("span {name}"),
+                    ObservationModality::Text,
+                ),
+                &sources,
+            )
+            .expect("grounding observation");
+    }
+    (sources, observations)
+}
+
+fn observation_link(store: &mut ClaimStore, name: &str, target: &ClaimId, kind: ClaimLinkKind) {
+    let id = observation_id(&format!("observation--{name}"));
+    store.register_observation(id.clone());
+    store
+        .attach_link(ClaimLink::new(
+            ClaimLinkSource::Observation(id),
+            target.clone(),
+            kind,
+        ))
+        .expect("observation link should attach");
+}
+
+fn resolve(
+    claims: &mut ClaimStore,
+    verdicts: &mut VerdictStore,
+    verifications: &VerificationRecordStore,
+    observations: &ObservationStore,
+    sources: &SourceStore,
+    claim: &ClaimId,
+    stamp: BitemporalStamp,
+) -> Result<graph_core::ResolutionOutcome, GraphError> {
+    let evidence = EvidenceRecordStore::new();
+    resolve_claim_verdict(
+        claims,
+        verdicts,
+        &ResolutionInputs::new(verifications, &evidence, observations, sources),
+        claim,
+        stamp,
+        "ws-a-minimal-v1",
+    )
 }
 
 fn verification(
@@ -177,7 +232,8 @@ fn verification_records_are_append_only() {
         .expect_err("a differing record under the same id is a conflict");
     assert!(matches!(
         error,
-        GraphError::InvalidPropertyValue(message) if message.contains("conflicting verification record")
+        GraphError::ImmutableRecordConflict { kind: graph_core::ImmutableRecordKind::VerificationRecord, id }
+            if id == "verification--1"
     ));
 
     store
@@ -216,6 +272,7 @@ fn minimal_resolution_covers_every_link_configuration() {
     let mut claims = ClaimStore::new();
     let mut verdicts = VerdictStore::new();
     let verifications = VerificationRecordStore::new();
+    let (sources, observations) = grounding(&["s1", "s2", "r1", "r2"]);
 
     let bare = create_claim(&mut claims, "claim--bare", true);
     let supported = create_claim(&mut claims, "claim--supported", true);
@@ -224,26 +281,10 @@ fn minimal_resolution_covers_every_link_configuration() {
     let old = create_claim(&mut claims, "claim--old", true);
     let newer = create_claim(&mut claims, "claim--newer", true);
 
-    for id in [
-        "evidence--s1",
-        "evidence--s2",
-        "evidence--r1",
-        "evidence--r2",
-    ] {
-        claims.register_evidence(evidence_id(id));
-    }
-    claims
-        .attach_supporting_evidence_to_claim(evidence_id("evidence--s1"), supported.clone())
-        .expect("support");
-    claims
-        .attach_refuting_evidence_to_claim(evidence_id("evidence--r1"), refuted.clone())
-        .expect("refute");
-    claims
-        .attach_supporting_evidence_to_claim(evidence_id("evidence--s2"), mixed.clone())
-        .expect("support");
-    claims
-        .attach_refuting_evidence_to_claim(evidence_id("evidence--r2"), mixed.clone())
-        .expect("refute");
+    observation_link(&mut claims, "s1", &supported, ClaimLinkKind::Supports);
+    observation_link(&mut claims, "r1", &refuted, ClaimLinkKind::Refutes);
+    observation_link(&mut claims, "s2", &mixed, ClaimLinkKind::Supports);
+    observation_link(&mut claims, "r2", &mixed, ClaimLinkKind::Refutes);
     claims
         .attach_superseding_claim_to_claim(newer.clone(), old.clone(), None)
         .expect("supersede");
@@ -257,16 +298,17 @@ fn minimal_resolution_covers_every_link_configuration() {
     ];
 
     for (index, (claim, state, status)) in expectations.iter().enumerate() {
-        let outcome = resolve_claim_verdict(
+        let outcome = resolve(
             &mut claims,
             &mut verdicts,
             &verifications,
+            &observations,
+            &sources,
             claim,
             stamp(
                 "2026-08-01T00:00:00Z",
                 &format!("2026-08-30T10:0{index}:00Z"),
             ),
-            "ws-a-minimal-v1",
         )
         .expect("resolution should succeed");
         assert_eq!(outcome.state(), *state, "{}", claim.as_str());
@@ -298,13 +340,14 @@ fn minimal_resolution_covers_every_link_configuration() {
         assert_eq!(transitions[0].trigger(), &expected_trigger);
     }
 
-    let unchanged = resolve_claim_verdict(
+    let unchanged = resolve(
         &mut claims,
         &mut verdicts,
         &verifications,
+        &observations,
+        &sources,
         &supported,
         stamp("2026-08-01T00:00:00Z", "2026-08-30T11:00:00Z"),
-        "ws-a-minimal-v1",
     )
     .expect("re-resolution should succeed");
     assert!(!unchanged.changed());
@@ -322,8 +365,12 @@ fn verification_records_feed_the_minimal_policy() {
     let mut claims = ClaimStore::new();
     let mut verdicts = VerdictStore::new();
     let mut verifications = VerificationRecordStore::new();
+    let (sources, observations) = grounding(&["r1", "s1"]);
     let claim = create_claim(&mut claims, "claim--cve", true);
 
+    // An observation-backed refutation grounds the claim; the deterministic
+    // failure recorded later is the newest signal and names the transition.
+    observation_link(&mut claims, "r1", &claim, ClaimLinkKind::Refutes);
     verifications
         .append(verification(
             "verification--fail",
@@ -333,13 +380,14 @@ fn verification_records_feed_the_minimal_policy() {
         ))
         .expect("record should append");
 
-    let outcome = resolve_claim_verdict(
+    let outcome = resolve(
         &mut claims,
         &mut verdicts,
         &verifications,
+        &observations,
+        &sources,
         &claim,
         stamp("2026-08-01T00:00:00Z", "2026-08-30T10:05:00Z"),
-        "ws-a-minimal-v1",
     )
     .expect("resolution should succeed");
     assert_eq!(outcome.state(), VerdictState::Refuted);
@@ -351,17 +399,15 @@ fn verification_records_feed_the_minimal_policy() {
         )
     );
 
-    claims.register_evidence(evidence_id("evidence--s1"));
-    claims
-        .attach_supporting_evidence_to_claim(evidence_id("evidence--s1"), claim.clone())
-        .expect("support");
-    let outcome = resolve_claim_verdict(
+    observation_link(&mut claims, "s1", &claim, ClaimLinkKind::Supports);
+    let outcome = resolve(
         &mut claims,
         &mut verdicts,
         &verifications,
+        &observations,
+        &sources,
         &claim,
         stamp("2026-08-01T00:00:00Z", "2026-08-30T10:10:00Z"),
-        "ws-a-minimal-v1",
     )
     .expect("resolution should succeed");
     assert_eq!(outcome.state(), VerdictState::Mixed);
@@ -377,19 +423,18 @@ fn lifecycle_projection_respects_the_transition_matrix() {
     let mut claims = ClaimStore::new();
     let mut verdicts = VerdictStore::new();
     let verifications = VerificationRecordStore::new();
+    let (sources, observations) = grounding(&["s1"]);
     let candidate = create_claim(&mut claims, "claim--candidate", false);
-    claims.register_evidence(evidence_id("evidence--s1"));
-    claims
-        .attach_supporting_evidence_to_claim(evidence_id("evidence--s1"), candidate.clone())
-        .expect("support");
+    observation_link(&mut claims, "s1", &candidate, ClaimLinkKind::Supports);
 
-    let outcome = resolve_claim_verdict(
+    let outcome = resolve(
         &mut claims,
         &mut verdicts,
         &verifications,
+        &observations,
+        &sources,
         &candidate,
         stamp("2026-08-01T00:00:00Z", "2026-08-30T10:00:00Z"),
-        "ws-a-minimal-v1",
     )
     .expect("resolution should succeed");
     assert_eq!(outcome.state(), VerdictState::Supported);
@@ -468,13 +513,14 @@ fn spike_e_replays_supported_refuted_superseded_at_any_system_time() {
             .with_bitemporal(stamp("2026-01-01T00:00:00Z", "2026-03-01T00:00:00Z")),
         )
         .expect("support link");
-    let t1 = resolve_claim_verdict(
+    let t1 = resolve(
         &mut claims,
         &mut verdicts,
         &verifications,
+        &observations,
+        &sources,
         &claim,
         stamp("2026-01-01T00:00:00Z", "2026-03-01T00:00:01Z"),
-        "ws-a-minimal-v1",
     )
     .expect("t1");
     assert_eq!(t1.state(), VerdictState::Supported);
@@ -498,13 +544,14 @@ fn spike_e_replays_supported_refuted_superseded_at_any_system_time() {
             ts("2026-05-31T00:00:00Z"),
         )
         .expect("support validity should close");
-    let t2 = resolve_claim_verdict(
+    let t2 = resolve(
         &mut claims,
         &mut verdicts,
         &verifications,
+        &observations,
+        &sources,
         &claim,
         stamp("2026-06-01T00:00:00Z", "2026-06-01T00:00:01Z"),
-        "ws-a-minimal-v1",
     )
     .expect("t2");
     assert_eq!(t2.state(), VerdictState::Refuted);
@@ -520,13 +567,14 @@ fn spike_e_replays_supported_refuted_superseded_at_any_system_time() {
             .with_bitemporal(stamp("2026-06-01T00:00:00Z", "2026-09-01T00:00:00Z")),
         )
         .expect("supersede link");
-    let t3 = resolve_claim_verdict(
+    let t3 = resolve(
         &mut claims,
         &mut verdicts,
         &verifications,
+        &observations,
+        &sources,
         &claim,
         stamp("2026-06-01T00:00:00Z", "2026-09-01T00:00:01Z"),
-        "ws-a-minimal-v1",
     )
     .expect("t3");
     assert_eq!(t3.state(), VerdictState::Superseded);
@@ -685,7 +733,10 @@ fn as_of_selection_is_deterministic_with_id_tie_break() {
         "policy-v1",
         stamp("2026-01-01T00:00:00Z", "2026-03-02T00:00:00Z"),
     );
-    assert!(matches!(duplicate, Err(GraphError::InvalidVersionState(_))));
+    assert!(matches!(
+        duplicate,
+        Err(GraphError::ImmutableRecordConflict { .. })
+    ));
     assert_eq!(store.verdicts_for_claim(&claim).len(), 2);
 
     let json = serde_json::to_string(&store).expect("store should serialize");
