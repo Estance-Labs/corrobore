@@ -97,6 +97,7 @@ string_id!(RelationshipVersionId);
 // Evidence and transaction metadata identifiers.
 string_id!(EvidenceId);
 string_id!(SourceId);
+string_id!(ObservationId);
 string_id!(SourceVersionId);
 string_id!(ValidationErrorId);
 string_id!(ClaimId);

@@ -26,8 +26,8 @@ use crate::ids::HypothesisWorkspaceId;
 use crate::loading_profile::UnknownLoadingProfile;
 use crate::semantic_seed::SemanticSeedResolutionError;
 use crate::{
-    ClaimId, EvidenceId, FactId, NodeId, NodeVersionId, RelationshipId, RelationshipVersionId,
-    SourceId, WorkingSetId,
+    ClaimId, EvidenceId, FactId, NodeId, NodeVersionId, ObservationId, RelationshipId,
+    RelationshipVersionId, SourceId, WorkingSetId,
 };
 
 /// Typed error model for graph-core operations.
@@ -82,6 +82,11 @@ pub enum GraphError {
     /// source store has never registered.
     #[error("source not found: {0:?}")]
     SourceNotFound(SourceId),
+
+    /// An observation reference names an identifier the observation store has
+    /// never created.
+    #[error("observation not found: {0:?}")]
+    ObservationNotFound(ObservationId),
 
     /// A claim-link request is invalid according to deterministic guard rules.
     #[error("invalid claim link: {0}")]

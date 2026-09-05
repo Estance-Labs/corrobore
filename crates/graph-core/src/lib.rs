@@ -131,6 +131,7 @@ mod loading_profile;
 mod mixed_traversal;
 mod next_best_evidence;
 mod node;
+mod observation;
 mod pheromone_trace;
 mod proof_carrying_answer;
 mod properties;
@@ -252,8 +253,9 @@ pub use hyperrelation::{
 };
 pub use ids::{
     ActorId, ClaimId, ClaimVersionId, EvidenceId, ExtractionRunId, FactId, HypothesisWorkspaceId,
-    NodeId, NodeVersionId, RelationshipId, RelationshipVersionId, RequestId, RuntimeId, SessionId,
-    SnapshotId, SourceId, SourceVersionId, TransactionId, ValidationErrorId, WorkspaceId,
+    NodeId, NodeVersionId, ObservationId, RelationshipId, RelationshipVersionId, RequestId,
+    RuntimeId, SessionId, SnapshotId, SourceId, SourceVersionId, TransactionId, ValidationErrorId,
+    WorkspaceId,
 };
 pub use immune_response::{ImmuneResponder, ImmuneResponse, ImmuneResponseAction};
 pub use information_gain::{
@@ -278,6 +280,7 @@ pub use next_best_evidence::{
     rank_next_best_evidence,
 };
 pub use node::{Node, NodeInput, NodePatch};
+pub use observation::{Observation, ObservationInput, ObservationModality, ObservationStore};
 pub use pheromone_trace::{
     EdgeUtility, PheromoneDecay, PheromoneField, PheromoneTaskScope, UtilityContext,
     edge_utility_score,
