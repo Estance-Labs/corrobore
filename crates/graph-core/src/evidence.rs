@@ -23,8 +23,8 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ClaimId, Confidence, EvidenceId, ExtractionRunId, GraphError, NodeId, RelationshipId,
-    TemporalTimestamp,
+    ClaimId, Confidence, EvidenceId, ExtractionRunId, GraphError, NodeId, RelationshipId, SourceId,
+    SourceRegistration, SourceStore, TemporalTimestamp,
 };
 
 /// Provenance source category for first-class evidence metadata.
@@ -43,6 +43,19 @@ pub enum EvidenceSourceType {
     Extraction,
     /// Evidence from a source that does not fit other categories.
     Other,
+}
+
+impl EvidenceSourceType {
+    /// Canonical lowercase token used in projections.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Document => "document",
+            Self::Url => "url",
+            Self::Dataset => "dataset",
+            Self::Extraction => "extraction",
+            Self::Other => "other",
+        }
+    }
 }
 
 /// Bounded location of an evidence excerpt inside its source document.
@@ -106,6 +119,11 @@ pub struct EvidenceRecord {
     information_credibility: Option<Confidence>,
     content_sha256: Option<String>,
     locator: Option<EvidenceLocator>,
+    /// Source identity behind this record, when known. Absent for records
+    /// created before Epic 0029 WS-A; set explicitly through
+    /// [`EvidenceInput::with_source_id`] or by [`EvidenceRecordStore::lift_sources`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_id: Option<SourceId>,
 }
 
 impl EvidenceRecord {
@@ -189,6 +207,11 @@ impl EvidenceRecord {
         self.content_sha256.as_deref()
     }
 
+    /// Source identity behind this record, when known.
+    pub fn source_id(&self) -> Option<&SourceId> {
+        self.source_id.as_ref()
+    }
+
     /// Returns the bounded locator for this excerpt.
     pub const fn locator(&self) -> Option<&EvidenceLocator> {
         self.locator.as_ref()
@@ -219,6 +242,8 @@ pub struct EvidenceInput {
     information_credibility: Option<Confidence>,
     content_sha256: Option<String>,
     locator: Option<EvidenceLocator>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_id: Option<SourceId>,
 }
 
 impl EvidenceInput {
@@ -255,7 +280,14 @@ impl EvidenceInput {
             information_credibility: None,
             content_sha256: None,
             locator: None,
+            source_id: None,
         }
+    }
+
+    /// Sets the source identity behind this record.
+    pub fn with_source_id(mut self, source_id: SourceId) -> Self {
+        self.source_id = Some(source_id);
+        self
     }
 
     /// Sets the provenance source category.
@@ -560,6 +592,7 @@ impl EvidenceRecordStore {
             information_credibility: input.information_credibility,
             content_sha256: input.content_sha256,
             locator: input.locator,
+            source_id: input.source_id,
         };
 
         if let Some(existing) = self
@@ -578,6 +611,34 @@ impl EvidenceRecordStore {
 
         self.records.push(record);
         Ok(evidence_id)
+    }
+
+    /// Lift every record without a `source_id` into `sources` and bind it to
+    /// the lifted identity. Records that already name a source are left as
+    /// they are. Idempotent: a second call finds every record bound, lifts
+    /// nothing, and returns an empty list; the source store keeps the same
+    /// versions and records no drift.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`SourceStore::lift_from_evidence`] errors.
+    pub fn lift_sources(
+        &mut self,
+        sources: &mut SourceStore,
+    ) -> Result<Vec<SourceRegistration>, GraphError> {
+        let mut registrations = Vec::new();
+
+        for record in self.records.iter_mut() {
+            if record.source_id.is_some() {
+                continue;
+            }
+
+            let registration = sources.lift_from_evidence(record)?;
+            record.source_id = Some(registration.source_id().clone());
+            registrations.push(registration);
+        }
+
+        Ok(registrations)
     }
 
     /// Returns the evidence record for the given ID, if it exists.

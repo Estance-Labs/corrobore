@@ -27,7 +27,7 @@ use crate::loading_profile::UnknownLoadingProfile;
 use crate::semantic_seed::SemanticSeedResolutionError;
 use crate::{
     ClaimId, EvidenceId, FactId, NodeId, NodeVersionId, RelationshipId, RelationshipVersionId,
-    WorkingSetId,
+    SourceId, WorkingSetId,
 };
 
 /// Typed error model for graph-core operations.
@@ -77,6 +77,11 @@ pub enum GraphError {
     /// is an explicit epistemic error.
     #[error("evidence not found: {0:?}")]
     EvidenceNotFound(EvidenceId),
+
+    /// A source reference (for example a parent source) names an identity the
+    /// source store has never registered.
+    #[error("source not found: {0:?}")]
+    SourceNotFound(SourceId),
 
     /// A claim-link request is invalid according to deterministic guard rules.
     #[error("invalid claim link: {0}")]

@@ -142,6 +142,7 @@ mod runtime;
 mod semantic_seed;
 mod semantic_seed_graph_resolver;
 mod snapshot;
+mod source;
 mod status;
 mod stop_condition;
 mod structural_validators;
@@ -252,7 +253,7 @@ pub use hyperrelation::{
 pub use ids::{
     ActorId, ClaimId, ClaimVersionId, EvidenceId, ExtractionRunId, FactId, HypothesisWorkspaceId,
     NodeId, NodeVersionId, RelationshipId, RelationshipVersionId, RequestId, RuntimeId, SessionId,
-    SnapshotId, TransactionId, ValidationErrorId, WorkspaceId,
+    SnapshotId, SourceId, SourceVersionId, TransactionId, ValidationErrorId, WorkspaceId,
 };
 pub use immune_response::{ImmuneResponder, ImmuneResponse, ImmuneResponseAction};
 pub use information_gain::{
@@ -312,6 +313,10 @@ pub use semantic_seed::{
 };
 pub use semantic_seed_graph_resolver::GraphSemanticSeedResolver;
 pub use snapshot::{Snapshot, SnapshotCreateRequest, SnapshotManager};
+pub use source::{
+    SOURCE_CONTENT_DRIFT_CODE, Source, SourceContentDrift, SourceInput, SourceRegistration,
+    SourceRegistrationOutcome, SourceStore,
+};
 pub use status::RecordStatus;
 pub use stop_condition::{
     InvestigationStopCondition, InvestigationStopConditionDecision, InvestigationStopReason,
