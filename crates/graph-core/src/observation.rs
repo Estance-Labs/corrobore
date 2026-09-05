@@ -429,6 +429,11 @@ impl ObservationStore {
         Ok(id)
     }
 
+    /// Every observation, in creation order.
+    pub fn observations(&self) -> &[Observation] {
+        &self.observations
+    }
+
     /// One observation by identifier.
     pub fn observation_by_id(&self, observation_id: &ObservationId) -> Option<&Observation> {
         self.observations

@@ -634,7 +634,7 @@ pub struct EvidenceRecordStore {
     known_relationship_targets: HashSet<RelationshipId>,
     known_claim_targets: HashSet<ClaimId>,
     known_export_record_targets: HashSet<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "HashSet::is_empty")]
     known_observation_targets: HashSet<ObservationId>,
 }
 
@@ -749,6 +749,11 @@ impl EvidenceRecordStore {
         }
 
         Ok(lifted)
+    }
+
+    /// Every evidence record, in creation order.
+    pub fn records(&self) -> &[EvidenceRecord] {
+        &self.records
     }
 
     /// Returns the evidence record for the given ID, if it exists.

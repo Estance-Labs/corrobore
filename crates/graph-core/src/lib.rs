@@ -112,6 +112,7 @@ mod calibrated_assessment;
 mod claim;
 mod confidence;
 mod cross_branch_scoring;
+mod epistemic_stores;
 mod epistemic_validators;
 mod epistemic_vocabulary;
 mod error;
@@ -215,6 +216,7 @@ pub use cross_branch_scoring::{
     CrossBranchRanking, CrossBranchScoreBreakdown, CrossBranchScoreInput, CrossBranchScoreTerm,
     RankedBranchScore, rank_cross_branch_scores,
 };
+pub use epistemic_stores::EpistemicStores;
 pub use epistemic_validators::{
     CLAIM_LIFECYCLE_WITHOUT_OBSERVATION_PATH_CODE, EpistemicValidationInputs,
     validate_claim_reachability, validate_graph_epistemics,
@@ -347,7 +349,7 @@ pub use verdict::{
     CLAIM_UNREACHABLE_EVIDENCE_CODE, ReachabilityGap, ResolutionInputs, ResolutionOutcome,
     StateTransition, TransitionTrigger, Verdict, VerdictAsOf, VerdictState, VerdictStore,
     VerificationInputs, VerificationRecord, VerificationRecordStore, VerificationResult,
-    project_verdict_state, resolve_claim_verdict,
+    lifecycle_token, project_verdict_state, resolve_claim_verdict,
 };
 pub use verification_probes::{
     ProbeAnswer, ProbeKind, ProbeRegistry, ProbeStatus, ProbeTransition, VerificationProbe,

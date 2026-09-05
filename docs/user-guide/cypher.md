@@ -76,6 +76,42 @@ conversion guidance; only the STIX import adapter accepts and normalizes the
 Confidence and retained evidence belong to each assertion. A relationship does
 not inherit either field from its source or target node.
 
+## Epistemic projection (Epic 0029)
+
+Governed evidence records live beside the graph in the epistemic stores:
+sources, observations, claims with their evidence links, verification records,
+verdicts, and state transitions. They are not graph nodes, so ordinary
+`MATCH` does not see them. `Graph::epistemic_projection()` renders them as a
+read-only graph in the epistemic vocabulary that any read query can traverse:
+
+| Label(s) | Record | Key properties |
+| :--- | :--- | :--- |
+| `Source` | `Source` version | `source_id`, `source_version`, `source_uri`, `source_type`, `source_artifact_sha256`, `source_derived_from_legacy` |
+| `Observation` | `Observation` | `observation_id`, `observation_source`, `observation_selector`, `observation_payload`, `observation_modality` |
+| `Evidence` | `EvidenceRecord` | `evidence_id`, `evidence_source_ref`, `evidence_source`, `evidence_observation` |
+| `Claim` | `Claim` | `claim_id`, `claim_status`, `claim_statement`, `proposition_*`, `verdict_state`, `verdict_lifecycle_projection`, `verdict_id` |
+| `Verdict`, `Assessment` | `Verdict` | `verdict_id`, `verdict_claim`, `verdict_state`, `verdict_policy_version`, `verdict_valid_from`, `verdict_transaction_time` |
+| `VerificationRecord`, `Assessment` | `VerificationRecord` | `verification_id`, `verification_claim`, `verification_verifier_id`, `verification_deterministic`, `verification_result` |
+| `StateTransition`, `Decision` | `StateTransition` | `transition_id`, `transition_claim`, `transition_from_state`, `transition_to_state`, `transition_trigger` |
+
+Relationships follow the vocabulary: `REPORTS` (source to observation), the
+evidence-link kinds `SUPPORTS`, `REFUTES`, `CONTRADICTS`, `SUPERSEDES`,
+`CONTEXT_FOR`, `DUPLICATES`, `DERIVED_FROM`, `DEPENDS_ON` (link source to
+claim, carrying `evidence_link_*` properties), `ASSESSES` (verdict and
+verification record to claim), and `DECIDES` (state transition to claim).
+
+```cypher
+MATCH (c:Claim) RETURN c.claim_id, c.verdict_state, c.claim_status ORDER BY c.claim_id ASC
+MATCH (o:Observation)-[:SUPPORTS]->(c:Claim) RETURN c.claim_id, o.observation_payload
+MATCH (t:StateTransition) RETURN t.transition_claim, t.transition_from_state, t.transition_to_state
+```
+
+Node identifiers in the projection are generated; record identifiers are
+properties. The projection is read-only: verdicts are computed by the engine
+(`resolve_claim_verdict`) and no write clause reaches the epistemic stores.
+`verdict_state` is the computed epistemic state; `claim_status` is the
+lifecycle status the ADR-0016 projection table derives from it.
+
 ## Parameters and modes
 
 HTTP requests accept a `params` JSON object alongside `query`. Each `$name` placeholder is resolved into a typed value at the position where it appears, so a parameter is never assembled into the query text and cannot contribute syntax.

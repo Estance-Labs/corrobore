@@ -591,6 +591,17 @@ impl SourceStore {
         })
     }
 
+    /// Every distinct source identity, in first-registration order.
+    pub fn source_ids(&self) -> Vec<&SourceId> {
+        let mut seen = Vec::new();
+        for version in &self.versions {
+            if !seen.contains(&&version.id) {
+                seen.push(&version.id);
+            }
+        }
+        seen
+    }
+
     /// Current (latest) version of a source identity.
     pub fn current_source(&self, source_id: &SourceId) -> Option<&Source> {
         self.versions

@@ -48,8 +48,9 @@ use serde::{Deserialize, Serialize};
 use crate::{
     BitemporalStamp, ClaimId, ClaimLink, ClaimLinkKind, ClaimLinkSource, ClaimStatus, ClaimStore,
     Confidence, EvidenceRecordStore, GraphError, ImmutableRecordKind, ObservationId,
-    ObservationStore, SourceStore, StateTransitionId, TemporalTimestamp, ValidationErrorRecord,
-    ValidationErrorSeverity, ValidationTarget, VerdictId, VerificationRecordId,
+    ObservationStore, PropertyMap, PropertyValue, SourceStore, StateTransitionId,
+    TemporalTimestamp, ValidationErrorRecord, ValidationErrorSeverity, ValidationTarget, VerdictId,
+    VerificationRecordId,
 };
 
 /// Validation code recorded when a verdict could not reach `Supported`,
@@ -313,6 +314,47 @@ impl VerificationRecord {
         }
         Ok(())
     }
+
+    /// Project the record into additive, namespaced `verification_*`
+    /// properties.
+    pub fn to_property_map(&self) -> PropertyMap {
+        let mut properties = PropertyMap::new();
+        properties.insert(
+            "verification_id".to_owned(),
+            PropertyValue::String(self.id.as_str().to_owned()),
+        );
+        properties.insert(
+            "verification_claim".to_owned(),
+            PropertyValue::String(self.inputs.claim_id.as_str().to_owned()),
+        );
+        properties.insert(
+            "verification_verifier_id".to_owned(),
+            PropertyValue::String(self.verifier_id.clone()),
+        );
+        properties.insert(
+            "verification_verifier_version".to_owned(),
+            PropertyValue::String(self.verifier_version.clone()),
+        );
+        properties.insert(
+            "verification_deterministic".to_owned(),
+            PropertyValue::Bool(self.deterministic),
+        );
+        properties.insert(
+            "verification_result".to_owned(),
+            PropertyValue::String(self.result.as_str().to_owned()),
+        );
+        if let Some(rationale) = &self.rationale {
+            properties.insert(
+                "verification_rationale".to_owned(),
+                PropertyValue::String(rationale.clone()),
+            );
+        }
+        properties.insert(
+            "verification_transaction_time".to_owned(),
+            PropertyValue::String(self.stamp.transaction_time.as_str().to_owned()),
+        );
+        properties
+    }
 }
 
 /// Append-only store of verification records.
@@ -421,6 +463,46 @@ impl Verdict {
     pub fn stamp(&self) -> &BitemporalStamp {
         &self.stamp
     }
+
+    /// Project the verdict into additive, namespaced `verdict_*` properties.
+    pub fn to_property_map(&self) -> PropertyMap {
+        let mut properties = PropertyMap::new();
+        properties.insert(
+            "verdict_id".to_owned(),
+            PropertyValue::String(self.id.as_str().to_owned()),
+        );
+        properties.insert(
+            "verdict_claim".to_owned(),
+            PropertyValue::String(self.claim_id.as_str().to_owned()),
+        );
+        properties.insert(
+            "verdict_state".to_owned(),
+            PropertyValue::String(self.state.as_str().to_owned()),
+        );
+        properties.insert(
+            "verdict_lifecycle_projection".to_owned(),
+            PropertyValue::String(lifecycle_token(project_verdict_state(self.state, false))),
+        );
+        properties.insert(
+            "verdict_policy_version".to_owned(),
+            PropertyValue::String(self.policy_version.clone()),
+        );
+        properties.insert(
+            "verdict_valid_from".to_owned(),
+            PropertyValue::String(self.stamp.valid_from.as_str().to_owned()),
+        );
+        properties.insert(
+            "verdict_transaction_time".to_owned(),
+            PropertyValue::String(self.stamp.transaction_time.as_str().to_owned()),
+        );
+        for (name, value) in &self.confidence_dimensions {
+            properties.insert(
+                format!("verdict_dimension_{name}"),
+                PropertyValue::Float(value.value()),
+            );
+        }
+        properties
+    }
 }
 
 /// What caused a state transition.
@@ -434,6 +516,23 @@ pub enum TransitionTrigger {
     Supersession,
     /// A lifecycle decision (retraction, rejection) froze the verdict.
     LifecycleDecision,
+}
+
+impl TransitionTrigger {
+    /// Canonical lowercase token.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ResolutionRun => "resolution_run",
+            Self::VerificationRecord(_) => "verification_record",
+            Self::Supersession => "supersession",
+            Self::LifecycleDecision => "lifecycle_decision",
+        }
+    }
+}
+
+/// Lowercase token of a lifecycle status for projections.
+pub fn lifecycle_token(status: ClaimStatus) -> String {
+    format!("{status:?}").to_lowercase()
 }
 
 /// One appended change of verdict state.
@@ -484,6 +583,51 @@ impl StateTransition {
     /// Bitemporal stamp.
     pub fn stamp(&self) -> &BitemporalStamp {
         &self.stamp
+    }
+
+    /// Project the transition into additive, namespaced `transition_*`
+    /// properties.
+    pub fn to_property_map(&self) -> PropertyMap {
+        let mut properties = PropertyMap::new();
+        properties.insert(
+            "transition_id".to_owned(),
+            PropertyValue::String(self.id.as_str().to_owned()),
+        );
+        properties.insert(
+            "transition_claim".to_owned(),
+            PropertyValue::String(self.claim_id.as_str().to_owned()),
+        );
+        if let Some(from) = self.from_state {
+            properties.insert(
+                "transition_from_state".to_owned(),
+                PropertyValue::String(from.as_str().to_owned()),
+            );
+        }
+        properties.insert(
+            "transition_to_state".to_owned(),
+            PropertyValue::String(self.to_state.as_str().to_owned()),
+        );
+        properties.insert(
+            "transition_trigger".to_owned(),
+            PropertyValue::String(self.trigger.as_str().to_owned()),
+        );
+        if let TransitionTrigger::VerificationRecord(record) = &self.trigger {
+            properties.insert(
+                "transition_verification_record".to_owned(),
+                PropertyValue::String(record.as_str().to_owned()),
+            );
+        }
+        if let Some(verdict) = &self.superseding_verdict_id {
+            properties.insert(
+                "transition_verdict".to_owned(),
+                PropertyValue::String(verdict.as_str().to_owned()),
+            );
+        }
+        properties.insert(
+            "transition_transaction_time".to_owned(),
+            PropertyValue::String(self.stamp.transaction_time.as_str().to_owned()),
+        );
+        properties
     }
 }
 

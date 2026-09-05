@@ -51,6 +51,45 @@ struct FimiRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     relationship_type: Option<String>,
     evidence_refs: Vec<String>,
+    /// Epic 0029 WS-A item 7: source and observation behind each evidence
+    /// reference, present only when governed records exist.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    lineage: Vec<FimiLineage>,
+}
+
+/// Epistemic lineage of one evidence reference.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct FimiLineage {
+    evidence_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_uri: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    observation_id: Option<String>,
+}
+
+fn epistemic_lineage(graph: &Graph, evidence_refs: &[String]) -> Vec<FimiLineage> {
+    let stores = graph.epistemic_stores();
+    evidence_refs
+        .iter()
+        .filter_map(|evidence_ref| {
+            let evidence_id = graph_core::EvidenceId::new(evidence_ref).ok()?;
+            let record = graph.evidence_by_id(&evidence_id)?;
+            if record.source_id().is_none() && record.observation_id().is_none() {
+                return None;
+            }
+            Some(FimiLineage {
+                evidence_id: evidence_ref.clone(),
+                source_id: record.source_id().map(|id| id.as_str().to_owned()),
+                source_uri: record
+                    .source_id()
+                    .and_then(|id| stores.sources.current_source(id))
+                    .map(|source| source.uri().to_owned()),
+                observation_id: record.observation_id().map(|id| id.as_str().to_owned()),
+            })
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -91,6 +130,7 @@ pub fn export_fimi_json_document(
                         source_node_id: Some(node.id().as_str().to_owned()),
                         target_node_id: None,
                         relationship_type: None,
+                        lineage: epistemic_lineage(graph, &evidence_refs),
                         evidence_refs,
                     })
                 }
@@ -105,6 +145,7 @@ pub fn export_fimi_json_document(
                         source_node_id: Some(relationship.source().as_str().to_owned()),
                         target_node_id: Some(relationship.target().as_str().to_owned()),
                         relationship_type: Some(relationship.rel_type().as_str().to_lowercase()),
+                        lineage: epistemic_lineage(graph, &evidence_refs),
                         evidence_refs,
                     })
                 }
@@ -238,6 +279,90 @@ mod tests {
         assert!(json_a.contains("\"kind\": \"actor\""));
         assert!(json_a.contains("\"kind\": \"narrative\""));
         assert!(json_a.contains("\"kind\": \"coordination_link\""));
+    }
+
+    //
+    // Epic 0029 WS-A item 7 (issue #153): records carry epistemic lineage
+    // additively and stay byte-identical without governed records.
+    #[test]
+    fn fimi_records_carry_additive_epistemic_lineage() {
+        use graph_core::{
+            EvidenceId, EvidenceInput, EvidenceSourceType, ObservationId, ObservationInput,
+            ObservationModality, SourceId, SourceInput,
+        };
+
+        let mut graph = Graph::new();
+        graph
+            .create_evidence(EvidenceInput::new(
+                EvidenceId::new("evidence--fimi").expect("id"),
+                "ref--fimi",
+                "payload",
+            ))
+            .expect("evidence");
+        graph
+            .create_node(
+                NodeInput::new(["Narrative"])
+                    .with_status(RecordStatus::Exportable)
+                    .with_evidence_ref(EvidenceId::new("evidence--fimi").expect("id")),
+            )
+            .expect("node");
+        let plan =
+            build_deterministic_export_plan(&graph, permissive_metadata(), &[]).expect("plan");
+        let bare = export_fimi_json(&graph, &plan).expect("json");
+        assert!(
+            !bare.contains("\"lineage\""),
+            "no lineage key without governed records"
+        );
+
+        let mut governed = Graph::new();
+        governed
+            .create_evidence(
+                EvidenceInput::new(
+                    EvidenceId::new("evidence--fimi").expect("id"),
+                    "ref--fimi",
+                    "payload",
+                )
+                .with_source_id(SourceId::new("source--outlet").expect("id"))
+                .with_observation_id(ObservationId::new("observation--post").expect("id")),
+            )
+            .expect("evidence");
+        governed
+            .create_node(
+                NodeInput::new(["Narrative"])
+                    .with_status(RecordStatus::Exportable)
+                    .with_evidence_ref(EvidenceId::new("evidence--fimi").expect("id")),
+            )
+            .expect("node");
+        let stores = governed.epistemic_stores_mut();
+        stores
+            .sources
+            .register_source(SourceInput::new(
+                SourceId::new("source--outlet").expect("id"),
+                "https://outlet.example/post",
+                EvidenceSourceType::Url,
+            ))
+            .expect("source");
+        stores
+            .observations
+            .create_observation(
+                ObservationInput::new(
+                    ObservationId::new("observation--post").expect("id"),
+                    SourceId::new("source--outlet").expect("id"),
+                    "the post text",
+                    ObservationModality::Text,
+                ),
+                &stores.sources,
+            )
+            .expect("observation");
+        let plan =
+            build_deterministic_export_plan(&governed, permissive_metadata(), &[]).expect("plan");
+        let document = export_fimi_json_document(&governed, &plan);
+        let json = serde_json::to_value(&document).expect("json");
+        let lineage = &json["records"][0]["lineage"];
+        assert_eq!(lineage[0]["evidence_id"], "evidence--fimi");
+        assert_eq!(lineage[0]["source_id"], "source--outlet");
+        assert_eq!(lineage[0]["observation_id"], "observation--post");
+        assert_eq!(lineage[0]["source_uri"], "https://outlet.example/post");
     }
 
     #[test]

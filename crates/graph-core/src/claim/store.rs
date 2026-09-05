@@ -209,7 +209,8 @@ impl Claim {
 }
 
 /// In-memory claim store reserved as the first claim lifecycle boundary.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(from = "ClaimStoreSnapshot", into = "ClaimStoreSnapshot")]
 pub struct ClaimStore {
     pub(crate) claims: HashMap<ClaimId, Claim>,
     pub(crate) known_evidence: HashSet<EvidenceId>,
@@ -832,6 +833,24 @@ impl ClaimStore {
         self.insert_claim(input, ClaimStatus::Asserted)
     }
 
+    /// Whether the store holds no claim, link, stance, workspace, trust input,
+    /// policy, or explanation.
+    pub fn is_empty(&self) -> bool {
+        self.claims.is_empty()
+            && self.known_evidence.is_empty()
+            && self.known_observations.is_empty()
+            && self.claim_links.is_empty()
+            && self.claim_decisions.is_empty()
+            && self.stances_by_id.is_empty()
+            && self.hypothesis_workspaces.is_empty()
+            && self.known_trust_subjects.is_empty()
+            && self.trust_inputs_by_id.is_empty()
+            && self.resolution_policies.is_empty()
+            && self.claim_explanations.is_empty()
+            && self.link_explanations.is_empty()
+            && self.resolution_explanations.is_empty()
+    }
+
     /// Every current claim version, ordered by identifier for determinism.
     pub fn claims(&self) -> Vec<&Claim> {
         let mut claims: Vec<&Claim> = self.claims.values().collect();
@@ -1351,5 +1370,144 @@ impl ClaimStore {
         self.claims.insert(claim_id.clone(), claim);
 
         Ok(claim_id)
+    }
+}
+
+/// Deterministic, vector-based serialization of a [`ClaimStore`].
+///
+/// The store keeps hash maps keyed by typed identifiers, which JSON cannot
+/// express as object keys. The snapshot flattens every map into sorted vectors
+/// so persistence, snapshots, and the durable sidecar are byte-stable.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ClaimStoreSnapshot {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    claims: Vec<Claim>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    known_evidence: Vec<EvidenceId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    known_observations: Vec<ObservationId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    claim_links: Vec<ClaimLink>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    claim_decisions: Vec<(ClaimId, Vec<ClaimDecision>)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    stances: Vec<AgentStance>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    hypothesis_workspaces: Vec<HypothesisWorkspace>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    hypothesis_claim_membership: Vec<(HypothesisWorkspaceId, Vec<ClaimId>)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    hypothesis_stance_membership: Vec<(HypothesisWorkspaceId, Vec<String>)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    known_trust_subjects: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    trust_inputs: Vec<TrustInput>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    trust_input_ids_by_subject: Vec<(String, Vec<String>)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    trust_input_ids_by_claim: Vec<(ClaimId, Vec<String>)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    resolution_policies: Vec<RegisteredEpistemicResolutionPolicy>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    claim_explanations: Vec<(ClaimId, Vec<EpistemicExplanation>)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    link_explanations: Vec<(String, EpistemicExplanation)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    resolution_explanations: Vec<(String, EpistemicExplanation)>,
+}
+
+fn sorted_by_key<K: Ord, V>(map: HashMap<K, V>) -> Vec<(K, V)> {
+    let mut entries: Vec<(K, V)> = map.into_iter().collect();
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    entries
+}
+
+fn sorted_ids<T: Ord>(set: HashSet<T>) -> Vec<T> {
+    let mut items: Vec<T> = set.into_iter().collect();
+    items.sort();
+    items
+}
+
+impl From<ClaimStore> for ClaimStoreSnapshot {
+    fn from(store: ClaimStore) -> Self {
+        let mut claims: Vec<Claim> = store.claims.into_values().collect();
+        claims.sort_by(|left, right| left.id.as_str().cmp(right.id.as_str()));
+        let mut stances: Vec<AgentStance> = store.stances_by_id.into_values().collect();
+        stances.sort_by(|left, right| left.stance_id.cmp(&right.stance_id));
+        let mut hypothesis_workspaces: Vec<HypothesisWorkspace> =
+            store.hypothesis_workspaces.into_values().collect();
+        hypothesis_workspaces.sort_by(|left, right| left.id.as_str().cmp(right.id.as_str()));
+        let mut trust_inputs: Vec<TrustInput> = store.trust_inputs_by_id.into_values().collect();
+        trust_inputs.sort_by(|left, right| left.trust_input_id.cmp(&right.trust_input_id));
+        let mut resolution_policies: Vec<RegisteredEpistemicResolutionPolicy> =
+            store.resolution_policies.into_values().collect();
+        resolution_policies.sort_by(|left, right| left.name().cmp(right.name()));
+
+        Self {
+            claims,
+            known_evidence: sorted_ids(store.known_evidence),
+            known_observations: sorted_ids(store.known_observations),
+            claim_links: store.claim_links,
+            claim_decisions: sorted_by_key(store.claim_decisions),
+            stances,
+            hypothesis_workspaces,
+            hypothesis_claim_membership: sorted_by_key(store.hypothesis_claim_membership),
+            hypothesis_stance_membership: sorted_by_key(store.hypothesis_stance_membership),
+            known_trust_subjects: sorted_ids(store.known_trust_subjects),
+            trust_inputs,
+            trust_input_ids_by_subject: sorted_by_key(store.trust_input_ids_by_subject),
+            trust_input_ids_by_claim: sorted_by_key(store.trust_input_ids_by_claim),
+            resolution_policies,
+            claim_explanations: sorted_by_key(store.claim_explanations),
+            link_explanations: sorted_by_key(store.link_explanations),
+            resolution_explanations: sorted_by_key(store.resolution_explanations),
+        }
+    }
+}
+
+impl From<ClaimStoreSnapshot> for ClaimStore {
+    fn from(snapshot: ClaimStoreSnapshot) -> Self {
+        Self {
+            claims: snapshot
+                .claims
+                .into_iter()
+                .map(|claim| (claim.id.clone(), claim))
+                .collect(),
+            known_evidence: snapshot.known_evidence.into_iter().collect(),
+            known_observations: snapshot.known_observations.into_iter().collect(),
+            claim_links: snapshot.claim_links,
+            claim_decisions: snapshot.claim_decisions.into_iter().collect(),
+            stances_by_id: snapshot
+                .stances
+                .into_iter()
+                .map(|stance| (stance.stance_id.clone(), stance))
+                .collect(),
+            hypothesis_workspaces: snapshot
+                .hypothesis_workspaces
+                .into_iter()
+                .map(|workspace| (workspace.id.clone(), workspace))
+                .collect(),
+            hypothesis_claim_membership: snapshot.hypothesis_claim_membership.into_iter().collect(),
+            hypothesis_stance_membership: snapshot
+                .hypothesis_stance_membership
+                .into_iter()
+                .collect(),
+            known_trust_subjects: snapshot.known_trust_subjects.into_iter().collect(),
+            trust_inputs_by_id: snapshot
+                .trust_inputs
+                .into_iter()
+                .map(|input| (input.trust_input_id.clone(), input))
+                .collect(),
+            trust_input_ids_by_subject: snapshot.trust_input_ids_by_subject.into_iter().collect(),
+            trust_input_ids_by_claim: snapshot.trust_input_ids_by_claim.into_iter().collect(),
+            resolution_policies: snapshot
+                .resolution_policies
+                .into_iter()
+                .map(|policy| (policy.name().to_owned(), policy))
+                .collect(),
+            claim_explanations: snapshot.claim_explanations.into_iter().collect(),
+            link_explanations: snapshot.link_explanations.into_iter().collect(),
+            resolution_explanations: snapshot.resolution_explanations.into_iter().collect(),
+        }
     }
 }

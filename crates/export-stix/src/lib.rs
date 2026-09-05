@@ -90,9 +90,11 @@ pub fn export_stix_subset_bundle(
         else {
             continue;
         };
-        let Some(object) = project_node(&node, record.record_id(), record.evidence_refs()) else {
+        let Some(mut object) = project_node(&node, record.record_id(), record.evidence_refs())
+        else {
             continue;
         };
+        attach_epistemic_lineage(graph, &node, record.evidence_refs(), &mut object);
         let Some(id) = object.get("id").and_then(Value::as_str) else {
             continue;
         };
@@ -512,6 +514,92 @@ fn mode_label(mode: ExportMode) -> &'static str {
     match mode {
         ExportMode::Strict => "strict",
         ExportMode::Permissive => "permissive",
+    }
+}
+
+/// Epic 0029 WS-A item 7: add `x_corrobore_lineage` to an exported object when
+/// governed records exist behind it. Entries name the source and observation
+/// behind each evidence reference, and the current verdict of every claim
+/// targeting the node. Nothing is added for graphs without governed records,
+/// so their exports stay byte-identical.
+fn attach_epistemic_lineage(
+    graph: &Graph,
+    node: &graph_core::Node,
+    evidence_refs: &[graph_core::EvidenceId],
+    object: &mut Value,
+) {
+    let stores = graph.epistemic_stores();
+    let mut lineage = Vec::new();
+
+    let mut refs: Vec<&graph_core::EvidenceId> = evidence_refs.iter().collect();
+    refs.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    for evidence_id in refs {
+        let Some(record) = graph.evidence_by_id(evidence_id) else {
+            continue;
+        };
+        if record.source_id().is_none() && record.observation_id().is_none() {
+            continue;
+        }
+        let mut entry = serde_json::Map::new();
+        entry.insert(
+            "evidence_id".to_owned(),
+            Value::String(evidence_id.as_str().to_owned()),
+        );
+        if let Some(source_id) = record.source_id() {
+            entry.insert(
+                "source_id".to_owned(),
+                Value::String(source_id.as_str().to_owned()),
+            );
+            if let Some(source) = stores.sources.current_source(source_id) {
+                entry.insert(
+                    "source_uri".to_owned(),
+                    Value::String(source.uri().to_owned()),
+                );
+            }
+        }
+        if let Some(observation_id) = record.observation_id() {
+            entry.insert(
+                "observation_id".to_owned(),
+                Value::String(observation_id.as_str().to_owned()),
+            );
+        }
+        lineage.push(Value::Object(entry));
+    }
+
+    for claim in stores.claims.claims() {
+        let graph_core::ClaimTarget::Node(target) = claim.target() else {
+            continue;
+        };
+        if target != node.id() {
+            continue;
+        }
+        let mut entry = serde_json::Map::new();
+        entry.insert(
+            "claim_id".to_owned(),
+            Value::String(claim.id().as_str().to_owned()),
+        );
+        if let Some(verdict) = stores.verdicts.current_verdict(claim.id()) {
+            entry.insert(
+                "verdict_id".to_owned(),
+                Value::String(verdict.id().as_str().to_owned()),
+            );
+            entry.insert(
+                "verdict_state".to_owned(),
+                Value::String(verdict.state().as_str().to_owned()),
+            );
+            entry.insert(
+                "transitions".to_owned(),
+                Value::from(stores.verdicts.transitions_for_claim(claim.id()).len()),
+            );
+        }
+        lineage.push(Value::Object(entry));
+    }
+
+    if lineage.is_empty() {
+        return;
+    }
+    if let Value::Object(map) = object {
+        map.insert("x_corrobore_lineage".to_owned(), Value::Array(lineage));
     }
 }
 

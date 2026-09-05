@@ -1,0 +1,19 @@
+{
+  "id": { "value": "evidence--pre-ws-a" },
+  "source_ref": "source://report/2026-07-06",
+  "payload": "Actor A operates Campaign B.",
+  "source_type": "Document",
+  "chunk_id": null,
+  "offset_start": 100,
+  "offset_end": 128,
+  "source_url": "https://archive.example/report-2026-07-06.pdf",
+  "extraction_run_id": null,
+  "extractor_id": "extractor-v3",
+  "model_version": null,
+  "observed_at": "2026-07-06T08:00:00Z",
+  "language": "en",
+  "source_reliability": null,
+  "information_credibility": null,
+  "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "locator": { "type": "byte_range", "start": 100, "end": 128 }
+}

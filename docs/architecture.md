@@ -88,6 +88,33 @@ Read and write availability is controlled by the host. The HTTP API exposes expl
 
 The Epic 0017 acceptance suite and reproducibility report are complete; see [Learned Working Set](user-guide/working-set.md) for the implemented surface, benchmark results, and evidence scope.
 
+## Epistemic stores (Epic 0029)
+
+Beside nodes, relationships, and first-class evidence, a graph carries the
+governed evidence stores of ADR-0016: `Source` versions, immutable
+`Observation`s, the `ClaimStore` (claims, evidence links, stances, workspaces,
+trust inputs, policies, explanations), `VerificationRecord`s, and the
+`VerdictStore` (verdicts, state transitions, reachability gaps). They travel
+with the graph in three ways:
+
+- `GraphPersistenceSnapshot` includes them under `epistemic`, skipped when
+  empty so snapshots written before Epic 0029 stay byte-identical;
+- the canonical durable store persists them in the
+  `runtime/epistemic-records-v1.json` sidecar with the same stage, promote,
+  recover, and discard discipline as the evidence sidecar, and serves them in
+  every projection;
+- backups copy the runtime directory, so the sidecar is part of every backup.
+
+The verdict is a computed view: `resolve_claim_verdict` derives it from active
+evidence links and deterministic verification records, enforces the
+observation-reachability gate, appends verdict and transition records, and
+projects the lifecycle `ClaimStatus`. No Cypher, HTTP, or memory route writes
+a verdict. Reads reach the records through `Graph::epistemic_projection()`, a
+read-only graph in the epistemic vocabulary documented in the
+[Cypher guide](user-guide/cypher.md#epistemic-projection-epic-0029). STIX and
+FIMI exports add `x_corrobore_lineage` and `lineage` entries (source,
+observation, current verdict) only when governed records exist.
+
 ## Durability and transport boundaries
 
 The current HTTP runtime keeps its graph in process. Session metadata and JSONL logs are durable on disk, while `graph-storage` provides the append-only storage and pager building blocks used by lower-level integrations. `corrobore-ingest` deliberately imports through HTTP instead of depending on graph internals.
