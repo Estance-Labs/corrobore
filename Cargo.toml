@@ -79,6 +79,7 @@ tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 toml = "1.1"
+url = "2"
 uuid = { version = "1", features = ["v4"] }
 x509-parser = "0.18.1"
 

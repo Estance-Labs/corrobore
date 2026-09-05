@@ -112,6 +112,7 @@ mod calibrated_assessment;
 mod claim;
 mod confidence;
 mod cross_branch_scoring;
+mod deterministic_verifiers;
 mod epistemic_stores;
 mod epistemic_validators;
 mod epistemic_vocabulary;
@@ -216,6 +217,10 @@ pub use confidence::Confidence;
 pub use cross_branch_scoring::{
     CrossBranchRanking, CrossBranchScoreBreakdown, CrossBranchScoreInput, CrossBranchScoreTerm,
     RankedBranchScore, rank_cross_branch_scores,
+};
+pub use deterministic_verifiers::{
+    CONTENT_HASH_VERIFIER_ID, CONTENT_HASH_VERIFIER_VERSION, ContentHashVerifier,
+    IDENTIFIER_SYNTAX_VERIFIER_ID, IDENTIFIER_SYNTAX_VERIFIER_VERSION, IdentifierSyntaxVerifier,
 };
 pub use epistemic_stores::EpistemicStores;
 pub use epistemic_validators::{

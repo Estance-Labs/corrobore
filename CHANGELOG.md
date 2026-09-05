@@ -85,6 +85,13 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   identifier and version so versions coexist and earlier records stay
   reproducible. `VerificationContext` bundles the read-only stores
   (Epic 0029 WS-B, #163).
+- `graph-core`: deterministic `verifier.identifier-syntax` and
+  `verifier.content-hash` implementations. Identifier syntax covers public
+  digest, UUID, RFC3339, domain, IP, URL, STIX, and CVE formats while recording
+  that no external registry or semantic claim was checked. Content hashes
+  recompute SHA-256 over exact observation and evidence payload bytes and
+  report recorded and computed digests on drift. Both verifiers are versioned,
+  domain-neutral, and emit their limits on every result (Epic 0029 WS-B, #164).
 
 ## Releases
 

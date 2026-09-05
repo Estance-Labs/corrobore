@@ -13,9 +13,13 @@ name = "graph_core"
 path = "src/lib.rs"
 
 [dependencies]
+chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 thiserror = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
 
 [lints]
 workspace = true
