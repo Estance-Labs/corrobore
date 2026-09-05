@@ -213,6 +213,7 @@ impl Claim {
 pub struct ClaimStore {
     pub(crate) claims: HashMap<ClaimId, Claim>,
     pub(crate) known_evidence: HashSet<EvidenceId>,
+    pub(crate) known_observations: HashSet<ObservationId>,
     pub(crate) claim_links: Vec<ClaimLink>,
     pub(crate) claim_decisions: HashMap<ClaimId, Vec<ClaimDecision>>,
     pub(crate) stances_by_id: HashMap<String, AgentStance>,
@@ -237,6 +238,8 @@ impl ClaimStore {
             claims: HashMap::new(),
             // Known evidence.
             known_evidence: HashSet::new(),
+            // Known observations.
+            known_observations: HashSet::new(),
             // Claim links.
             claim_links: Vec::new(),
             // Claim decisions.
@@ -557,7 +560,7 @@ impl ClaimStore {
 
                 match link.source() {
                     ClaimLinkSource::Claim(source_claim_id) => source_claim_id == claim_id,
-                    ClaimLinkSource::Evidence(_) => false,
+                    ClaimLinkSource::Evidence(_) | ClaimLinkSource::Observation(_) => false,
                 }
             })
             .cloned()
@@ -761,6 +764,62 @@ impl ClaimStore {
     /// evidence IDs with explicit typed errors.
     pub fn register_evidence(&mut self, evidence_id: EvidenceId) {
         self.known_evidence.insert(evidence_id);
+    }
+
+    /// Register an observation so it can be the source of a link.
+    pub fn register_observation(&mut self, observation_id: ObservationId) {
+        self.known_observations.insert(observation_id);
+    }
+
+    /// Attach a fully built link of any kind and source.
+    ///
+    /// Validation: the source must be known (registered evidence, registered
+    /// observation, or existing claim), the target claim must exist, and a
+    /// claim may not link to itself for any kind. The link is stored and
+    /// explained under its kind's explanation kind, the same way the typed
+    /// `attach_*` helpers do.
+    ///
+    /// # Errors
+    ///
+    /// [`GraphError::EvidenceNotFound`], [`GraphError::ObservationNotFound`],
+    /// [`GraphError::ClaimNotFound`], or [`GraphError::InvalidClaimLink`] for a
+    /// self-link.
+    pub fn attach_link(&mut self, link: ClaimLink) -> Result<ClaimLink, GraphError> {
+        match link.source() {
+            ClaimLinkSource::Evidence(evidence_id) => {
+                if !self.known_evidence.contains(evidence_id) {
+                    return Err(GraphError::EvidenceNotFound(evidence_id.clone()));
+                }
+            }
+            ClaimLinkSource::Observation(observation_id) => {
+                if !self.known_observations.contains(observation_id) {
+                    return Err(GraphError::ObservationNotFound(observation_id.clone()));
+                }
+            }
+            ClaimLinkSource::Claim(source_claim_id) => {
+                if source_claim_id == link.target_claim_id() {
+                    return Err(GraphError::InvalidClaimLink(format!(
+                        "self-link claim-to-claim links are not allowed ({})",
+                        link.kind().as_str()
+                    )));
+                }
+                self.ensure_claim_exists(source_claim_id)?;
+            }
+        }
+        self.ensure_claim_exists(link.target_claim_id())?;
+
+        self.claim_links.push(link.clone());
+
+        let explanation = EpistemicExplanation::new(
+            format!("claim:{}", link.target_claim_id().as_str()),
+            claim_link_kind_to_explanation_kind(link.kind()),
+        )
+        .with_consumed_input(claim_link_explanation_key(&link))
+        .with_reason_ref(link.explanation_ref().map(str::to_owned));
+        self.record_link_explanation(&link, explanation.clone());
+        self.record_claim_explanation(link.target_claim_id(), explanation);
+
+        Ok(link)
     }
 
     /// Create a claim at the `Candidate` lifecycle state.

@@ -35,6 +35,15 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   `EvidenceRecordStore::lift_observations`. The legacy source lift no longer
   copies a record's `observed_at` into the source acquisition time (Epic 0029
   WS-A, #149).
+- `graph-core`: `ClaimLink` becomes the evidence link of ADR-0016. `ClaimLinkKind`
+  gains `ContextFor`, `Duplicates`, `DerivedFrom`, `DependsOn`;
+  `ClaimLinkSource` gains `Observation`; links carry optional `strength`,
+  `authority`, `independence_cluster`, and `BitemporalStamp` fields;
+  `ClaimStore::attach_link` and `register_observation` are added;
+  `EpistemicRelationKind` gains the four aligned kinds with canonical
+  relationship types; `EpistemicExplanationKind` gains `ContextLink`,
+  `DuplicateLink`, `DerivationLink`, `DependencyLink`. Links serialized before
+  this change deserialize unchanged (Epic 0029 WS-A, #150).
 
 ## Releases
 

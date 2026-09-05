@@ -200,6 +200,19 @@ pub enum EpistemicRelationKind {
 
     /// A decision follows from assessments.
     Decides,
+
+    /// Context for a claim without support or refutation (claim-link aligned).
+    ContextFor,
+
+    /// Duplicate of a claim from another extraction or source (claim-link
+    /// aligned).
+    Duplicates,
+
+    /// Derivation of a claim by inference or aggregation (claim-link aligned).
+    DerivedFrom,
+
+    /// Dependency of a claim on another holding (claim-link aligned).
+    DependsOn,
 }
 
 impl EpistemicRelationKind {
@@ -207,7 +220,7 @@ impl EpistemicRelationKind {
     ///
     ///
     /// fix the report order so vocabularies diff cleanly across runs.
-    pub const ALL: [EpistemicRelationKind; 8] = [
+    pub const ALL: [EpistemicRelationKind; 12] = [
         EpistemicRelationKind::Reports,
         EpistemicRelationKind::Supports,
         EpistemicRelationKind::Refutes,
@@ -216,6 +229,10 @@ impl EpistemicRelationKind {
         EpistemicRelationKind::Assesses,
         EpistemicRelationKind::Infers,
         EpistemicRelationKind::Decides,
+        EpistemicRelationKind::ContextFor,
+        EpistemicRelationKind::Duplicates,
+        EpistemicRelationKind::DerivedFrom,
+        EpistemicRelationKind::DependsOn,
     ];
 
     /// Return the canonical relationship type of this kind.
@@ -240,6 +257,10 @@ impl EpistemicRelationKind {
             EpistemicRelationKind::Assesses => "ASSESSES",
             EpistemicRelationKind::Infers => "INFERS",
             EpistemicRelationKind::Decides => "DECIDES",
+            EpistemicRelationKind::ContextFor => "CONTEXT_FOR",
+            EpistemicRelationKind::Duplicates => "DUPLICATES",
+            EpistemicRelationKind::DerivedFrom => "DERIVED_FROM",
+            EpistemicRelationKind::DependsOn => "DEPENDS_ON",
         };
         RelationshipType::new(name).expect("canonical relationship type should be valid")
     }
@@ -283,6 +304,10 @@ impl EpistemicRelationKind {
             EpistemicRelationKind::Refutes => Some(ClaimLinkKind::Refutes),
             EpistemicRelationKind::Contradicts => Some(ClaimLinkKind::Contradicts),
             EpistemicRelationKind::Supersedes => Some(ClaimLinkKind::Supersedes),
+            EpistemicRelationKind::ContextFor => Some(ClaimLinkKind::ContextFor),
+            EpistemicRelationKind::Duplicates => Some(ClaimLinkKind::Duplicates),
+            EpistemicRelationKind::DerivedFrom => Some(ClaimLinkKind::DerivedFrom),
+            EpistemicRelationKind::DependsOn => Some(ClaimLinkKind::DependsOn),
             EpistemicRelationKind::Reports
             | EpistemicRelationKind::Assesses
             | EpistemicRelationKind::Infers
@@ -298,6 +323,10 @@ impl From<ClaimLinkKind> for EpistemicRelationKind {
             ClaimLinkKind::Refutes => EpistemicRelationKind::Refutes,
             ClaimLinkKind::Contradicts => EpistemicRelationKind::Contradicts,
             ClaimLinkKind::Supersedes => EpistemicRelationKind::Supersedes,
+            ClaimLinkKind::ContextFor => EpistemicRelationKind::ContextFor,
+            ClaimLinkKind::Duplicates => EpistemicRelationKind::Duplicates,
+            ClaimLinkKind::DerivedFrom => EpistemicRelationKind::DerivedFrom,
+            ClaimLinkKind::DependsOn => EpistemicRelationKind::DependsOn,
         }
     }
 }

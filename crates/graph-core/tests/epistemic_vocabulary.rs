@@ -75,7 +75,8 @@ fn node_vocabulary_is_complete_with_stable_labels() {
 // then every kind should map to itself and unknown types to none.
 #[test]
 fn relation_vocabulary_is_complete_with_stable_types() {
-    assert_eq!(EpistemicRelationKind::ALL.len(), 8);
+    // Eight Epic 0018 kinds plus the four Epic 0029 evidence-link kinds.
+    assert_eq!(EpistemicRelationKind::ALL.len(), 12);
     for kind in [
         EpistemicRelationKind::Reports,
         EpistemicRelationKind::Supports,
@@ -85,6 +86,10 @@ fn relation_vocabulary_is_complete_with_stable_types() {
         EpistemicRelationKind::Assesses,
         EpistemicRelationKind::Infers,
         EpistemicRelationKind::Decides,
+        EpistemicRelationKind::ContextFor,
+        EpistemicRelationKind::Duplicates,
+        EpistemicRelationKind::DerivedFrom,
+        EpistemicRelationKind::DependsOn,
     ] {
         assert!(EpistemicRelationKind::ALL.contains(&kind));
         assert_eq!(
