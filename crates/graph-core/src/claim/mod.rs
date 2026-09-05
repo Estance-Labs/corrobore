@@ -21,10 +21,11 @@
 //! Claim record model and lifecycle primitives for epistemic graph behavior.
 //!
 //! Module boundary:
-//! this module owns first-class claim records, lifecycle states, and a minimal
-//! in-memory claim store boundary. It does not implement support/refutation link
-//! semantics, contradiction graph traversal, supersession graphs, trust scoring,
-//! or automated epistemic reasoning policies.
+//! this module owns first-class claim records, lifecycle states, the optional
+//! structured proposition beside the text statement, and a minimal in-memory
+//! claim store boundary. It does not implement contradiction graph traversal,
+//! supersession graphs, trust scoring, verdict computation, or automated
+//! epistemic reasoning policies.
 
 pub(crate) use std::collections::{HashMap, HashSet};
 
@@ -38,6 +39,7 @@ pub(crate) use crate::{
 mod epistemic;
 mod hypothesis;
 mod link;
+mod proposition;
 mod stance;
 mod status;
 mod store;
@@ -46,6 +48,7 @@ mod target;
 pub use epistemic::*;
 pub use hypothesis::*;
 pub use link::*;
+pub use proposition::*;
 pub use stance::*;
 pub use status::*;
 pub use store::*;

@@ -69,6 +69,10 @@ pub enum GraphError {
     #[error("claim target not found: {0:?}")]
     ClaimTargetNotFound(ClaimTarget),
 
+    /// A claim proposition names an entity object that is not a known node.
+    #[error("claim proposition entity not found: {0:?}")]
+    ClaimPropositionEntityNotFound(NodeId),
+
     /// The requested evidence ID does not exist for an operation where absence
     /// is an explicit epistemic error.
     #[error("evidence not found: {0:?}")]

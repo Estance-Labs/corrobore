@@ -25,6 +25,11 @@ use super::*;
 pub struct ClaimInput {
     pub(crate) id: ClaimId,
     pub(crate) statement: ClaimStatement,
+    /// Optional structured proposition beside the text statement. Absent for
+    /// every claim created before Epic 0029 WS-A; skipped on serialization so
+    /// legacy payloads stay byte-stable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) proposition: Option<ClaimProposition>,
     pub(crate) target: ClaimTarget,
     pub(crate) confidence: Option<Confidence>,
     pub(crate) created_by: Option<ActorId>,
@@ -41,6 +46,8 @@ impl ClaimInput {
         Self {
             id,
             statement,
+            // Proposition.
+            proposition: None,
             target,
             // Confidence.
             confidence: None,
@@ -57,6 +64,12 @@ impl ClaimInput {
             // Temporal.
             temporal: TemporalMetadata::default(),
         }
+    }
+
+    /// Sets the structured proposition beside the text statement.
+    pub fn with_proposition(mut self, proposition: ClaimProposition) -> Self {
+        self.proposition = Some(proposition);
+        self
     }
 
     /// Sets the confidence.
@@ -110,6 +123,9 @@ pub struct Claim {
     pub(crate) version: u64,
     pub(crate) status: ClaimStatus,
     pub(crate) statement: ClaimStatement,
+    /// Optional structured proposition; see [`ClaimInput::proposition`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) proposition: Option<ClaimProposition>,
     pub(crate) target: ClaimTarget,
     pub(crate) confidence: Option<Confidence>,
     pub(crate) created_by: Option<ActorId>,
@@ -144,6 +160,11 @@ impl Claim {
     /// Statement.
     pub fn statement(&self) -> &ClaimStatement {
         &self.statement
+    }
+
+    /// Structured proposition, when the claim carries one.
+    pub fn proposition(&self) -> Option<&ClaimProposition> {
+        self.proposition.as_ref()
     }
 
     /// Target.
@@ -1038,6 +1059,7 @@ impl ClaimStore {
             version: next_version,
             status: target_status,
             statement: current_claim.statement,
+            proposition: current_claim.proposition,
             target: current_claim.target,
             confidence: current_claim.confidence,
             created_by: current_claim.created_by,
@@ -1128,6 +1150,7 @@ impl ClaimStore {
             version,
             status,
             statement: input.statement,
+            proposition: input.proposition,
             target: input.target,
             confidence: input.confidence,
             created_by: input.created_by,

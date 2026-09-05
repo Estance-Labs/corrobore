@@ -198,13 +198,14 @@ pub use bandit_controller::{
 pub use claim::{
     AgentStance, AgentStanceInput, AgentStancePatch, BeliefState, Claim, ClaimAnalyticalTarget,
     ClaimConfidenceTarget, ClaimDecision, ClaimDecisionKind, ClaimEvidenceTargetRef, ClaimInput,
-    ClaimLink, ClaimLinkKind, ClaimLinkSource, ClaimSourceTargetRef, ClaimStatement, ClaimStatus,
-    ClaimStore, ClaimTarget, ClaimTargetKind, ClaimTargetMetadata, ClaimTargetValidationContext,
-    ClaimTemporalTarget, EpistemicExplanation, EpistemicExplanationKind, EpistemicResolution,
-    EpistemicResolutionContext, EpistemicResolutionPolicy, EpistemicResolutionPolicyKind,
-    EpistemicResolutionPolicyRegistration, HypothesisWorkspace, HypothesisWorkspaceInput,
-    HypothesisWorkspaceStatus, RegisteredEpistemicResolutionPolicy, ResolutionTrustInput,
-    StanceKind, TrustInput, TrustInputInput, TrustInputKind,
+    ClaimLink, ClaimLinkKind, ClaimLinkSource, ClaimModality, ClaimPolarity, ClaimProposition,
+    ClaimPropositionObject, ClaimSourceTargetRef, ClaimStatement, ClaimStatus, ClaimStore,
+    ClaimTarget, ClaimTargetKind, ClaimTargetMetadata, ClaimTargetValidationContext,
+    ClaimTemporalTarget, ClaimValidTimeScope, EpistemicExplanation, EpistemicExplanationKind,
+    EpistemicResolution, EpistemicResolutionContext, EpistemicResolutionPolicy,
+    EpistemicResolutionPolicyKind, EpistemicResolutionPolicyRegistration, HypothesisWorkspace,
+    HypothesisWorkspaceInput, HypothesisWorkspaceStatus, RegisteredEpistemicResolutionPolicy,
+    ResolutionTrustInput, StanceKind, TrustInput, TrustInputInput, TrustInputKind,
 };
 pub use confidence::Confidence;
 pub use cross_branch_scoring::{
