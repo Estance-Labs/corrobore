@@ -656,7 +656,8 @@ fn collect_blocking_findings(
             }
             ValidationTarget::Claim(_)
             | ValidationTarget::ExportRecord(_)
-            | ValidationTarget::Retrieval(_) => {}
+            | ValidationTarget::Retrieval(_)
+            | ValidationTarget::Source(_) => {}
         }
     }
 

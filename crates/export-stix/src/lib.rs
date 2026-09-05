@@ -393,7 +393,8 @@ fn export_diagnostic(finding: &graph_core::ValidationErrorRecord) -> Option<Expo
         ValidationTarget::Relationship(id) => ("relationship", id.clone()),
         ValidationTarget::Claim(_)
         | ValidationTarget::ExportRecord(_)
-        | ValidationTarget::Retrieval(_) => return None,
+        | ValidationTarget::Retrieval(_)
+        | ValidationTarget::Source(_) => return None,
     };
     Some(ExportDiagnostic {
         code: finding.code().to_owned(),

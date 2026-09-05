@@ -319,8 +319,10 @@ fn tier_record_for(target: &ValidationTarget) -> Result<TierRecordRef, GraphErro
             RelationshipId::new(value.clone())?,
         )),
         ValidationTarget::Claim(value) => Ok(TierRecordRef::Claim(ClaimId::new(value.clone())?)),
-        ValidationTarget::ExportRecord(_) | ValidationTarget::Retrieval(_) => Err(
-            GraphError::InvalidTierTransition(format!("target {target:?} is not tier-trackable")),
-        ),
+        ValidationTarget::ExportRecord(_)
+        | ValidationTarget::Retrieval(_)
+        | ValidationTarget::Source(_) => Err(GraphError::InvalidTierTransition(format!(
+            "target {target:?} is not tier-trackable"
+        ))),
     }
 }

@@ -19,6 +19,13 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   claim target context and an additive `proposition_*` property projection.
   Claims serialized before this change deserialize unchanged (Epic 0029 WS-A,
   #154).
+- `graph-core`: immutable `Source` record and `SourceStore` (URI, type,
+  publisher, authority domain, acquisition time, artifact SHA-256, signature,
+  parent source). Sources have no update path: a changed artifact hash creates
+  a superseding version and records a `source.content_drift` finding. Legacy
+  evidence records lift into sources idempotently through
+  `EvidenceRecordStore::lift_sources`, and `EvidenceRecord` gains an optional
+  `source_id`. `ValidationTarget::Source` is added (Epic 0029 WS-A, #148).
 
 ## Releases
 

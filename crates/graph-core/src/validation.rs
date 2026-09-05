@@ -55,6 +55,8 @@ pub enum ValidationTarget {
     ExportRecord(String),
     /// Recorded retrieval.
     Retrieval(String),
+    /// Source identity from the source store.
+    Source(String),
 }
 
 impl ValidationTarget {
@@ -81,6 +83,11 @@ impl ValidationTarget {
     /// Recorded retrieval.
     pub fn retrieval(value: impl Into<String>) -> Self {
         Self::Retrieval(value.into())
+    }
+
+    /// Source.
+    pub fn source(value: impl Into<String>) -> Self {
+        Self::Source(value.into())
     }
 }
 
