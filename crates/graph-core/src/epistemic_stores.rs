@@ -39,6 +39,12 @@ use crate::{ClaimStore, ObservationStore, SourceStore, VerdictStore, Verificatio
 /// The governed evidence stores of one graph.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct EpistemicStores {
+    /// Independent reference evaluations used to measure ingestion quality.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::IngestionEvaluationStore::is_empty"
+    )]
+    pub ingestion_evaluations: crate::IngestionEvaluationStore,
     /// Append-only reconciliation applications, dependencies and reversals.
     #[serde(default, skip_serializing_if = "crate::MergeStore::is_empty")]
     pub merges: crate::MergeStore,
@@ -72,7 +78,8 @@ pub struct EpistemicStores {
 impl EpistemicStores {
     /// Whether every store is empty.
     pub fn is_empty(&self) -> bool {
-        self.merges.is_empty()
+        self.ingestion_evaluations.is_empty()
+            && self.merges.is_empty()
             && self.reconciliations.is_empty()
             && self.mentions.is_empty()
             && self.candidates.is_empty()

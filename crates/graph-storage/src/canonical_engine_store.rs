@@ -423,6 +423,11 @@ impl CanonicalEngineStore {
         Ok(store)
     }
 
+    /// Read ingestion quality from the retained sidecar without payload page-ins.
+    pub fn ingestion_metrics(&self) -> GraphStorageResult<graph_core::IngestionMetrics> {
+        graph_core::IngestionMetrics::from_stores(&self.epistemic).map_err(graph_error)
+    }
+
     /// Return the storage root.
     pub fn root(&self) -> &StorageRoot {
         &self.root

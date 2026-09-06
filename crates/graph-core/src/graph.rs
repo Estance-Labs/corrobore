@@ -135,6 +135,10 @@ impl Graph {
             .epistemic
             .merges
             .validate_bindings(&snapshot.epistemic.reconciliations)?;
+        snapshot.epistemic.ingestion_evaluations.validate_bindings(
+            &snapshot.epistemic.candidates,
+            &snapshot.epistemic.reconciliations,
+        )?;
         let mut graph = Graph {
             next_node_sequence: snapshot.next_node_sequence,
             next_node_version_sequence: snapshot.next_node_version_sequence,

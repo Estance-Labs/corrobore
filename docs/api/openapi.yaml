@@ -1412,6 +1412,11 @@ paths:
     get:
       operationId: getMetrics
       summary: Prometheus text metrics
+      description: |
+        Includes ingestion extraction accuracy, repair success and false-repair rates,
+        per-predicted-outcome reconciliation accuracy, abstain rate, and evaluation
+        coverage counts. Unknown ratios are NaN; snapshot availability distinguishes
+        collection failures. Only fixed outcome labels are exported, never record IDs.
       tags: [Operations]
       security: []
       responses:
