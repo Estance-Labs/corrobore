@@ -762,6 +762,8 @@ pub struct Verdict {
     dimension_migration_findings: Vec<DimensionMigrationFinding>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     source_independence: Option<crate::SourceIndependence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    authority_resolution: Option<crate::SourceAuthorityResolution>,
     policy_version: String,
     stamp: BitemporalStamp,
 }
@@ -810,6 +812,8 @@ struct StoredVerdict {
     dimension_migration_findings: Vec<DimensionMigrationFinding>,
     #[serde(default)]
     source_independence: Option<crate::SourceIndependence>,
+    #[serde(default)]
+    authority_resolution: Option<crate::SourceAuthorityResolution>,
     policy_version: String,
     stamp: BitemporalStamp,
 }
@@ -835,6 +839,7 @@ impl TryFrom<StoredVerdict> for Verdict {
             confidence_dimensions,
             dimension_migration_findings: stored.dimension_migration_findings,
             source_independence: stored.source_independence,
+            authority_resolution: stored.authority_resolution,
             policy_version: stored.policy_version,
             stamp: stored.stamp,
         })
@@ -860,6 +865,11 @@ impl Verdict {
     /// Dependency structure behind the active evidence links, separately from bounded scores.
     pub fn source_independence(&self) -> Option<&crate::SourceIndependence> {
         self.source_independence.as_ref()
+    }
+
+    /// Scoped authority policy and the exact inputs used by this verdict.
+    pub fn authority_resolution(&self) -> Option<&crate::SourceAuthorityResolution> {
+        self.authority_resolution.as_ref()
     }
 
     /// Confidence dimensions.
@@ -913,6 +923,20 @@ impl Verdict {
             "verdict_transaction_time".to_owned(),
             PropertyValue::String(self.stamp.transaction_time.as_str().to_owned()),
         );
+        if let Some(report) = &self.authority_resolution {
+            properties.insert(
+                "verdict_source_authority_policy_version".to_owned(),
+                PropertyValue::String(report.policy_version().to_owned()),
+            );
+            properties.insert(
+                "verdict_source_authority_domain".to_owned(),
+                PropertyValue::String(report.authority_domain().to_owned()),
+            );
+            properties.insert(
+                "verdict_source_authority_predicate_class".to_owned(),
+                PropertyValue::String(report.predicate_class().to_owned()),
+            );
+        }
         if let Some(report) = &self.source_independence {
             properties.insert(
                 "verdict_source_independence_supporting_clusters".to_owned(),
@@ -1109,12 +1133,43 @@ pub struct VerdictStore {
     reachability_gaps: Vec<ReachabilityGap>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     verification_disagreements: Vec<VerificationDisagreement>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    authority_policies: Vec<crate::SourceAuthorityPolicy>,
 }
 
 impl VerdictStore {
     /// Creates an empty store.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Register an immutable authority policy version. Exact retries are idempotent.
+    /// # Errors
+    /// Rejects invalid policies and conflicting re-registration under one version.
+    pub fn register_source_authority_policy(
+        &mut self,
+        policy: crate::SourceAuthorityPolicy,
+    ) -> Result<(), GraphError> {
+        policy.validate()?;
+        if let Some(existing) = self.source_authority_policy(policy.version()) {
+            if existing == &policy {
+                return Ok(());
+            }
+            return Err(GraphError::InvalidPropertyValue(format!(
+                "immutable authority policy version conflict: {}",
+                policy.version()
+            )));
+        }
+        self.authority_policies.push(policy);
+        self.authority_policies
+            .sort_by(|a, b| a.version().cmp(b.version()));
+        Ok(())
+    }
+    /// Resolve an exact authority policy version, with no latest-version fallback.
+    pub fn source_authority_policy(&self, version: &str) -> Option<&crate::SourceAuthorityPolicy> {
+        self.authority_policies
+            .iter()
+            .find(|p| p.version() == version)
     }
 
     /// Append a verdict computed by the engine. Not a client-facing surface:
@@ -1153,6 +1208,7 @@ impl VerdictStore {
             confidence_dimensions,
             dimension_migration_findings: Vec::new(),
             source_independence: None,
+            authority_resolution: None,
             policy_version,
             stamp,
         });
@@ -1258,9 +1314,9 @@ impl VerdictStore {
         self.verdicts.len()
     }
 
-    /// Whether no verdict is stored.
+    /// Whether neither verdicts nor registered authority policies are stored.
     pub fn is_empty(&self) -> bool {
-        self.verdicts.is_empty()
+        self.verdicts.is_empty() && self.authority_policies.is_empty()
     }
 }
 
@@ -1315,9 +1371,10 @@ impl ResolutionOutcome {
 #[derive(Clone, Copy, Debug)]
 pub struct ResolutionInputs<'a> {
     verifications: &'a VerificationRecordStore,
-    evidence: &'a EvidenceRecordStore,
-    observations: &'a ObservationStore,
-    sources: &'a SourceStore,
+    pub(crate) evidence: &'a EvidenceRecordStore,
+    pub(crate) observations: &'a ObservationStore,
+    pub(crate) sources: &'a SourceStore,
+    authority_context: Option<(&'a str, &'a str, &'a str)>,
 }
 
 impl<'a> ResolutionInputs<'a> {
@@ -1333,7 +1390,20 @@ impl<'a> ResolutionInputs<'a> {
             evidence,
             observations,
             sources,
+            authority_context: None,
         }
+    }
+
+    /// Select an exact registered authority policy, domain and predicate class.
+    /// The caller supplies the classification explicitly; prose is never guessed.
+    pub fn with_source_authority(
+        mut self,
+        version: &'a str,
+        domain: &'a str,
+        predicate_class: &'a str,
+    ) -> Self {
+        self.authority_context = Some((version, domain, predicate_class));
+        self
     }
 
     /// Whether a link source resolves to an observation bound to a registered
@@ -1473,6 +1543,32 @@ pub fn resolve_claim_verdict(
     claims.claim_by_id(claim_id)?;
     let policy_version = policy_version.into();
     let as_of = VerdictAsOf::new(stamp.valid_from.clone(), stamp.transaction_time.clone());
+
+    // Resolve and validate authority before mutating derived link annotations.
+    let authority_resolution = if let Some((version, domain, predicate)) = inputs.authority_context
+    {
+        let policy = verdicts.source_authority_policy(version).ok_or_else(|| {
+            GraphError::InvalidPropertyValue(format!("unknown authority policy version: {version}"))
+        })?;
+        Some(policy.evaluate(claims, claim_id, &as_of, inputs, domain, predicate)?)
+    } else {
+        None
+    };
+    for link in claims
+        .claim_links
+        .iter_mut()
+        .filter(|l| l.target_claim_id() == claim_id && l.is_active_at(&as_of))
+    {
+        link.authority = if crate::source_authority::is_signal(link.kind()) {
+            crate::source_authority::source_for_link(link, inputs).and_then(|source| {
+                authority_resolution
+                    .as_ref()
+                    .and_then(|r| r.weight_for(&source))
+            })
+        } else {
+            None
+        };
+    }
 
     let source_independence = claims.assign_independence_clusters(
         claim_id,
@@ -1617,6 +1713,10 @@ pub fn resolve_claim_verdict(
             .current_verdict(claim_id)
             .and_then(Verdict::source_independence)
             == Some(&source_independence)
+        && verdicts
+            .current_verdict(claim_id)
+            .and_then(Verdict::authority_resolution)
+            == authority_resolution.as_ref()
     {
         return Ok(ResolutionOutcome {
             claim_id: claim_id.clone(),
@@ -1648,7 +1748,12 @@ pub fn resolve_claim_verdict(
         verdict_id.clone(),
         claim_id.clone(),
         state,
-        ConfidenceDimensions::default(),
+        ConfidenceDimensions {
+            source_authority: authority_resolution
+                .as_ref()
+                .and_then(crate::SourceAuthorityResolution::dimension),
+            ..Default::default()
+        },
         policy_version,
         stamp.clone(),
     )?;
@@ -1659,6 +1764,11 @@ pub fn resolve_claim_verdict(
         .last_mut()
         .expect("just appended verdict")
         .source_independence = Some(source_independence);
+    verdicts
+        .verdicts
+        .last_mut()
+        .expect("just appended verdict")
+        .authority_resolution = authority_resolution;
     if previous != Some(state) {
         verdicts.append_transition(StateTransition {
             id: transition_id,

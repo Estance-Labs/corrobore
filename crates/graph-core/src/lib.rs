@@ -148,6 +148,7 @@ mod semantic_seed;
 mod semantic_seed_graph_resolver;
 mod snapshot;
 mod source;
+mod source_authority;
 mod status;
 mod stop_condition;
 mod structural_validators;
@@ -414,4 +415,9 @@ pub use working_set_telemetry::{
 pub use world_branch::{
     BranchCreationInput, BranchDescriptor, BranchId, BranchStatus, HypothesisWorldDescriptor,
     HypothesisWorldModel, WorldId,
+};
+
+pub use source_authority::{
+    AuthorityTrustRule, ResolvedSourceAuthority, SourceAuthority, SourceAuthorityPolicy,
+    SourceAuthorityResolution,
 };
