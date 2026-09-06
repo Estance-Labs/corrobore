@@ -1,6 +1,6 @@
 ---
 name: corrobore
-description: Use Corrobore as external structured working memory for CTI, FIMI, crisis, and cross-domain investigations with focused reads and evidence-backed writes.
+description: Use Corrobore as external structured working memory for CTI, FIMI, crisis, and cross-domain investigations with focused reads and evidence-backed candidate ingestion.
 license: MIT
 ---
 
@@ -24,11 +24,11 @@ executable correction and export flow.
 2. Search semantic seeds when the task provides an objective but no graph id.
 3. Read the smallest bounded subgraph that answers the question.
 4. Compare graph state with source evidence.
-5. Write only authorized, evidence-backed entities and relationships.
-6. Read back changes and audit expected relationship coverage.
-7. Complete every authorized write before promotion.
-8. Promote eligible nodes and relationships, then attempt strict export.
-9. Repeat readiness and promotion after any late write.
+5. Follow [candidate ingestion and targeted repair](references/candidate-ingestion.md): submit, read the failing constraint, re-extract that field, resubmit.
+6. Keep raw candidate versions in Shadow or Hypothesis with extraction runs and repair lineage.
+7. Review source grounding and explicitly promote eligible candidates within the task's authorization.
+8. Read back the reviewed records and audit relationship coverage before strict export.
+9. Route later extraction corrections through a new candidate workflow.
 10. Stop named sessions when the workflow ends.
 
 ## HTTP mapping
@@ -39,9 +39,11 @@ executable correction and export flow.
 - `GET /metrics`: Prometheus metrics.
 - `POST /v1/seed/search`: ranked seed candidates with explanations.
 - `POST /v1/cypher/read`: read-only Cypher.
-- `POST /v1/cypher/write`: mutation Cypher.
-- `POST /v1/cypher/execute`: compatibility route with explicit or automatic mode.
-- `POST /v1/import/stix` and `/v1/import/stix/file`: STIX import.
+- `POST /v1/import/candidates`: retain raw extraction candidates and return constraint feedback.
+- `GET /v1/import/candidates/{id}`: inspect raw versions, feedback and promotion receipts.
+- `POST /v1/import/candidates/{id}/repairs`: resubmit a targeted repair with predecessor lineage.
+- `POST /v1/import/candidates/{id}/promote`: explicit reviewed promotion.
+- `GET /v1/reconciliations/{id}` and `POST /v1/reconciliations/{id}/undo`: inspect or reverse an evidence-cited merge.
 - `POST /v1/stix/validate`: native STIX validation and supported corrections.
 - `GET /v1/export/stix`: deterministic STIX projection; `force=true` is an explicit audited override for semantic validation only.
 - `POST /v1/sessions/start`, `GET /v1/sessions/{session_id}/health`, `GET /v1/sessions/{session_id}/logs`, `POST /v1/sessions/{session_id}/stop`: durable session lifecycle and audit.
@@ -55,15 +57,16 @@ Protected routes require `Authorization: Bearer <token>`.
 | Native Cypher and memory operations | `0..=1` | `0.9` means 90% |
 | STIX objects and STIX import annotations | `0..=100` | `90` is stored as native 0.9 |
 
-Do not copy `90` from STIX into `SET r.confidence = 90`. Cypher rejects it;
-write `0.9` at the native boundary.
+Normalize STIX confidence `90` to `0.9` when mapping reviewed content to native
+graph metadata. Preserve the original raw candidate payload and its scale.
+Evidence and confidence remain owned by each assertion.
 
 ## Tool boundary
 
 When Corrobore is exposed as agent tools, preserve the transport boundary:
 
 - health, metrics, seed search, Cypher reads, export, session health, and session logs are read operations;
-- Cypher writes, STIX import, validation with correction persistence, session start, and session stop can change durable or graph state;
+- candidate submission, repair, reviewed promotion, reconciliation application/undo, validation with correction persistence, session start, and session stop change durable state;
 - never route a mutation through a read tool or retry a policy rejection through a broader endpoint.
 
 ### Seed search
@@ -82,19 +85,10 @@ Use candidate scores and explanations to choose where to inspect. Ranking is not
 
 ## Cypher rules
 
-Supported reads include `MATCH`, `OPTIONAL MATCH`, `WHERE`, `WITH`, `RETURN`, `DISTINCT`, aggregations, `ORDER BY`, `SKIP`, and `LIMIT`. Supported mutations include `CREATE`, `MERGE`, `SET`, `REMOVE`, and `DELETE` when host policy allows them.
-
-Never emit `DETACH DELETE`, `LOAD CSV`, `UNWIND`, `FOREACH`, `CALL APOC`, or `CALL DBMS`.
-
-```cypher
-MATCH (a:ThreatActor {name: "APT28"})
-MATCH (e:EvidenceSpan {id: "span--123"})
-MERGE (a)-[r:USES]->(m:Malware {name: "X-Agent"})
-SET r.confidence = 0.82,
-    r.evidence_refs = [e.id],
-    r.status = "candidate"
-RETURN r
-```
+Use bounded `MATCH`, `OPTIONAL MATCH`, `WHERE`, `WITH`, `RETURN`, aggregations,
+ordering and limits for investigation. Candidate status on an ordinary graph
+record does not implement candidate-tier isolation. Use the candidate API for
+extracted assertions; never bypass its validation through a graph mutation.
 
 Every relationship assertion owns its own evidence and confidence. Evidence or
 confidence on either endpoint does not make the relationship export-ready.
@@ -163,34 +157,15 @@ For reusable task prompts, load only the reference that matches the current job:
 - [STIX from unstructured data](references/stix-from-unstructured.md)
 - [Evidence-first validation](references/evidence-first-validation.md)
 
-1. Split the source into stable evidence spans.
-2. Extract candidate entities and relations with span ids and initial confidence.
-3. Start a named Corrobore session.
-4. Read or search for existing identities before merging candidates.
-5. Materialize all entities and Relationship SROs with idempotent writes.
-6. Query orphans, missing relationship metadata, contradictions, and expected
-   `based-on` / `indicates` coverage.
-7. Re-read only implicated source spans and write delta corrections.
-8. Read back the final graph; late writes remain candidate and require a new
-   readiness and promotion pass.
-9. Validate, review issues and persistence, and revalidate after corrections
-   when a post-fix verdict is required.
-10. Promote eligible nodes and relationships, attempt strict export, and stop
-    the session.
-
-Example pass-A record:
-
-```json
-{
-  "entity": {
-    "type": "ThreatActor",
-    "name": "APT-X",
-    "evidence_ref": "span--p12-l03-09",
-    "confidence": 0.72,
-    "status": "candidate"
-  }
-}
-```
+1. Split the source into stable evidence spans and extract candidate assertions externally.
+2. Start a named session; search and inspect existing identities.
+3. Follow the [candidate loop](references/candidate-ingestion.md) for entities and relationships.
+4. Re-extract only fields identified by constraint feedback; retain all raw versions.
+5. Review provenance and explicitly promote eligible candidates with complete domain metadata.
+6. Query orphans, relationship-owned evidence, contradictions and expected `based-on` / `indicates` coverage.
+7. Keep unresolved assertions outside canonical state and ambiguous identities unmerged.
+8. Validate the supported STIX projection, inspect each result, and revalidate after authorized corrections.
+9. Attempt strict export and stop the session. Never fabricate a bridge to make export succeed.
 
 Quality gates: source grounding, referential integrity, low orphan rate, evidence on key claims, honest confidence, bounded queries, stable export metadata, and no fabricated bridge entities.
 
@@ -207,9 +182,9 @@ Quality gates: source grounding, referential integrity, low orphan rate, evidenc
 
 ## Trust rules
 
-- Read before writing and prefer `MERGE` for identities.
+- Read before submitting candidates; reconcile identity only with contextual evidence.
 - Attach evidence and confidence to important claims.
-- Keep inferred items in `candidate` status.
+- Keep unreviewed extraction in Shadow or Hypothesis; a `candidate` property alone is insufficient.
 - Bound queries and avoid broad traversal.
 - Treat seed ranking as navigation guidance, not proof.
 - Do not fabricate missing facts or bypass a policy rejection.

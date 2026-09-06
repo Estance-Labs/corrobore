@@ -61,6 +61,30 @@ validation, and audit invariants across deployment topologies.
 Some integration assets (for example XTM One) have been moved to dedicated
 repositories, while still targeting the same runtime interfaces.
 
+## Candidate ingestion and reconciliation (WS-C)
+
+External extractors submit raw candidate versions through the HTTP candidate
+contract. `EpistemicStores.candidates` reuses the existing Shadow/Hypothesis
+tiers and retains extraction runs, caller-supplied constraints, precise failure
+feedback and repair predecessor links. A successful constraint check does not
+create canonical records. Explicit reviewed promotion is an atomic engine
+mutation, with the candidate history retained.
+
+Observation-bound mentions remain distinct from canonical entities. Reconciliation
+judgments carry contextual source citations and an actor/verifier, and may merge,
+distinguish or abstain. Application and undo use an append-only dependency ledger:
+the read projection groups immutable mention records, and a reversible leaf merge
+restores the original observation links. Dependent judgments prevent silent
+cascading reversal. Extraction and identity classification stay outside the core.
+
+Independent ingestion evaluations produce quality metrics from governed metadata,
+without loading canonical payloads during a scrape. They keep extraction accuracy,
+repair success, false repair and abstention visible as separate measurements.
+Agent recipes use the candidate loop rather than direct graph writes.
+
+The [ingestion contract and acceptance matrix](user-guide/ingestion.md#candidate-ingestion-ws-c)
+link Spikes B/D, HTTP undo, metric coverage and unchanged WS-A/WS-B/WS-D gates.
+
 ## Request path
 
 Every embedded or HTTP Cypher request follows the same boundary:
