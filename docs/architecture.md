@@ -200,6 +200,31 @@ component can add at most one percentage point; distinct components contribute
 separately. `Verdict::cluster_aggregation()` persists each component's best
 strength, member count, increment, authority and resulting contribution.
 
+WS-D item 5 retains a `HypothesisSet` on the resolution outcome and the stored
+verdict. It contains the anchor claim and its direct, active claim-to-claim
+`Contradicts` or `Supersedes` neighbors in either direction, without transitive
+expansion. With no competitors it contains the anchor alone. Each alternative
+keeps its state, complete dimensions, source dependency structure, directional
+cluster contributions and authority-policy provenance, including losing entries.
+Competitors are evaluated at the same bitemporal stamp and authority scope without
+writing their lifecycle or verdict history.
+
+Ranking first places `Supported` and `Mixed` alternatives ahead of rejected or
+unresolved alternatives. Within each group, the score is cluster-derived
+`evidence_sufficiency * (1 - contradiction_load)`, descending; missing support
+inputs remain absent and sort last. Equal scores use ascending claim identifiers.
+This is a ranking indicator, not a calibrated probability or the legacy scalar
+claim confidence. Deterministic failure retains its veto through state and
+contradiction load. One independent high-authority source can therefore outrank
+many dependent copies.
+
+An alternative changing appends a new anchor snapshot even if the anchor state
+stays unchanged, without a false state transition. Identical resolutions return
+the retained set without appending a verdict. Persistence and the read-only graph
+projection preserve the exact order and explanations: each `Verdict` node exposes
+`verdict_hypothesis_set` as a JSON string, so alternatives remain available without
+rerunning resolution. Historical policy replays leave this additive field absent.
+
 The policy computes six dimensions independently:
 
 | Dimension | Input and meaning |
