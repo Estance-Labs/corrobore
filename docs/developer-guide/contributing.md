@@ -6,7 +6,10 @@ If you intend to contribute using an AI coding assistant (Copilot, Cursor, Claud
 
 AI-generated code must be reviewed with the same rigour as any human-authored change, or higher, because hallucinations and subtle logic errors are common and not always obvious at a glance.
 
-Every AI-assisted PR will be subject to a full senior-level code review. To calibrate what that means in practice:
+Every AI-assisted PR requires a thorough code review, which an agent may perform
+within user-authorized delivery. A separate human approval is required only when
+explicitly requested by the user or enforced by GitHub rules. The following human
+review estimates illustrate the expected care, not a mandatory human approval gate:
 
 ### Cost of a code review
 
@@ -46,6 +49,43 @@ Read the GitHub issue before editing and use it as the acceptance contract.
 4. Run full validation, fix every regression, create a PR containing `Closes #<issue>`, merge it, and sync local `main` before starting another issue.
 
 An open PR is not completion. Do not use temporary bypasses or weaken tests to make a change pass.
+
+## Autonomous delivery authorization
+
+A user request to deliver an issue, epic, or a sequence of epics authorizes the
+agent to create the scoped PRs and merge them after validation, without requesting
+an additional human confirmation for each merge. Continue through the authorized
+scope after each completed delivery; do not infer authorization for unrelated work.
+An explicit user instruction to pause, keep a PR in draft, or require human review
+still applies.
+
+Before merging, review the diff against the issue acceptance criteria, fix review
+findings, run the required validation, and verify that required GitHub checks pass
+for the current PR head. The agent may perform the code review; human approval is
+not an additional repository doctrine gate. Honor GitHub rules and any required
+reviewers: never bypass branch protections or use an administrator override. If
+an external requirement blocks the merge, report the blocker and stop progression
+to the next issue.
+
+After each merge, perform these steps in order:
+
+1. Verify on GitHub that the PR is merged and record its merge commit. A queued
+   merge or an enabled auto-merge is not a successful merge.
+2. Fetch the remote and fast-forward the clean local `main` checkout to
+   `origin/main`. If local changes, divergence, or active use prevent a safe update,
+   preserve the checkout and report the blocker; never reset or discard work.
+3. Verify that the merge commit is included in synchronized `main` and that no PR
+   for the completed issue branch remains open. For squash or rebase merges,
+   verify the resulting merge commit, not ancestry of the original branch head.
+4. Check that the completed issue worktree is clean (including untracked files),
+   unlocked, and no longer used by another agent, task, or process. Leave it from
+   the current session, remove it with non-forced `git worktree remove`, then
+   prune stale metadata. Preserve dirty, locked, or still-used worktrees and
+   report why cleanup is deferred; retry when they become eligible.
+5. Only after merge and main synchronization are verified, create the next issue
+   branch and isolated worktree from the updated local `main`. Eligible completed
+   worktrees must be cleaned before proceeding; a worktree still in active use
+   must be preserved.
 
 ## Local validation
 
