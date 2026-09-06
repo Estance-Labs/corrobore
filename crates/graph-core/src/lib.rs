@@ -110,6 +110,7 @@ mod branch_overlay;
 mod branch_resolution;
 mod calibrated_assessment;
 mod claim;
+mod cluster_aggregation;
 mod confidence;
 mod confidence_dimensions;
 mod cross_branch_scoring;
@@ -421,3 +422,10 @@ pub use source_authority::{
     AuthorityTrustRule, ResolvedSourceAuthority, SourceAuthority, SourceAuthorityPolicy,
     SourceAuthorityResolution,
 };
+
+pub use cluster_aggregation::{
+    CLUSTER_AGGREGATION_POLICY_VERSION, ClusterAggregation, ClusterContribution, ClusterWeight,
+    DEFAULT_VERDICT_POLICY_VERSION, WITHIN_CLUSTER_INCREMENT_CAP,
+};
+
+pub use verdict::resolve_current_claim_verdict;

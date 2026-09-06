@@ -142,8 +142,8 @@ links. Separate components mean no recorded dependency, not proven independence;
 links with no assignable provenance get explicit unknown-independence singletons.
 Projected verdicts expose `verdict_source_independence_supporting_clusters` and
 `verdict_source_independence_unknown_clusters`. The bounded
-`confidence_dimensions.source_independence` stays absent until a scoring policy
-is defined. A structure change appends a verdict snapshot even if the state
+`confidence_dimensions.source_independence` stays absent in historical policies;
+its current scoring rule is defined below. A structure change appends a verdict snapshot even if the state
 stays the same; it does not append a false state transition. Weighting and
 authority remain outside this component.
 
@@ -170,10 +170,51 @@ source authority. `Verdict::authority_resolution()` retains the binding,
 effective weight, consumed inputs and their provenance/reason references. The
 `source_authority` dimension is the maximum known effective weight among distinct
 signal sources, so repeated records cannot raise it; cluster contribution
-weighting is deferred to WS-D item 4. The exact authority version, domain and
+weighting uses the WS-D item 4 policy below. The exact authority version, domain and
 predicate class are also exposed as `verdict_source_authority_*` properties.
 Changing authority produces a new verdict snapshot without rewriting history or
 creating a false state transition.
+
+Cluster aggregation (WS-D item 4) is the default for new resolutions through
+`resolve_current_claim_verdict`, under `ws-d-cluster-v1`.
+`resolve_claim_verdict` still accepts an explicit historical policy label,
+`ws-a-minimal-v1` or `deterministic-first-v1`, for compatible replay. Unknown
+versions are rejected before mutation. A policy change appends a
+new snapshot even when the verdict state is unchanged.
+
+For each direction (support or refutation), a cluster uses only members with
+explicit strength and resolved authority. Members with missing inputs cannot
+borrow a weight; zero weights yield an explicit zero contribution and no bonus.
+For `n` positive members, best strength `s`, and maximum eligible authority `a`,
+the versioned contribution is:
+
+```text
+increment = 0.01 * (1 - s) * (1 - 1/n)
+contribution = (s + increment) * a
+combined = 1 - product(1 - contribution_per_cluster)
+```
+
+The increment is bounded, concave and headroom-scaled. These are deterministic
+bounded indicators, not calibrated probabilities. Duplicate records in a
+component can add at most one percentage point; distinct components contribute
+separately. `Verdict::cluster_aggregation()` persists each component's best
+strength, member count, increment, authority and resulting contribution.
+
+The policy computes six dimensions independently:
+
+| Dimension | Input and meaning |
+| --- | --- |
+| `evidence_sufficiency` | Combined support contributions; absent without eligible support inputs. |
+| `source_authority` | Maximum resolved signal-source authority, as in WS-D item 3. |
+| `source_independence` | `k / (k + 1)` for `k` supporting components with known provenance; the exact structure and unknown singletons remain in `source_independence()`. Separate components do not prove independence. |
+| `temporal_validity` | One when any known stamped signal is active, zero when all known stamped signals are outside validity, absent without stamped signals. No unstated age-decay rule is applied. |
+| `contradiction_load` | Refuting mass divided by total directional mass; a deterministic failure forces one. |
+| `verifier_strength` | One for authoritative deterministic conclusive coverage, zero for advisory/inconclusive-only input, absent without known verification records. |
+
+A deterministic failure remains non-trusted regardless of these dimensions.
+Active links without enough explicit inputs abstain as `InsufficientEvidence`;
+no evidence remains `Unknown`. The scalar claim confidence is never a fallback.
+The hypothesis set and actionability gate remain for subsequent WS-D items.
 
 ## Durability and transport boundaries
 

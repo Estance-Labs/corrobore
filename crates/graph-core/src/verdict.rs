@@ -764,6 +764,8 @@ pub struct Verdict {
     source_independence: Option<crate::SourceIndependence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     authority_resolution: Option<crate::SourceAuthorityResolution>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cluster_aggregation: Option<crate::ClusterAggregation>,
     policy_version: String,
     stamp: BitemporalStamp,
 }
@@ -814,6 +816,8 @@ struct StoredVerdict {
     source_independence: Option<crate::SourceIndependence>,
     #[serde(default)]
     authority_resolution: Option<crate::SourceAuthorityResolution>,
+    #[serde(default)]
+    cluster_aggregation: Option<crate::ClusterAggregation>,
     policy_version: String,
     stamp: BitemporalStamp,
 }
@@ -840,6 +844,7 @@ impl TryFrom<StoredVerdict> for Verdict {
             dimension_migration_findings: stored.dimension_migration_findings,
             source_independence: stored.source_independence,
             authority_resolution: stored.authority_resolution,
+            cluster_aggregation: stored.cluster_aggregation,
             policy_version: stored.policy_version,
             stamp: stored.stamp,
         })
@@ -870,6 +875,11 @@ impl Verdict {
     /// Scoped authority policy and the exact inputs used by this verdict.
     pub fn authority_resolution(&self) -> Option<&crate::SourceAuthorityResolution> {
         self.authority_resolution.as_ref()
+    }
+
+    /// Explained cluster contributions, absent on historical WS-A verdicts.
+    pub fn cluster_aggregation(&self) -> Option<&crate::ClusterAggregation> {
+        self.cluster_aggregation.as_ref()
     }
 
     /// Confidence dimensions.
@@ -1209,6 +1219,7 @@ impl VerdictStore {
             dimension_migration_findings: Vec::new(),
             source_independence: None,
             authority_resolution: None,
+            cluster_aggregation: None,
             policy_version,
             stamp,
         });
@@ -1500,8 +1511,13 @@ impl ReachabilityGap {
     }
 }
 
-/// Compute and record the verdict of a claim with deterministic-first
-/// precedence.
+/// Compute and record a verdict under an explicit policy version.
+///
+/// `ws-d-cluster-v1` aggregates weighted independence components and gives
+/// deterministic failure precedence over every aggregate. Use
+/// `resolve_current_claim_verdict` for new resolutions. Historical policy
+/// labels `ws-a-minimal-v1` and `deterministic-first-v1` retain the compatibility behavior
+/// described below for replay.
 ///
 /// Active inputs are the links targeting the claim that `stamp` covers (links
 /// without a stamp are always active) and the verification records for the
@@ -1542,6 +1558,20 @@ pub fn resolve_claim_verdict(
 ) -> Result<ResolutionOutcome, GraphError> {
     claims.claim_by_id(claim_id)?;
     let policy_version = policy_version.into();
+    if policy_version.trim().is_empty() {
+        return Err(GraphError::InvalidPropertyValue(
+            "verdict policy_version must not be empty".to_owned(),
+        ));
+    }
+    let cluster_policy = match policy_version.as_str() {
+        crate::CLUSTER_AGGREGATION_POLICY_VERSION => true,
+        "ws-a-minimal-v1" | "deterministic-first-v1" => false,
+        _ => {
+            return Err(GraphError::InvalidPropertyValue(format!(
+                "unknown verdict policy version: {policy_version}"
+            )));
+        }
+    };
     let as_of = VerdictAsOf::new(stamp.valid_from.clone(), stamp.transaction_time.clone());
 
     // Resolve and validate authority before mutating derived link annotations.
@@ -1582,6 +1612,10 @@ pub fn resolve_claim_verdict(
     let mut refute = 0_usize;
     let mut superseded = false;
     for link in claims.links_active_at(claim_id, &as_of) {
+        if cluster_policy {
+            superseded |= link.kind() == ClaimLinkKind::Supersedes;
+            continue;
+        }
         match link_signal(link.kind()) {
             LinkSignal::Support => support += 1,
             LinkSignal::Refute => refute += 1,
@@ -1598,6 +1632,39 @@ pub fn resolve_claim_verdict(
         authoritative_records(&claim_records, true, stamp.transaction_time.as_str());
     let advisory_records =
         authoritative_records(&claim_records, false, stamp.transaction_time.as_str());
+
+    let deterministic_failure = deterministic_records
+        .iter()
+        .any(|r| r.result() == VerificationResult::Fail);
+    let (cluster_aggregation, dimensions) = if cluster_policy {
+        let (report, dimensions) = crate::cluster_aggregation::aggregate_components(
+            claims,
+            &source_independence,
+            claim_id,
+            &as_of,
+            authority_resolution.as_ref(),
+            crate::cluster_aggregation::VerificationAggregationInput {
+                has_records: claim_records.iter().any(|r| {
+                    r.stamp().transaction_time.as_str() <= stamp.transaction_time.as_str()
+                }),
+                has_deterministic: !deterministic_records.is_empty(),
+                failed: deterministic_failure,
+            },
+        )?;
+        support = usize::from(report.support_score().is_some_and(|s| s.value() > 0.0));
+        refute = usize::from(report.refutation_score().is_some_and(|s| s.value() > 0.0));
+        (Some(report), dimensions)
+    } else {
+        (
+            None,
+            ConfidenceDimensions {
+                source_authority: authority_resolution
+                    .as_ref()
+                    .and_then(crate::SourceAuthorityResolution::dimension),
+                ..Default::default()
+            },
+        )
+    };
 
     for record in &deterministic_records {
         match record.result {
@@ -1641,6 +1708,18 @@ pub fn resolve_claim_verdict(
 
     let state = if superseded {
         VerdictState::Superseded
+    } else if cluster_policy && deterministic_failure {
+        // Mechanical failure overrides every aggregate, including maximal support.
+        VerdictState::Refuted
+    } else if cluster_policy
+        && support == 0
+        && refute == 0
+        && claims
+            .links_active_at(claim_id, &as_of)
+            .iter()
+            .any(|l| crate::source_authority::is_signal(l.kind()))
+    {
+        VerdictState::InsufficientEvidence
     } else {
         match (support > 0, refute > 0) {
             (true, true) => VerdictState::Mixed,
@@ -1709,6 +1788,11 @@ pub fn resolve_claim_verdict(
 
     let previous = verdicts.current_verdict(claim_id).map(Verdict::state);
     if previous == Some(state)
+        && verdicts.current_verdict(claim_id).is_some_and(|v| {
+            v.policy_version() == policy_version
+                && v.confidence_dimensions() == &dimensions
+                && v.cluster_aggregation() == cluster_aggregation.as_ref()
+        })
         && verdicts
             .current_verdict(claim_id)
             .and_then(Verdict::source_independence)
@@ -1748,12 +1832,7 @@ pub fn resolve_claim_verdict(
         verdict_id.clone(),
         claim_id.clone(),
         state,
-        ConfidenceDimensions {
-            source_authority: authority_resolution
-                .as_ref()
-                .and_then(crate::SourceAuthorityResolution::dimension),
-            ..Default::default()
-        },
+        dimensions,
         policy_version,
         stamp.clone(),
     )?;
@@ -1769,6 +1848,11 @@ pub fn resolve_claim_verdict(
         .last_mut()
         .expect("just appended verdict")
         .authority_resolution = authority_resolution;
+    verdicts
+        .verdicts
+        .last_mut()
+        .expect("just appended verdict")
+        .cluster_aggregation = cluster_aggregation;
     if previous != Some(state) {
         verdicts.append_transition(StateTransition {
             id: transition_id,
@@ -1901,4 +1985,26 @@ enum LinkSignal {
     Refute,
     Supersede,
     Neutral,
+}
+
+/// Resolve a new verdict with the current cluster-aggregation policy.
+/// Use `resolve_claim_verdict` with an explicit historical version for replay.
+///
+/// # Errors
+/// Returns the same validation errors as `resolve_claim_verdict`.
+pub fn resolve_current_claim_verdict(
+    claims: &mut ClaimStore,
+    verdicts: &mut VerdictStore,
+    inputs: &ResolutionInputs<'_>,
+    claim_id: &ClaimId,
+    stamp: BitemporalStamp,
+) -> Result<ResolutionOutcome, GraphError> {
+    resolve_claim_verdict(
+        claims,
+        verdicts,
+        inputs,
+        claim_id,
+        stamp,
+        crate::DEFAULT_VERDICT_POLICY_VERSION,
+    )
 }
