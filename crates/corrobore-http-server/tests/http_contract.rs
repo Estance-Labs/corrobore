@@ -579,7 +579,7 @@ async fn cypher_contract_executes_read_query_with_auth() {
 }
 
 #[tokio::test]
-async fn cypher_write_contract_keeps_typed_arrays_and_guide_metadata_native() {
+async fn cypher_write_contract_keeps_typed_arrays_and_relationship_metadata_native() {
     let app = test_app();
     for query in [
         "CREATE (a:ThreatActor {name: \"APT28\"})",
@@ -601,10 +601,9 @@ async fn cypher_write_contract_keeps_typed_arrays_and_guide_metadata_native() {
     }
 
     let metadata_query = "MATCH (a:ThreatActor {name: \"APT28\"}) MATCH (e:EvidenceSpan {id: \"span--123\"}) MERGE (a)-[r:USES]->(m:Malware {name: \"X-Agent\"}) SET r.confidence = 0.82, r.evidence_refs = [e.id], r.status = \"candidate\" RETURN r.confidence, r.evidence_refs, r.status";
-    let guide = include_str!("../../../plugins/corrobore/skills/corrobore/SKILL.md");
-    assert!(guide.contains("r.confidence = 0.82,"));
-    assert!(guide.contains("r.evidence_refs = [e.id],"));
-    assert!(guide.contains("r.status = \"candidate\""));
+    // Keep low-level native metadata coverage independent of extraction recipes.
+    // WS-C routes agents through candidates; its executable guide examples and
+    // guidance contracts now cover that workflow instead of literal Cypher text.
     let metadata_request = Request::builder()
         .method(Method::POST)
         .uri("/v1/cypher/write")

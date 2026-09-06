@@ -73,7 +73,7 @@ nav:
     - Standalone Operations: user-guide/standalone-operations.md
     - Database Operations: user-guide/database-operations.md
     - Elastic-free OpenCTI Operations: user-guide/opencti-elastic-free-operations.md
-  - TAXII Ingestion: user-guide/ingestion.md
+  - Ingestion: user-guide/ingestion.md
   - For LLM Agents: for-llms.md
   - Skills:
     - Agent Plugin: agent-skill.md

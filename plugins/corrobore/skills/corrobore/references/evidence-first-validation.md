@@ -1,6 +1,8 @@
 # Agentic Flow Prompt: Evidence-First Verification for CTI and FIMI
 
 This reference is packaged with the Corrobore Agent Skill for on-demand loading.
+For extracted assertions, follow [candidate ingestion and targeted repair](candidate-ingestion.md):
+submit, read the failing constraint, re-extract that field, resubmit.
 
 Use this flow when quality and traceability matter more than raw extraction speed.
 
@@ -27,7 +29,8 @@ flowchart TD
     D --> F
     E --> F
     F --> G["Graph constraints and repair"]
-    G --> H["Validation then deterministic STIX export"]
+    G --> P["Explicit reviewed candidate promotion"]
+    P --> H["Validation then deterministic STIX export"]
 ```
 
 ## Assertion schema (minimum)

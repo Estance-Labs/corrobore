@@ -26,9 +26,9 @@ Use the [general Corrobore skill](../corrobore/SKILL.md) when the task is not sp
 2. Extract candidate entities, observables, and relationships grounded in source spans.
 3. Search semantic seeds if graph ids are unknown.
 4. Read the existing subgraph before writing.
-5. `MERGE` candidates, attaching evidence, confidence, and `candidate` status when uncertain.
+5. Follow [candidate ingestion and targeted repair](../corrobore/references/candidate-ingestion.md): submit, read the failing constraint, re-extract that field, resubmit.
 6. Diagnose orphans, weak links, contradictions, and missing bridges with focused reads.
-7. Re-read only the source spans needed to resolve those gaps.
+7. Re-read implicated spans, retain repair lineage, and explicitly promote source-reviewed candidates within task authorization.
 8. Validate the explicit STIX bundle or graph projection.
 9. Export the deterministic bundle and stop the session.
 
@@ -37,8 +37,10 @@ Relevant HTTP routes:
 - `POST /v1/sessions/start`
 - `POST /v1/seed/search`
 - `POST /v1/cypher/read`
-- `POST /v1/cypher/write`
-- `POST /v1/import/stix` or `/v1/import/stix/file`
+- `POST /v1/import/candidates`
+- `GET /v1/import/candidates/{id}`
+- `POST /v1/import/candidates/{id}/repairs`
+- `POST /v1/import/candidates/{id}/promote`
 - `POST /v1/stix/validate`
 - `GET /v1/export/stix`
 - `GET /v1/sessions/{session_id}/health`
@@ -77,4 +79,6 @@ Before returning the JSON bundle, verify:
 5. required STIX fields pass validation;
 6. no grouping object is present.
 
-If an object cannot be repaired without invention, remove it and its broken references.
+If an object cannot be repaired without invention, retain its unresolved candidate
+and omit it and unsupported references from the final export. Do not delete raw
+proposals or fabricate a record to satisfy the output shape.

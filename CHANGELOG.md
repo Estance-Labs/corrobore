@@ -21,6 +21,14 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
 ### Added
 
+- WS-C candidate-first ingestion: immutable raw versions, targeted constraint
+  feedback and repair lineage, evidence-cited mention reconciliation with
+  reversible merges, and independently evaluated repair/reconciliation metrics.
+  Agent and plugin recipes now use submit, inspect feedback, re-extract the
+  failing field and resubmit before explicit reviewed promotion. The WS-C
+  acceptance gate covers Spikes B/D and links HTTP undo, metrics and unchanged
+  WS-A/WS-B/WS-D compatibility evidence (#192, #197–#203).
+
 - WS-D verdict uncertainty explanations with retained cluster membership,
   directional weights, dimensions, authority provenance and ranked alternatives.
   Projection and FIMI/STIX claim lineage expose the payload additively, including

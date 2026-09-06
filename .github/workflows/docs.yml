@@ -8,6 +8,7 @@ on:
       - 'plugins/corrobore/**'
       - 'scripts/agent-plugin-contract.test.mjs'
       - 'scripts/agent-plugin-mcp.test.mjs'
+      - 'scripts/ws-c-guidance.test.mjs'
       - 'scripts/docs-contract-guard.mjs'
       - 'scripts/docs-contract-guard.test.mjs'
       - 'mkdocs.yml'
@@ -56,6 +57,7 @@ jobs:
         run: |
           node --test scripts/agent-plugin-contract.test.mjs
           node --test scripts/agent-plugin-mcp.test.mjs
+          node --test scripts/ws-c-guidance.test.mjs
           node --test scripts/docs-contract-guard.test.mjs
           node --test scripts/release-notes-contract.test.mjs
           node scripts/docs-contract-guard.mjs

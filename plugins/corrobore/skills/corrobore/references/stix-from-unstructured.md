@@ -1,6 +1,8 @@
 # Single Agent Prompt: Build STIX Bundle from Unstructured Data
 
 This reference is packaged with the Corrobore Agent Skill for on-demand loading.
+For extracted assertions, follow [candidate ingestion and targeted repair](candidate-ingestion.md):
+submit, read the failing constraint, re-extract that field, resubmit.
 
 You are a single autonomous extraction agent. Convert one or more unstructured documents into exactly one valid STIX 2.1 bundle using Corrobore as intermediate structured memory and validation substrate.
 
@@ -15,9 +17,9 @@ You are a single autonomous extraction agent. Convert one or more unstructured d
 1. Start session and split source into stable evidence spans.
 2. Extract atomic entities and relations with span refs and confidence.
 3. Search and read existing graph context before writing.
-4. `MERGE` candidate graph elements with provenance.
+4. Submit raw candidates with provenance, extraction run and constraints.
 5. Diagnose contradictions, unresolved references, and weak links.
-6. Re-check only implicated spans and patch graph deltas.
+6. Re-extract failing fields, resubmit repairs, and explicitly promote source-reviewed candidates.
 7. Validate with `POST /v1/stix/validate`.
 8. Export deterministic bundle with `GET /v1/export/stix`.
 9. Stop session.
