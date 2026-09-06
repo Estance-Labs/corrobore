@@ -282,3 +282,94 @@ fn observation_mentions_are_queryable_without_resolving_candidate_entities() {
     };
     assert!(rows.is_empty());
 }
+
+#[test]
+fn abstention_is_queryable_as_a_decision_about_both_mentions() {
+    use graph_core::{
+        ActorId, EntityMentionId, EntityMentionInput, MentionFeatures, MentionOffsets,
+        ReconciliationDecider, ReconciliationEvidence, ReconciliationFeature, ReconciliationInput,
+        ReconciliationOutcome, ReconciliationRecordId,
+    };
+    let mut graph = Graph::new();
+    let source = SourceId::new("source--reconciliation").expect("source");
+    graph
+        .epistemic_stores_mut()
+        .sources
+        .register_source(SourceInput::new(
+            source.clone(),
+            "https://example.org/report",
+            EvidenceSourceType::Document,
+        ))
+        .expect("source");
+    let mut mentions = Vec::new();
+    for name in ["left", "right"] {
+        let observation = ObservationId::new(name).expect("observation");
+        let stores = graph.epistemic_stores_mut();
+        stores
+            .observations
+            .create_observation(
+                ObservationInput::new(
+                    observation.clone(),
+                    source.clone(),
+                    "Jordan",
+                    ObservationModality::Text,
+                ),
+                &stores.sources,
+            )
+            .expect("observation");
+        mentions.push(
+            graph
+                .create_entity_mention(
+                    EntityMentionInput::new(
+                        EntityMentionId::new(name).expect("mention"),
+                        observation,
+                        MentionOffsets { start: 0, end: 6 },
+                        "Jordan",
+                    )
+                    .with_features(MentionFeatures {
+                        source_context: Some("No identifying role or location was observed".into()),
+                        ..Default::default()
+                    }),
+                )
+                .expect("mention"),
+        );
+    }
+    graph
+        .record_reconciliation(
+            ReconciliationInput::new(
+                ReconciliationRecordId::new("abstain--1").expect("id"),
+                mentions[0].clone(),
+                mentions[1].clone(),
+                ReconciliationOutcome::Abstain,
+                ReconciliationDecider::Actor(ActorId::new("reviewer").expect("actor")),
+                ts("2026-09-06T12:00:00Z"),
+                "Insufficient identity evidence",
+            )
+            .with_evidence(
+                mentions
+                    .iter()
+                    .map(|id| ReconciliationEvidence::Mention {
+                        mention_id: id.clone(),
+                        feature: ReconciliationFeature::SourceContext,
+                    })
+                    .collect(),
+            ),
+        )
+        .expect("abstain");
+    let mut executor = CypherPipelineExecutor::with_graph(
+        ExecutionPolicy::strict_default(),
+        graph.epistemic_projection().expect("projection"),
+    );
+    let result=executor.execute("MATCH (r:ReconciliationRecord)-[:DECIDES]->(m:EntityMention) RETURN r.reconciliation_outcome, m.mention_id").expect("query");
+    let ExecutionResultData::Records(rows) = result.data else {
+        panic!("expected records")
+    };
+    assert_eq!(rows.len(), 2);
+    for row in rows {
+        assert_eq!(
+            serde_json::to_value(row.fields.get("r.reconciliation_outcome").expect("outcome"))
+                .expect("encode"),
+            serde_json::json!("abstain")
+        );
+    }
+}

@@ -99,6 +99,7 @@ string_id!(EvidenceId);
 string_id!(SourceId);
 string_id!(ObservationId);
 string_id!(EntityMentionId);
+string_id!(ReconciliationRecordId);
 string_id!(VerdictId);
 string_id!(VerificationRecordId);
 string_id!(StateTransitionId);

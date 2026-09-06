@@ -113,6 +113,13 @@ mod calibrated_assessment;
 mod claim;
 mod cluster_aggregation;
 pub use actionability::{ActionabilityAssessment, ActionabilityBlocker, ActionabilityPolicy};
+mod reconciliation;
+pub use ids::ReconciliationRecordId;
+pub use reconciliation::{
+    ReconciliationCitation, ReconciliationDecider, ReconciliationEvidence, ReconciliationFeature,
+    ReconciliationInput, ReconciliationOutcome, ReconciliationRecord, ReconciliationSimilarity,
+    ReconciliationSimilarityKind, ReconciliationStore,
+};
 mod entity_mention;
 pub use entity_mention::{
     EntityMention, EntityMentionInput, EntityMentionStore, MentionFeatures, MentionOffsets,

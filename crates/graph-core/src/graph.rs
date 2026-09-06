@@ -126,6 +126,11 @@ impl Graph {
             .epistemic
             .mentions
             .validate_bindings(&snapshot.epistemic.observations)?;
+        snapshot.epistemic.reconciliations.validate_bindings(
+            &snapshot.epistemic.mentions,
+            &snapshot.epistemic.observations,
+            &snapshot.epistemic.sources,
+        )?;
         let mut graph = Graph {
             next_node_sequence: snapshot.next_node_sequence,
             next_node_version_sequence: snapshot.next_node_version_sequence,
@@ -318,16 +323,18 @@ impl Graph {
     /// Build a read-only graph rendering every governed record as nodes and
     /// relationships of the epistemic vocabulary, so Cypher reads can
     /// traverse claims, sources, observations, entity mentions, evidence, verdicts,
-    /// verification records, and state transitions.
+    /// reconciliation judgments, verification records, and state transitions.
     ///
     /// Node identifiers are generated; record identifiers are properties
     /// (`claim_id`, `source_id`, ...). Labels: `Source`, `Observation`,
     /// `EntityMention`, `Claim`, `Evidence`, `Verdict` + `Assessment`,
-    /// `VerificationRecord` + `Assessment`, `StateTransition` + `Decision`.
+    /// `VerificationRecord` + `Assessment`, `StateTransition` + `Decision`,
+    /// `ReconciliationRecord` + `Decision`.
     /// Relationships: `REPORTS` (source to observation), `HAS_MENTION`
     /// (observation to mention, never an entity-resolution link), the evidence-link
     /// kinds (link source to claim), `ASSESSES` (verdict and verification
-    /// record to claim), `DECIDES` (transition to claim). The source graph is
+    /// record to claim), `DECIDES` (transition to claim or reconciliation to mentions).
+    /// The source graph is
     /// not mutated and the projection carries no stores.
     ///
     /// # Errors
@@ -344,6 +351,11 @@ impl Graph {
 
         let stores = &self.epistemic;
         stores.mentions.validate_bindings(&stores.observations)?;
+        stores.reconciliations.validate_bindings(
+            &stores.mentions,
+            &stores.observations,
+            &stores.sources,
+        )?;
         let mut projection = Graph::new();
         let with_properties = |labels: &[&str], properties: PropertyMap| {
             let mut input = NodeInput::new(labels.iter().copied());
@@ -400,11 +412,13 @@ impl Graph {
 
         // Mentions are observation-bound records, not entity nodes. Candidate
         // references stay properties; only reconciliation may justify identity.
+        let mut mention_nodes: HashMap<String, NodeId> = HashMap::new();
         for mention in stores.mentions.mentions() {
             let node_id = projection.create_node(with_properties(
                 &[EpistemicNodeKind::EntityMention.canonical_label()],
                 mention.to_property_map()?,
             ))?;
+            mention_nodes.insert(mention.id().as_str().into(), node_id.clone());
             let observation_node = observation_nodes
                 .get(mention.observation_id().as_str())
                 .ok_or_else(|| GraphError::ObservationNotFound(mention.observation_id().clone()))?;
@@ -415,6 +429,32 @@ impl Graph {
                     .as_str(),
                 node_id,
             )?)?;
+        }
+
+        // Reconciliation judgments retain all outcomes, including abstention.
+        // These edges explain a decision about mentions; they do not merge entities.
+        for record in stores.reconciliations.records() {
+            let decision = projection.create_node(with_properties(
+                &[
+                    "ReconciliationRecord",
+                    EpistemicNodeKind::Decision.canonical_label(),
+                ],
+                record.to_property_map()?,
+            ))?;
+            for mention in [record.left(), record.right()] {
+                let target = mention_nodes.get(mention.as_str()).ok_or_else(|| {
+                    GraphError::InvalidPropertyValue(
+                        "reconciliation mention missing from projection".into(),
+                    )
+                })?;
+                projection.create_relationship(RelationshipInput::new(
+                    decision.clone(),
+                    EpistemicRelationKind::Decides
+                        .canonical_relationship_type()
+                        .as_str(),
+                    target.clone(),
+                )?)?;
+            }
         }
 
         // Evidence records.

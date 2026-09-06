@@ -92,7 +92,8 @@ The Epic 0017 acceptance suite and reproducibility report are complete; see [Lea
 
 Beside nodes, relationships, and first-class evidence, a graph carries the
 governed evidence stores of ADR-0016: `Source` versions, immutable
-`Observation`s, the `ClaimStore` (claims, evidence links, stances, workspaces,
+`Observation`s, immutable `EntityMention`s and evidence-cited
+`ReconciliationRecord`s, the `ClaimStore` (claims, evidence links, stances, workspaces,
 trust inputs, policies, explanations), `VerificationRecord`s, and the
 `VerdictStore` (verdicts, state transitions, reachability gaps). They travel
 with the graph in three ways:

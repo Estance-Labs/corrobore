@@ -595,6 +595,8 @@ mod tests {
 /// [`GraphError::ImmutableRecordConflict`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ImmutableRecordKind {
+    /// An append-only reconciliation decision.
+    ReconciliationRecord,
     /// An observation-bound entity mention.
     EntityMention,
     /// `Source` version.
@@ -613,6 +615,7 @@ impl ImmutableRecordKind {
     /// Canonical lowercase token.
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::ReconciliationRecord => "reconciliation_record",
             Self::EntityMention => "entity_mention",
             Self::Source => "source",
             Self::Observation => "observation",

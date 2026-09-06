@@ -1,0 +1,6 @@
+[
+  {"category":"homonym","left":"Atlas","right":"Atlas","left_context":"Atlas is a physician in Paris, registry P-101.","right_context":"Atlas is an engineer in Sydney, registry E-909.","outcome":"Distinct"},
+  {"category":"alias","left":"International Business Machines","right":"IBM","left_context":"Company registry C-001 names International Business Machines and records IBM as its short name.","right_context":"Company registry C-001 names International Business Machines and records IBM as its short name.","outcome":"Merge"},
+  {"category":"transliteration","left":"Александр Пушкин","right":"Aleksandr Pushkin","left_context":"Authority record A-1799 identifies the author born in 1799 under both script forms.","right_context":"Authority record A-1799 identifies the author born in 1799 under both script forms.","outcome":"Merge"},
+  {"category":"ambiguous","left":"Jordan","right":"Jordan","left_context":"A witness mentions Jordan without an identifying role or location.","right_context":"A second witness mentions Jordan without an identifying role or location.","outcome":"Abstain"}
+]
