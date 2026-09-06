@@ -45,6 +45,8 @@ pub enum ValidationErrorStatus {
 /// Graph-addressable target for a validation error.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ValidationTarget {
+    /// First-class evidence record.
+    Evidence(String),
     /// Node.
     Node(String),
     /// Relationship.

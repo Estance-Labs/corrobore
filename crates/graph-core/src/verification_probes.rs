@@ -393,7 +393,8 @@ fn render_question(kind: ProbeKind, target: &ValidationTarget) -> String {
         | ValidationTarget::Claim(value)
         | ValidationTarget::ExportRecord(value)
         | ValidationTarget::Retrieval(value)
-        | ValidationTarget::Source(value) => value.as_str(),
+        | ValidationTarget::Source(value)
+        | ValidationTarget::Evidence(value) => value.as_str(),
     };
 
     match kind {

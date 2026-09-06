@@ -21,6 +21,11 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
 ### Added
 
+- WS-E evidence-risk diagnostics cover seven attributed signals, preserve
+  quarantine and dependency provenance on evidence, and reduce component
+  contribution and source-independence weights without changing deterministic
+  verifier precedence (#212).
+
 - WS-E evidence access metrics separate graph presence, recorded verifier-path
   reachability and unexplained retrieved evidence, with reproducible fixtures
   and policy/budget-aware retrieval proposals (#211).

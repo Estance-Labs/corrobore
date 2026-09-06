@@ -678,7 +678,8 @@ fn collect_blocking_findings(
                     .or_insert_with(Vec::new)
                     .push(finding);
             }
-            ValidationTarget::Claim(_)
+            ValidationTarget::Evidence(_)
+            | ValidationTarget::Claim(_)
             | ValidationTarget::ExportRecord(_)
             | ValidationTarget::Retrieval(_)
             | ValidationTarget::Source(_) => {}

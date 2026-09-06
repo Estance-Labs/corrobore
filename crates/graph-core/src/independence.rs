@@ -49,6 +49,8 @@ pub struct SourceDependencySignals {
 /// Why links belong to one dependency component.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum DependencySignal {
+    /// Attributed evidence-risk assessment joining a suspected dependency group.
+    EvidenceRisk,
     /// Same source identity.
     SharedSource,
     /// Shared publisher identity.
@@ -180,7 +182,32 @@ fn key(keys: &mut Keys, signal: DependencySignal, value: impl Into<String>) {
     keys.entry((signal, value.clone()))
         .or_insert((signal, value));
 }
-fn evidence_keys(keys: &mut Keys, record: &EvidenceRecord) {
+fn evidence_keys(
+    keys: &mut Keys,
+    record: &EvidenceRecord,
+    as_of: &VerdictAsOf,
+    evidence: &EvidenceRecordStore,
+) {
+    for risk in evidence
+        .risk_assessments_for(record.id())
+        .iter()
+        .filter(|r| as_of.covers(&r.stamp))
+    {
+        keys.insert(
+            (
+                DependencySignal::EvidenceRisk,
+                risk.finding.group_id.clone(),
+            ),
+            (
+                DependencySignal::EvidenceRisk,
+                format!(
+                    "{:?}: {}: {}",
+                    risk.finding.signal, risk.finding.group_id, risk.finding.reason
+                ),
+            ),
+        );
+    }
+
     if let Some(run) = record.extraction_run_id() {
         key(keys, DependencySignal::SharedExtractionRun, run.as_str());
     }
@@ -245,6 +272,7 @@ fn profile(
     evidence: &EvidenceRecordStore,
     observations: &ObservationStore,
     sources: &SourceStore,
+    as_of: &VerdictAsOf,
 ) -> Keys {
     let mut keys = Keys::new();
     match link.source() {
@@ -257,7 +285,7 @@ fn profile(
                 .iter()
                 .filter(|r| r.observation_id() == Some(id))
             {
-                evidence_keys(&mut keys, record);
+                evidence_keys(&mut keys, record, as_of, evidence);
             }
         }
         ClaimLinkSource::Evidence(id) => {
@@ -275,7 +303,7 @@ fn profile(
                 if let Some(id) = id {
                     source_keys(&mut keys, &id, sources);
                 }
-                evidence_keys(&mut keys, record);
+                evidence_keys(&mut keys, record, as_of, evidence);
             }
         }
         ClaimLinkSource::Claim(_) => {}
@@ -307,6 +335,7 @@ impl ClaimStore {
     ) -> Result<SourceIndependence, GraphError> {
         self.claim_by_id(claim)?;
         self.validate_link_indices()?;
+        evidence.validate_risk_references()?;
         let active: Vec<_> = self
             .claim_links
             .iter()
@@ -319,7 +348,13 @@ impl ClaimStore {
             BTreeMap::<(DependencySignal, String), (usize, DependencySignal, String)>::new();
         let mut reasons = Vec::new();
         for &index in &active {
-            let keys = profile(&self.claim_links[index], evidence, observations, sources);
+            let keys = profile(
+                &self.claim_links[index],
+                evidence,
+                observations,
+                sources,
+                as_of,
+            );
             if keys.is_empty() {
                 reasons.push(DependencyReason {
                     signal: DependencySignal::UnknownIndependence,
@@ -356,6 +391,14 @@ impl ClaimStore {
                         right_link: index,
                     });
                 } else {
+                    if signal == DependencySignal::EvidenceRisk {
+                        reasons.push(DependencyReason {
+                            signal,
+                            value: value.clone(),
+                            left_link: index,
+                            right_link: index,
+                        });
+                    }
                     owners.insert(token, (index, signal, value));
                 }
             }
@@ -426,5 +469,14 @@ impl ClaimStore {
         }
         clusters.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(SourceIndependence { clusters })
+    }
+}
+
+impl IndependenceCluster {
+    /// Whether the retained dependency reasons include an evidence-risk finding.
+    pub fn has_evidence_risk(&self) -> bool {
+        self.reasons
+            .iter()
+            .any(|reason| reason.signal == DependencySignal::EvidenceRisk)
     }
 }

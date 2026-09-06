@@ -415,7 +415,8 @@ fn export_diagnostic(finding: &graph_core::ValidationErrorRecord) -> Option<Expo
     let (target_kind, record_id) = match finding.target() {
         ValidationTarget::Node(id) => ("node", id.clone()),
         ValidationTarget::Relationship(id) => ("relationship", id.clone()),
-        ValidationTarget::Claim(_)
+        ValidationTarget::Evidence(_)
+        | ValidationTarget::Claim(_)
         | ValidationTarget::ExportRecord(_)
         | ValidationTarget::Retrieval(_)
         | ValidationTarget::Source(_) => return None,
