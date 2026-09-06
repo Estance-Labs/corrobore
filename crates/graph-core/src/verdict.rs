@@ -18,18 +18,17 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
-//! Verification records, computed verdicts, and state transitions (Epic 0029,
-//! WS-A item 5).
+//! Verification records, deterministic-first verdicts, and state transitions
+//! (Epic 0029, WS-A item 5 and WS-B item 4).
 //!
 //! Module boundary:
 //! this module owns the three append-only governance records that make trusted
 //! state a computed, replayable view: the `VerificationRecord` produced by one
 //! verifier execution, the `Verdict` computed over active evidence links and
 //! verification records, and the `StateTransition` appended on every verdict
-//! change. It also owns the ADR-0016 projection from `VerdictState` to the
-//! lifecycle `ClaimStatus` and the minimal WS-A resolution policy. It does not
-//! define verifiers (WS-B), aggregation or confidence-dimension semantics
-//! (WS-D), or reachability enforcement (WS-A item 6).
+//! change. It also owns the ADR-0016 projection and reachability gate plus the
+//! ADR-0017 deterministic-first resolution policy. It does not define
+//! verifiers, aggregation, or confidence-dimension semantics (WS-D).
 //!
 //! Validation targets:
 //! - stores are append-only: identical re-appends are no-ops, differing
@@ -57,6 +56,11 @@ use crate::{
 /// `Refuted`, or `Mixed` because no active signal resolved to an observation
 /// bound to a source.
 pub const CLAIM_UNREACHABLE_EVIDENCE_CODE: &str = "claim.verdict.unreachable_evidence";
+
+/// Validation code emitted when a deterministic verifier and an advisory
+/// verifier disagree about the same claim at resolution time.
+pub const VERIFICATION_AUTHORITY_DISAGREEMENT_CODE: &str =
+    "claim.verdict.verification_authority_disagreement";
 
 /// Computed epistemic state of a claim (ADR-0016).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -361,6 +365,66 @@ impl VerificationRecord {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerificationRecordStore {
     records: Vec<VerificationRecord>,
+}
+
+/// Typed, append-only record of an authority-boundary disagreement.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerificationDisagreement {
+    claim_id: ClaimId,
+    deterministic_record_id: VerificationRecordId,
+    advisory_record_id: VerificationRecordId,
+    deterministic_result: VerificationResult,
+    advisory_result: VerificationResult,
+    stamp: BitemporalStamp,
+}
+
+impl VerificationDisagreement {
+    /// Claim on which the verifier results disagree.
+    pub fn claim_id(&self) -> &ClaimId {
+        &self.claim_id
+    }
+
+    /// Deterministic record carrying authority.
+    pub fn deterministic_record_id(&self) -> &VerificationRecordId {
+        &self.deterministic_record_id
+    }
+
+    /// Non-deterministic advisory record.
+    pub fn advisory_record_id(&self) -> &VerificationRecordId {
+        &self.advisory_record_id
+    }
+
+    /// Result produced by the deterministic record.
+    pub fn deterministic_result(&self) -> VerificationResult {
+        self.deterministic_result
+    }
+
+    /// Opposing result produced by the advisory record.
+    pub fn advisory_result(&self) -> VerificationResult {
+        self.advisory_result
+    }
+
+    /// Resolution stamp at which the disagreement was first observed.
+    pub fn stamp(&self) -> &BitemporalStamp {
+        &self.stamp
+    }
+
+    /// Render this disagreement as a typed, non-blocking validation finding.
+    pub fn to_validation_record(&self) -> ValidationErrorRecord {
+        ValidationErrorRecord::new(
+            VERIFICATION_AUTHORITY_DISAGREEMENT_CODE,
+            ValidationErrorSeverity::Warning,
+            format!(
+                "deterministic verification {} ({}) and advisory verification {} ({}) disagree for claim {}; deterministic precedence applies",
+                self.deterministic_record_id.as_str(),
+                self.deterministic_result.as_str(),
+                self.advisory_record_id.as_str(),
+                self.advisory_result.as_str(),
+                self.claim_id.as_str(),
+            ),
+            ValidationTarget::claim(self.claim_id.as_str()),
+        )
+    }
 }
 
 impl VerificationRecordStore {
@@ -679,6 +743,8 @@ pub struct VerdictStore {
     transitions: Vec<StateTransition>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     reachability_gaps: Vec<ReachabilityGap>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    verification_disagreements: Vec<VerificationDisagreement>,
 }
 
 impl VerdictStore {
@@ -794,6 +860,22 @@ impl VerdictStore {
     /// Every recorded reachability gap, oldest first.
     pub fn reachability_gaps(&self) -> &[ReachabilityGap] {
         &self.reachability_gaps
+    }
+
+    /// Every recorded deterministic/advisory disagreement.
+    pub fn verification_disagreements(&self) -> &[VerificationDisagreement] {
+        &self.verification_disagreements
+    }
+
+    /// Disagreements for one claim, in first-observed order.
+    pub fn verification_disagreements_for_claim(
+        &self,
+        claim_id: &ClaimId,
+    ) -> Vec<&VerificationDisagreement> {
+        self.verification_disagreements
+            .iter()
+            .filter(|disagreement| disagreement.claim_id() == claim_id)
+            .collect()
     }
 
     /// Deterministic order: transaction time, then identifier.
@@ -913,6 +995,24 @@ impl<'a> ResolutionInputs<'a> {
             ClaimLinkSource::Claim(_) => false,
         }
     }
+
+    /// Whether a verification record examined an observation that is still
+    /// bound to a registered source.
+    pub fn verification_resolves_to_observation(&self, record: &VerificationRecord) -> bool {
+        record
+            .inputs()
+            .observation_ids()
+            .iter()
+            .any(|observation_id| {
+                self.observations
+                    .observation_by_id(observation_id)
+                    .is_some_and(|observation| {
+                        self.sources
+                            .current_source(observation.source_id())
+                            .is_some()
+                    })
+            })
+    }
 }
 
 /// Recorded downgrade of a verdict to `InsufficientEvidence` because no active
@@ -964,16 +1064,23 @@ impl ReachabilityGap {
     }
 }
 
-/// Compute and record the verdict of a claim with the minimal WS-A policy.
+/// Compute and record the verdict of a claim with deterministic-first
+/// precedence.
 ///
 /// Active inputs are the links targeting the claim that `stamp` covers (links
 /// without a stamp are always active) and the verification records for the
-/// claim known by `stamp.transaction_time`. The minimal policy:
+/// claim known by `stamp.transaction_time`. The core policy:
 ///
 /// - any active `Supersedes` link gives `Superseded`;
-/// - otherwise support signals (`Supports` links, deterministic `Pass`
-///   records) and refutation signals (`Refutes` or `Contradicts` links,
-///   deterministic `Fail` records) give `Supported`, `Refuted`, or `Mixed`;
+/// - otherwise support signals (`Supports` links, authoritative deterministic
+///   `Pass` records) and refutation signals (`Refutes` or `Contradicts` links,
+///   authoritative deterministic `Fail` records) give `Supported`, `Refuted`,
+///   or `Mixed`;
+/// - only the latest conclusive record of each deterministic verifier carries
+///   authority; a newer version wins, then a later transaction time;
+/// - non-deterministic records and every `Inconclusive` record are advisory and
+///   have no verdict weight; opposing deterministic/advisory results are
+///   retained as typed [`VerificationDisagreement`] findings;
 /// - no signal gives `Unknown`;
 /// - ADR-0016 gate: `Supported`, `Refuted`, and `Mixed` require at least one
 ///   active signal whose source resolves to an observation bound to a source
@@ -983,8 +1090,8 @@ impl ReachabilityGap {
 ///
 /// When the state differs from the current verdict, a verdict and a transition
 /// are appended and the projected lifecycle status is applied to the claim if
-/// the `ClaimStatus` matrix allows it. WS-D replaces the policy; WS-A item 6
-/// adds the observation-reachability gate.
+/// the `ClaimStatus` matrix allows it. WS-D may add confidence aggregation and
+/// actionability, but cannot bypass this deterministic authority boundary.
 ///
 /// # Errors
 ///
@@ -1013,25 +1120,52 @@ pub fn resolve_claim_verdict(
         }
     }
 
-    // Deterministic verification records known by the as-of system time. The
-    // newest one is remembered so the transition can name it when it drove the
-    // change.
-    let mut newest_record: Option<&VerificationRecord> = None;
-    for record in inputs.verifications.records_for_claim(claim_id) {
-        if record.stamp.transaction_time.as_str() > stamp.transaction_time.as_str()
-            || !record.deterministic
-        {
-            continue;
-        }
+    // Resolve each verifier's append-only history to one current conclusive
+    // record. A new version supersedes older logic; within one version, the
+    // later transaction (then stable record id) supersedes an earlier run.
+    let claim_records = inputs.verifications.records_for_claim(claim_id);
+    let deterministic_records =
+        authoritative_records(&claim_records, true, stamp.transaction_time.as_str());
+    let advisory_records =
+        authoritative_records(&claim_records, false, stamp.transaction_time.as_str());
+
+    for record in &deterministic_records {
         match record.result {
             VerificationResult::Pass => support += 1,
             VerificationResult::Fail => refute += 1,
-            VerificationResult::Inconclusive => continue,
+            VerificationResult::Inconclusive => {
+                unreachable!("authoritative_records excludes inconclusive verification records")
+            }
         }
-        if newest_record.is_none_or(|current| {
-            record.stamp.transaction_time.as_str() >= current.stamp.transaction_time.as_str()
-        }) {
-            newest_record = Some(record);
+    }
+    let newest_record = deterministic_records
+        .iter()
+        .copied()
+        .max_by(|left, right| verification_signal_order(left, right));
+
+    // Advisory results never change support/refutation counts. When they
+    // oppose a deterministic result, record the boundary decision once while
+    // preserving both source records in the verification store.
+    for deterministic in &deterministic_records {
+        for advisory in &advisory_records {
+            if !results_disagree(deterministic.result(), advisory.result())
+                || verdicts.verification_disagreements.iter().any(|existing| {
+                    existing.deterministic_record_id == deterministic.id
+                        && existing.advisory_record_id == advisory.id
+                })
+            {
+                continue;
+            }
+            verdicts
+                .verification_disagreements
+                .push(VerificationDisagreement {
+                    claim_id: claim_id.clone(),
+                    deterministic_record_id: deterministic.id.clone(),
+                    advisory_record_id: advisory.id.clone(),
+                    deterministic_result: deterministic.result,
+                    advisory_result: advisory.result,
+                    stamp: stamp.clone(),
+                });
         }
     }
 
@@ -1065,6 +1199,9 @@ pub fn resolve_claim_verdict(
             if signal_links
                 .iter()
                 .any(|link| inputs.resolves_to_observation(link.source()))
+                || deterministic_records
+                    .iter()
+                    .any(|record| inputs.verification_resolves_to_observation(record))
             {
                 None
             } else {
@@ -1075,18 +1212,12 @@ pub fn resolve_claim_verdict(
                     })
                     .collect();
                 unreachable.extend(
-                    inputs
-                        .verifications
-                        .records_for_claim(claim_id)
-                        .into_iter()
-                        .filter(|record| {
-                            record.deterministic
-                                && record.result != VerificationResult::Inconclusive
-                                && record.stamp.transaction_time.as_str()
-                                    <= stamp.transaction_time.as_str()
-                        })
+                    deterministic_records
+                        .iter()
                         .map(|record| format!("verification:{}", record.id.as_str())),
                 );
+                unreachable.sort();
+                unreachable.dedup();
                 Some(ReachabilityGap {
                     claim_id: claim_id.clone(),
                     attempted_state: state,
@@ -1169,6 +1300,70 @@ pub fn resolve_claim_verdict(
     })
 }
 
+/// Select one current conclusive result per verifier identifier.
+fn authoritative_records<'a>(
+    records: &[&'a VerificationRecord],
+    deterministic: bool,
+    system_time: &str,
+) -> Vec<&'a VerificationRecord> {
+    let mut selected: BTreeMap<&str, &VerificationRecord> = BTreeMap::new();
+    for record in records.iter().copied().filter(|record| {
+        record.deterministic == deterministic
+            && record.result != VerificationResult::Inconclusive
+            && record.stamp.transaction_time.as_str() <= system_time
+    }) {
+        selected
+            .entry(record.verifier_id.as_str())
+            .and_modify(|current| {
+                if verification_authority_order(record, current).is_gt() {
+                    *current = record;
+                }
+            })
+            .or_insert(record);
+    }
+    selected.into_values().collect()
+}
+
+/// Authority order inside one verifier history: implementation version first,
+/// then transaction time and stable record identifier.
+fn verification_authority_order(
+    left: &VerificationRecord,
+    right: &VerificationRecord,
+) -> std::cmp::Ordering {
+    left.verifier_version
+        .cmp(&right.verifier_version)
+        .then_with(|| {
+            left.stamp
+                .transaction_time
+                .as_str()
+                .cmp(right.stamp.transaction_time.as_str())
+        })
+        .then_with(|| left.id.as_str().cmp(right.id.as_str()))
+}
+
+/// Stable recency order for choosing the transition trigger across verifiers.
+fn verification_signal_order(
+    left: &VerificationRecord,
+    right: &VerificationRecord,
+) -> std::cmp::Ordering {
+    left.stamp
+        .transaction_time
+        .as_str()
+        .cmp(right.stamp.transaction_time.as_str())
+        .then_with(|| left.verifier_version.cmp(&right.verifier_version))
+        .then_with(|| left.verifier_id.cmp(&right.verifier_id))
+        .then_with(|| left.id.as_str().cmp(right.id.as_str()))
+}
+
+/// Only opposing conclusive results form an authority disagreement.
+fn results_disagree(left: VerificationResult, right: VerificationResult) -> bool {
+    matches!(
+        (left, right),
+        (VerificationResult::Pass, VerificationResult::Fail)
+            | (VerificationResult::Fail, VerificationResult::Pass)
+    )
+}
+
 /// Whether `record` is at least as new as every active link carrying a
 /// signal, so the transition can name it as the driving input.
 fn record_is_latest_signal(
@@ -1189,7 +1384,7 @@ fn record_is_latest_signal(
 }
 
 /// Whether a link kind counts as support, refutation, supersession, or
-/// neither in the minimal policy.
+/// neither in the core policy.
 fn link_signal(kind: ClaimLinkKind) -> LinkSignal {
     match kind {
         ClaimLinkKind::Supports => LinkSignal::Support,

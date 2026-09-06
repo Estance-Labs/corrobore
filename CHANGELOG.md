@@ -100,6 +100,14 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   provider. `domain-common` supplies the schema registry and keeps required
   properties and type assertions owned by installed packs. Missing schemas
   remain explicitly inconclusive (Epic 0029 WS-B, #165).
+- `graph-core`: deterministic-first verdict precedence. Resolution selects the
+  newest conclusive record per verifier, gives deterministic results authority,
+  keeps non-deterministic results advisory regardless of claim confidence,
+  and records opposing deterministic/advisory results as append-only typed
+  findings. Verification observation inputs now satisfy the existing verdict
+  reachability gate; a deterministic failure can demote a previously
+  `Validated` claim to `Contradicted` or `Disputed` instead of leaving a trusted
+  lifecycle status behind (Epic 0029 WS-B, #166).
 
 ## Releases
 

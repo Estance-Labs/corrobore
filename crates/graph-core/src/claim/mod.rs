@@ -527,6 +527,8 @@ mod tests {
             (ClaimStatus::Disputed, ClaimStatus::Validated),
             (ClaimStatus::Contradicted, ClaimStatus::Unresolved),
             (ClaimStatus::Unresolved, ClaimStatus::Supported),
+            (ClaimStatus::Validated, ClaimStatus::Disputed),
+            (ClaimStatus::Validated, ClaimStatus::Contradicted),
             (ClaimStatus::Validated, ClaimStatus::Retracted),
         ];
 
@@ -537,7 +539,7 @@ mod tests {
 
         let rejected = vec![
             (ClaimStatus::Candidate, ClaimStatus::Supported),
-            (ClaimStatus::Validated, ClaimStatus::Disputed),
+            (ClaimStatus::Validated, ClaimStatus::Supported),
             (ClaimStatus::Retracted, ClaimStatus::Asserted),
         ];
 

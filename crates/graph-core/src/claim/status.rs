@@ -88,7 +88,11 @@ fn is_transition_allowed(from: ClaimStatus, to: ClaimStatus) -> bool {
             to,
             Supported | Disputed | Contradicted | Superseded | Retracted | Rejected | Validated
         ),
-        Validated => matches!(to, Superseded | Retracted),
+        // A deterministic verification failure is an authority-boundary
+        // event: a previously actionable claim must be able to leave the
+        // trusted state as contradicted or disputed. Other ordinary backwards
+        // transitions from Validated remain forbidden.
+        Validated => matches!(to, Disputed | Contradicted | Superseded | Retracted),
         Superseded | Retracted | Rejected => false,
     }
 }
