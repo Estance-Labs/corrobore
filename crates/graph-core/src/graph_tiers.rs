@@ -95,6 +95,8 @@ impl GraphTier {
 /// reference each record kind by its validated identifier.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TierRecordRef {
+    /// An extraction proposal awaiting explicit promotion.
+    Candidate(crate::CandidateId),
     /// A graph node.
     Node(NodeId),
 
@@ -118,6 +120,8 @@ pub enum TierRecordRef {
 /// enumerate the immune movement reasons.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TierTransitionReason {
+    /// Initial non-canonical placement of an extraction proposal.
+    CandidateSubmission,
     /// A validator finding isolated or flagged the record.
     ValidatorFinding,
 

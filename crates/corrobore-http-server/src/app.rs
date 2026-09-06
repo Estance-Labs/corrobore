@@ -1022,6 +1022,18 @@ pub fn build_router(state: AppState) -> Router {
 
     // 2.3: import routes accept larger multipart/JSON bundles.
     let import_routes = Router::new()
+        .route(
+            "/v1/import/candidates",
+            post(crate::handlers::candidates::submit),
+        )
+        .route(
+            "/v1/import/candidates/{id}",
+            get(crate::handlers::candidates::inspect),
+        )
+        .route(
+            "/v1/import/candidates/{id}/promote",
+            post(crate::handlers::candidates::promote),
+        )
         .route("/v1/import/stix", post(import_stix_bundle))
         .route("/v1/import/stix/file", post(import_stix_bundle_file))
         .layer(DefaultBodyLimit::max(state.config.import_max_body_bytes));

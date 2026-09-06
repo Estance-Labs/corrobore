@@ -170,10 +170,96 @@ components:
           type: array
           description: Retained native evidence records referenced by exported objects.
           items: {type: object}
+    CandidateSubmission:
+      type: object
+      additionalProperties: false
+      required: [id, extraction_run_id, raw_payload, actor]
+      properties:
+        id: {type: string, minLength: 1}
+        extraction_run_id: {type: string, minLength: 1}
+        raw_payload:
+          type: string
+          description: Verbatim extractor output; no parsing or normalization is applied to the decoded string.
+        actor: {type: string, minLength: 1}
+        tier: {type: string, enum: [Shadow, Hypothesis], default: Shadow}
+        workspace_id: {type: string}
+        session_id: {type: string}
+        budget_ref: {type: string}
+    CandidatePromotionRequest:
+      type: object
+      additionalProperties: false
+      required: [actor, reason, record]
+      properties:
+        actor: {type: string, minLength: 1}
+        reason: {type: string, minLength: 1}
+        workspace_id: {type: string}
+        session_id: {type: string}
+        budget_ref: {type: string}
+        record:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [kind, labels]
+              properties:
+                kind: {type: string, const: node}
+                labels: {type: array, items: {type: string}}
+                properties:
+                  type: object
+                  description: Native PropertyValue map, for example name is represented as {"String":"reviewed name"}.
+            - type: object
+              additionalProperties: false
+              required: [kind, source, target, relationship_type]
+              properties:
+                kind: {type: string, const: relationship}
+                source: {type: string}
+                target: {type: string}
+                relationship_type: {type: string}
+                properties:
+                  type: object
+                  description: Native PropertyValue map.
+    CandidateResponse:
+      type: object
+      required: [ok, candidate, tier, promotions]
+      properties:
+        ok: {type: boolean, const: true}
+        tier: {type: string, enum: [Shadow, Hypothesis, Canonical]}
+        candidate:
+          type: object
+          description: Immutable CandidateInput; landing_tier retains the original destination.
+          required: [id, extraction_run_id, raw_payload, actor, landing_tier]
+          properties:
+            id: {type: object, required: [value], properties: {value: {type: string}}}
+            extraction_run_id: {type: object, required: [value], properties: {value: {type: string}}}
+            raw_payload: {type: string}
+            actor: {type: object, required: [value], properties: {value: {type: string}}}
+            landing_tier: {type: string, enum: [Shadow, Hypothesis]}
+        promotions:
+          type: array
+          items: {$ref: '#/components/schemas/CandidatePromotionReceipt'}
+    CandidatePromotionReceipt:
+      type: object
+      required: [candidate_id, actor, reason, target, input]
+      properties:
+        candidate_id: {type: object, required: [value], properties: {value: {type: string}}}
+        actor: {type: object, required: [value], properties: {value: {type: string}}}
+        reason: {type: string}
+        target:
+          type: object
+          description: Native TierRecordRef, e.g. {"Node":{"value":"node--1"}}.
+        input:
+          type: object
+          description: Retained native CandidatePromotionInput containing the reviewed NodeInput or RelationshipInput.
     StixImportRequest:
       type: object
+      additionalProperties: false
       required: [bundle]
       properties:
+        schema_version:
+          type: string
+          description: Optional legacy descriptive metadata; does not select import semantics.
+        description:
+          type: string
+          description: Optional legacy descriptive metadata; does not affect import.
         bundle: {$ref: '#/components/schemas/StixBundle'}
         evidence:
           $ref: '#/components/schemas/StixEvidenceEnvelopeV1'
@@ -265,7 +351,8 @@ components:
           type: number
           minimum: 0
           maximum: 100
-          description: STIX import confidence uses 0..=100 and is normalized deterministically to native 0..=1. Example: 90 is stored as native 0.9.
+          description: >-
+            STIX import confidence uses 0..=100 and is normalized deterministically to native 0..=1. Example: 90 is stored as native 0.9.
           examples: [90]
         status:
           type: string
@@ -1375,6 +1462,71 @@ paths:
                             ready: {type: boolean}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/BadRequest'}
+
+  /v1/import/candidates:
+    post:
+      operationId: submitCandidate
+      summary: Retain an extraction proposal outside the canonical graph
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CandidateSubmission'}
+      responses:
+        '200':
+          description: Immutable proposal and its current tier; exact retries return existing state
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CandidateResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '422': {description: Malformed submission or unknown fields}
+  /v1/import/candidates/{id}:
+    get:
+      operationId: getCandidate
+      summary: Inspect the original proposal and recorded promotions
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Original proposal, current tier, and promotion history
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CandidateResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /v1/import/candidates/{id}/promote:
+    post:
+      operationId: promoteCandidate
+      summary: Explicitly materialize one reviewed record and retain an audit receipt
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CandidatePromotionRequest'}
+      responses:
+        '200':
+          description: Recorded promotion; exact retries return the same receipt
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, tier, promotion]
+                properties:
+                  ok: {type: boolean, const: true}
+                  tier: {type: string, const: Canonical}
+                  promotion: {$ref: '#/components/schemas/CandidatePromotionReceipt'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '422': {description: Malformed promotion or unknown fields}
 
   /v1/import/stix:
     post:

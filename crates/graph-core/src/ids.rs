@@ -113,6 +113,7 @@ string_id!(ActorId);
 string_id!(SessionId);
 string_id!(RequestId);
 string_id!(ExtractionRunId);
+string_id!(CandidateId);
 string_id!(RuntimeId);
 string_id!(FactId);
 

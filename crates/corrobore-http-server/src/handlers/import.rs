@@ -44,7 +44,12 @@ const STIX_CONFIDENCE_GUIDANCE: &str =
     "STIX import confidence uses the 0..=100 scale; 90 is stored as native 0.9";
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ImportStixRequest {
+    /// Informational envelope metadata retained for legacy acceptance clients.
+    /// Neither field changes import semantics or the evidence schema version.
+    pub schema_version: Option<String>,
+    pub description: Option<String>,
     pub bundle: Value,
     #[serde(default)]
     pub evidence: Option<ImportEvidenceEnvelope>,
@@ -841,7 +846,12 @@ pub async fn import_stix_bundle_file(
                 }
             }
             _ => {
-                // Ignore unknown multipart fields to keep endpoint forward-compatible.
+                return Err(ApiError::bad_request(
+                    "UNKNOWN_IMPORT_FIELD",
+                    format!(
+                        "unsupported multipart field {name}; candidate submissions use /v1/import/candidates"
+                    ),
+                ));
             }
         }
     }
