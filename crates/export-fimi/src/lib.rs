@@ -61,6 +61,8 @@ struct FimiRecord {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct FimiLineage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    verdict_explanation: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     confidence_band: Option<domain_common::ConfidenceBand>,
     #[serde(skip_serializing_if = "Option::is_none")]
     evidence_id: Option<String>,
@@ -98,6 +100,7 @@ fn epistemic_lineage(
                 return None;
             }
             Some(FimiLineage {
+                verdict_explanation: None,
                 confidence_band: None,
                 evidence_id: Some(evidence_ref.clone()),
                 source_id: record.source_id().map(|id| id.as_str().to_owned()),
@@ -129,6 +132,8 @@ fn epistemic_lineage(
     for claim in claims {
         let verdict = stores.verdicts.current_verdict(claim.id());
         lineage.push(FimiLineage {
+            verdict_explanation: verdict
+                .map(|v| serde_json::to_value(v.explanation()).expect("serializable explanation")),
             confidence_band: verdict.map(|v| {
                 domain_common::classify_confidence_band_with_actionability(
                     v.confidence_dimensions(),
@@ -427,6 +432,14 @@ mod tests {
         let json_b = export_fimi_json(&graph, &plan_b).expect("fimi json B should serialize");
 
         assert_eq!(json_a, json_b);
+        assert!(!json_a.contains("verdict_explanation"));
+        assert!(!json_a.contains("lineage"));
+        let restored =
+            Graph::from_persistence_snapshot(graph.persistence_snapshot()).expect("restore");
+        assert_eq!(
+            export_fimi_json(&restored, &plan_a).expect("export restored"),
+            json_a
+        );
         assert!(json_a.contains("\"kind\": \"actor\""));
         assert!(json_a.contains("\"kind\": \"narrative\""));
         assert!(json_a.contains("\"kind\": \"coordination_link\""));
@@ -567,6 +580,18 @@ mod tests {
             .find(|entry| entry["claim_id"] == "claim--fimi-coverage")
             .expect("claim lineage");
         assert_eq!(claim["confidence_band"], "Exportable");
+        assert_eq!(
+            claim["verdict_explanation"]["dimensions"]["actionability"],
+            1.0
+        );
+        assert_eq!(
+            claim["verdict_explanation"]["clusters"]
+                .as_array()
+                .expect("clusters")
+                .len(),
+            2
+        );
+        assert!(claim["verdict_explanation"]["uncertainty_kind"].is_null());
         assert_eq!(
             claim["verification_coverage"]["entries"][0]["class"],
             "semantically_judged"

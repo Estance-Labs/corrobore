@@ -90,7 +90,7 @@ read-only graph in the epistemic vocabulary that any read query can traverse:
 | `Observation` | `Observation` | `observation_id`, `observation_source`, `observation_selector`, `observation_payload`, `observation_modality` |
 | `Evidence` | `EvidenceRecord` | `evidence_id`, `evidence_source_ref`, `evidence_source`, `evidence_observation` |
 | `Claim` | `Claim` | `claim_id`, `claim_status`, `claim_statement`, `proposition_*`, `verdict_state`, `verdict_lifecycle_projection`, `verdict_id`, `verification_coverage*` |
-| `Verdict`, `Assessment` | `Verdict` | `verdict_id`, `verdict_claim`, `verdict_state`, `verdict_policy_version`, `verdict_valid_from`, `verdict_transaction_time` |
+| `Verdict`, `Assessment` | `Verdict` | `verdict_id`, `verdict_claim`, `verdict_state`, `verdict_policy_version`, `verdict_valid_from`, `verdict_transaction_time`, `verdict_dimension_*`, `verdict_explanation`, `verdict_uncertainty_kind` |
 | `VerificationRecord`, `Assessment` | `VerificationRecord` | `verification_id`, `verification_claim`, `verification_verifier_id`, `verification_verifier_version`, `verification_deterministic`, `verification_result`, `verification_coverage_class`, `verification_coverage_current` |
 | `StateTransition`, `Decision` | `StateTransition` | `transition_id`, `transition_claim`, `transition_from_state`, `transition_to_state`, `transition_trigger` |
 
@@ -106,6 +106,24 @@ MATCH (c:Claim) RETURN c.claim_id, c.verification_coverage, c.verification_cover
 MATCH (o:Observation)-[:SUPPORTS]->(c:Claim) RETURN c.claim_id, o.observation_payload
 MATCH (t:StateTransition) RETURN t.transition_claim, t.transition_from_state, t.transition_to_state
 ```
+
+Dimension properties such as `verdict_dimension_evidence_sufficiency`,
+`verdict_dimension_source_independence`, `verdict_dimension_contradiction_load` and
+`verdict_dimension_actionability` are present only when known; absent is not zero.
+`verdict_explanation` is a JSON object containing `dimensions`, `clusters`,
+`uncertainty_kind`, authority provenance, actionability and hypotheses. Each
+cluster includes member indices/references, dependency reasons and directional
+weights. `verdict_hypothesis_set` remains the separate ordered JSON string
+introduced by WS-D item 5.
+
+```cypher
+MATCH (v:Verdict) RETURN v.verdict_claim, v.verdict_dimension_evidence_sufficiency, v.verdict_dimension_actionability
+MATCH (v:Verdict) RETURN v.verdict_id, v.verdict_uncertainty_kind, v.verdict_explanation
+```
+
+The uncertainty token is `ignorance`, `ambiguity`, `unresolved_conflict` or
+`staleness`. If no cause is classified, the standalone token is absent and the
+JSON payload contains null. This does not authorize action or export.
 
 Node identifiers in the projection are generated; record identifiers are
 properties. The projection is read-only: verdicts are computed by the engine

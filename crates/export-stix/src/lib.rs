@@ -94,7 +94,12 @@ pub fn export_stix_subset_bundle(
         else {
             continue;
         };
-        attach_epistemic_lineage(graph, &node, record.evidence_refs(), &mut object);
+        attach_epistemic_lineage(
+            graph,
+            &graph_core::ClaimTarget::Node(node.id().clone()),
+            record.evidence_refs(),
+            &mut object,
+        );
         let Some(id) = object.get("id").and_then(Value::as_str) else {
             continue;
         };
@@ -119,13 +124,19 @@ pub fn export_stix_subset_bundle(
         let Some(target_ref) = exported_node_ids.get(relationship.target().as_str()) else {
             continue;
         };
-        if let Some(object) = project_relationship(
+        if let Some(mut object) = project_relationship(
             &relationship,
             record.record_id(),
             source_ref,
             target_ref,
             record.evidence_refs(),
         ) {
+            attach_epistemic_lineage(
+                graph,
+                &graph_core::ClaimTarget::Relationship(relationship.id().clone()),
+                record.evidence_refs(),
+                &mut object,
+            );
             objects.push(object);
         }
     }
@@ -520,11 +531,11 @@ fn mode_label(mode: ExportMode) -> &'static str {
 /// Epic 0029 WS-A item 7: add `x_corrobore_lineage` to an exported object when
 /// governed records exist behind it. Entries name the source and observation
 /// behind each evidence reference, and the current verdict of every claim
-/// targeting the node. Nothing is added for graphs without governed records,
+/// targeting the node or relationship. Nothing is added for graphs without governed records,
 /// so their exports stay byte-identical.
 fn attach_epistemic_lineage(
     graph: &Graph,
-    node: &graph_core::Node,
+    exported_target: &graph_core::ClaimTarget,
     evidence_refs: &[graph_core::EvidenceId],
     object: &mut Value,
 ) {
@@ -567,10 +578,7 @@ fn attach_epistemic_lineage(
     }
 
     for claim in stores.claims.claims() {
-        let graph_core::ClaimTarget::Node(target) = claim.target() else {
-            continue;
-        };
-        if target != node.id() {
+        if claim.target() != exported_target {
             continue;
         }
         let mut entry = serde_json::Map::new();
@@ -586,6 +594,10 @@ fn attach_epistemic_lineage(
             )),
         );
         if let Some(verdict) = stores.verdicts.current_verdict(claim.id()) {
+            entry.insert(
+                "verdict_explanation".into(),
+                serde_json::json!(verdict.explanation()),
+            );
             entry.insert(
                 "confidence_band".to_owned(),
                 serde_json::json!(domain_common::classify_confidence_band_with_actionability(

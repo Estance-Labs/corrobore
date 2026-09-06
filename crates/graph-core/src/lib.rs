@@ -161,6 +161,10 @@ mod transaction;
 mod traversal_cost;
 mod validation;
 mod verdict;
+mod verdict_explanation;
+pub use verdict_explanation::{
+    ExplainedCluster, ExplainedMember, UncertaintyKind, VerdictExplanation,
+};
 mod verification_probes;
 mod verifier;
 mod working_set;

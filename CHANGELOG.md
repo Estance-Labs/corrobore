@@ -21,6 +21,12 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
 ### Added
 
+- WS-D verdict uncertainty explanations with retained cluster membership,
+  directional weights, dimensions, authority provenance and ranked alternatives.
+  Projection and FIMI/STIX claim lineage expose the payload additively, including
+  relationship claims. The WS-D acceptance suite covers epic #178 and preserves
+  WS-A/WS-B compatibility; ungoverned export bytes remain unchanged (#185).
+
 - `graph-core`: optional structured `ClaimProposition` beside the claim text
   statement (subject, predicate, entity or literal object, polarity, modality,
   valid-time scope, extraction version), with reference validation against the

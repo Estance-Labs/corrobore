@@ -275,6 +275,45 @@ Compatibility tests intentionally replace scalar-driven export and retrieval
 expectations. Lineage fixtures now supply corroborated, mechanically verified
 evidence before export. Historical verdict replay remains unchanged.
 
+WS-D item 7 exposes `Verdict::explanation()` as a read-only explanation of the
+retained snapshot. Each cluster carries every member's append-only link index
+and captured stable reference, its dependency reasons, and its supporting and
+refuting weights (best strength, contributing member count, bounded increment,
+authority and resulting contribution). Missing weights and historical member
+references remain absent; no live retrieval or re-aggregation fills them in.
+The payload also retains the verdict state, policy and time, authority provenance,
+named dimensions, permission assessment and ranked alternatives.
+
+The primary `uncertainty_kind` is deterministic: active support with refutation
+(or a mixed verdict) yields `unresolved_conflict`; otherwise expired evidence
+with zero temporal validity yields `staleness`; otherwise multiple positively
+scored supported/mixed hypotheses yield `ambiguity`; otherwise an unknown
+verdict yields `ignorance`. A null kind means none of these causes was detected,
+not certainty or permission to act. Permission remains the separate gate above.
+
+Projection exposes the complete JSON as `verdict_explanation`, with an optional
+`verdict_uncertainty_kind` token for filtering. FIMI and STIX include the same
+payload in governed claim lineage, for nodes and relationships. Graphs without
+governed records retain their previous export bytes.
+
+The workstream gate is `cargo test -p graph-core --test epic_0029_ws_d_acceptance`.
+It reuses the canonical fixtures rather than maintaining parallel copies:
+
+| Epic #178 criterion | Evidence in the acceptance suite |
+| :--- | :--- |
+| One source plus ten copies does not inflate dimensions | `aggregation::spike_c_ten_copies_raise_no_dimension_materially` |
+| Independent high-authority minority wins | `hypotheses::independent_minority_wins_and_losers_keep_cluster_scores` |
+| Fabricated support cannot grant permission | `fabricated_evidence::fabricated_support_rises_but_actionability_stays_blocked_until_grounded_verification` |
+| Membership, weights and uncertainty are explained | `explanation` fixtures |
+| Scalar independence and blocked export | `permission::policy_paths_never_read_legacy_record_confidence`, `permission::blocked_claim_cannot_export_even_when_status_and_scalar_look_ready` |
+| Legacy dimensions migrate with findings | `migration::legacy_unknown_keys_produce_persistent_findings_once_per_key` |
+| Deterministic failure outranks aggregates | `aggregation::deterministic_failure_outranks_maximal_support`, `ws_b_precedence` |
+| WS-A and WS-B compatibility | `ws_a_compatibility`, `ws_b_precedence` |
+
+Exporter tests additionally cover additive explanation payloads and unchanged
+ungoverned exports (`export-stix/tests/epistemic_lineage.rs` and the FIMI unit
+contracts). The full workspace gate runs these alongside WS-D acceptance.
+
 ## Durability and transport boundaries
 
 The current HTTP runtime keeps its graph in process. Session metadata and JSONL logs are durable on disk, while `graph-storage` provides the append-only storage and pager building blocks used by lower-level integrations. `corrobore-ingest` deliberately imports through HTTP instead of depending on graph internals.
