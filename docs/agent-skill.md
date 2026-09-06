@@ -60,6 +60,7 @@ MCP server.
 
 | Area | Tools | Public Corrobore route |
 | :--- | :--- | :--- |
+| Claim audit (current source) | `corrobore_claim_audit` | `GET /v1/claims/{id}/audit` |
 | Runtime | `corrobore_ready` | `GET /health/ready` |
 | Memory writes | `corrobore_remember`, `corrobore_relate`, `corrobore_update`, `corrobore_forget` | `POST /v1/memory/operations` |
 | Memory reads | `corrobore_recall`, `corrobore_trace` | `POST /v1/memory/operations` |
@@ -113,3 +114,13 @@ The repository contracts reject unknown portable fields, invalid skill
 frontmatter, escaping links or symlinks, secret-bearing MCP configuration,
 missing release wiring, incomplete tool discovery, incorrect HTTP mapping,
 stdout pollution, and unbounded error behavior.
+
+## Claim audit before verdicts
+
+Both packaged skills require `GET /v1/claims/{id}/audit` before asserting a verdict.
+The packaged `references/claim-audit.md` playbook covers the four questions,
+mechanical versus semantic checks, missing provenance and reversible human
+judgments. See the [audit guide and acceptance evidence](user-guide/claim-audit.md).
+
+The current source package exposes this read as `corrobore_claim_audit` with
+`claim_id`; the historical v0.2.0 archive does not include this additional tool.

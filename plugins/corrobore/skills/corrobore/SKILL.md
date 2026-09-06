@@ -190,3 +190,10 @@ Quality gates: source grounding, referential integrity, low orphan rate, evidenc
 - Do not fabricate missing facts or bypass a policy rejection.
 - If evidence is contradictory or incomplete, report uncertainty and ask for review.
 - A validation response may persist corrections while `valid` remains false, because `valid` reflects issues found during that pass. Inspect every result field and revalidate when needed.
+
+## Claim audit before verdicts
+
+Before asserting a verdict, call `GET /v1/claims/{id}/audit` and follow the
+[claim audit playbook](references/claim-audit.md). Inspect stored coverage, contradictions,
+dimensions and history; report absent checks explicitly. A human judgment appends
+its own record and never edits the machine verdict.

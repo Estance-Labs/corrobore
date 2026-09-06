@@ -291,6 +291,15 @@ function memoryTool(operation, description, annotations) {
 
 const TOOLS = Object.freeze([
   {
+    name: 'corrobore_claim_audit',
+    description: 'Read the retained Corrobore claim audit before asserting a verdict: evidence, contradictions, history and unchecked coverage. Never recomputes or mutates a verdict.',
+    inputSchema: {
+      type: 'object', additionalProperties: false, required: ['claim_id'],
+      properties: { claim_id: { type: 'string', minLength: 1, description: 'Exact governed claim identifier.' } },
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
     name: 'corrobore_ready',
     description: 'Check whether the configured Corrobore HTTP runtime is ready before using protected tools.',
     inputSchema: EMPTY_OBJECT_SCHEMA,
@@ -394,6 +403,15 @@ function exactKeys(value, allowed, label) {
 
 function toolRequest(name, rawArguments) {
   const args = requireObject(rawArguments ?? {}, 'tool arguments');
+  // The claim audit bridge validates a single claim ID and forwards only a GET;
+  // return the direct upstream payload without interpreting its verdict.
+  if (name === 'corrobore_claim_audit') {
+    exactKeys(args, new Set(['claim_id']), 'corrobore_claim_audit arguments');
+    if (typeof args.claim_id !== 'string' || args.claim_id.trim().length === 0) {
+      throw new RpcError(-32602, 'claim_id must be a nonempty string');
+    }
+    return { method: 'GET', path: `v1/claims/${encodeURIComponent(args.claim_id)}/audit` };
+  }
   if (name === 'corrobore_ready') {
     exactKeys(args, new Set(), 'corrobore_ready arguments');
     return { method: 'GET', path: 'health/ready' };

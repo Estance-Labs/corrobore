@@ -82,3 +82,10 @@ Before returning the JSON bundle, verify:
 If an object cannot be repaired without invention, retain its unresolved candidate
 and omit it and unsupported references from the final export. Do not delete raw
 proposals or fabricate a record to satisfy the output shape.
+
+## Claim audit before verdicts
+
+Before asserting a verdict, call `GET /v1/claims/{id}/audit` and follow the
+[claim audit playbook](../corrobore/references/claim-audit.md). Inspect stored coverage, contradictions,
+dimensions and history; report absent checks explicitly. A human judgment appends
+its own record and never edits the machine verdict.
