@@ -181,3 +181,16 @@ impl Graph {
         stores.analyst_decisions.append(record)
     }
 }
+
+impl AnalystDecisionStore {
+    pub(crate) fn audit_subset(&self, ids: &std::collections::HashSet<ClaimId>) -> Self {
+        Self {
+            records: self
+                .records
+                .iter()
+                .filter(|r| ids.contains(&r.claim_id))
+                .cloned()
+                .collect(),
+        }
+    }
+}

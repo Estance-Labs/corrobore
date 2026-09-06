@@ -42,6 +42,11 @@ pub struct StixExportBundle {
     id: String,
     spec_version: &'static str,
     objects: Vec<Value>,
+    #[serde(
+        rename = "x_corrobore_audit_archive",
+        skip_serializing_if = "graph_core::AuditArchiveAttachment::is_none"
+    )]
+    audit_archive: graph_core::AuditArchiveAttachment,
     export_metadata: ExportMetadataView,
     export_diagnostics: ExportDiagnostics,
     #[serde(rename = "x_corrobore_evidence", skip_serializing_if = "Vec::is_empty")]
@@ -77,6 +82,7 @@ pub fn export_stix_subset_bundle(
     plan: &DeterministicExportPlan,
 ) -> StixExportBundle {
     let mut objects = Vec::new();
+    let mut audit_targets = Vec::new();
     let mut exported_node_ids = BTreeMap::<String, String>::new();
 
     for record in plan
@@ -104,6 +110,7 @@ pub fn export_stix_subset_bundle(
             continue;
         };
         exported_node_ids.insert(record.record_id().to_owned(), id.to_owned());
+        audit_targets.push(graph_core::ClaimTarget::Node(node.id().clone()));
         objects.push(object);
     }
 
@@ -137,6 +144,9 @@ pub fn export_stix_subset_bundle(
                 record.evidence_refs(),
                 &mut object,
             );
+            audit_targets.push(graph_core::ClaimTarget::Relationship(
+                relationship.id().clone(),
+            ));
             objects.push(object);
         }
     }
@@ -153,6 +163,7 @@ pub fn export_stix_subset_bundle(
         // Spec version.
         spec_version: "2.1",
         objects,
+        audit_archive: graph.audit_archive_for_export_targets(&audit_targets),
         // Export metadata.
         export_metadata: ExportMetadataView {
             // Snapshot id.

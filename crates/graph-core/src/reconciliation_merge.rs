@@ -349,3 +349,44 @@ impl Graph {
             .ok_or_else(|| invalid("unknown entity mention"))
     }
 }
+
+impl MergeStore {
+    pub(crate) fn audit_subset(
+        &self,
+        ids: &mut std::collections::HashSet<ReconciliationRecordId>,
+    ) -> Self {
+        loop {
+            let count = ids.len();
+            for event in &self.events {
+                if let Event::Context {
+                    record,
+                    dependencies,
+                }
+                | Event::Apply {
+                    record,
+                    dependencies,
+                } = event
+                    && ids.contains(record)
+                {
+                    ids.extend(dependencies.iter().cloned());
+                }
+            }
+            if count == ids.len() {
+                break;
+            }
+        }
+        Self {
+            events: self
+                .events
+                .iter()
+                .filter(|e| match e {
+                    Event::Context { record, .. } | Event::Apply { record, .. } => {
+                        ids.contains(record)
+                    }
+                    Event::Undo { undo } => ids.contains(undo.reconciliation_id()),
+                })
+                .cloned()
+                .collect(),
+        }
+    }
+}

@@ -126,7 +126,7 @@ impl DependencyReason {
     pub fn value(&self) -> &str {
         &self.value
     }
-    /// Positions of the connected links in `ClaimStore::claim_links`.
+    /// Stable ledger indices of the connected links.
     pub fn links(&self) -> (usize, usize) {
         (self.left_link, self.right_link)
     }
@@ -166,7 +166,7 @@ impl SourceIndependence {
             })
             .count()
     }
-    /// Membership lookup using the position returned by `ClaimStore::claim_links`.
+    /// Membership lookup by stable claim-link ledger index.
     pub fn cluster_for_link(&self, index: usize) -> Option<&IndependenceCluster> {
         self.clusters.iter().find(|c| c.members.contains(&index))
     }
@@ -306,6 +306,7 @@ impl ClaimStore {
         sources: &SourceStore,
     ) -> Result<SourceIndependence, GraphError> {
         self.claim_by_id(claim)?;
+        self.validate_link_indices()?;
         let active: Vec<_> = self
             .claim_links
             .iter()
@@ -385,7 +386,7 @@ impl ClaimStore {
                         l.target_claim_id(),
                         l.kind(),
                         &l.bitemporal,
-                        unknown.then_some(i),
+                        unknown.then_some(self.claim_link_index(i)),
                     ))
                     .expect("link identity")
                 })
@@ -408,9 +409,19 @@ impl ClaimStore {
             }
             clusters.push(IndependenceCluster {
                 id,
-                members,
+                members: members
+                    .iter()
+                    .map(|&index| self.claim_link_index(index))
+                    .collect(),
                 supporting,
-                reasons: component_reasons,
+                reasons: component_reasons
+                    .into_iter()
+                    .map(|mut reason| {
+                        reason.left_link = self.claim_link_index(reason.left_link);
+                        reason.right_link = self.claim_link_index(reason.right_link);
+                        reason
+                    })
+                    .collect(),
             });
         }
         clusters.sort_by(|a, b| a.id.cmp(&b.id));

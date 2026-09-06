@@ -105,6 +105,7 @@ impl Graph {
         let stores = self.epistemic_stores();
         let claim = stores.claims.claim_by_id(id)?;
         stores.audit_bindings.validate(stores)?;
+        stores.claims.validate_link_indices()?;
         stores.analyst_decisions.validate(&stores.claims)?;
         let mut gaps = Vec::new();
         let mut claim_ids = BTreeSet::from([id.as_str().to_owned()]);
@@ -301,7 +302,8 @@ impl Graph {
         }
         let link_membership = stores.claims.claim_links().iter().enumerate()
             .filter(|(_, link)| claim_ids.contains(link.target_claim_id().as_str()))
-            .map(|(index, link)| {
+            .map(|(position, link)| {
+                let index = stores.claims.claim_link_index(position);
                 let explanation = stores.verdicts.current_verdict(link.target_claim_id()).map(|v| v.explanation());
                 let clusters = explanation.as_ref().map(|e| e.clusters().iter().filter(|c| c.members().iter().any(|m| m.link_index() == index && m.reference().is_none_or(|r| r == link.reference_key()))).map(|c| c.cluster_id()).collect::<Vec<_>>()).unwrap_or_default();
                 json!({"store_index":index,"reference":link.reference_key(),"claim_id":link.target_claim_id(),"stored_cluster_ids":clusters})
@@ -337,5 +339,18 @@ impl Graph {
             "promotions":array(promotions)?,
             "unverified_steps":array(gaps)?
         }))
+    }
+}
+
+impl ClaimAuditBindings {
+    pub(crate) fn audit_subset(&self, ids: &std::collections::HashSet<ClaimId>) -> Self {
+        Self {
+            links: self
+                .links
+                .iter()
+                .filter(|(claim, _)| ids.contains(claim))
+                .cloned()
+                .collect(),
+        }
     }
 }

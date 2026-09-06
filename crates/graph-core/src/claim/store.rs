@@ -216,6 +216,7 @@ pub struct ClaimStore {
     pub(crate) known_evidence: HashSet<EvidenceId>,
     pub(crate) known_observations: HashSet<ObservationId>,
     pub(crate) claim_links: Vec<ClaimLink>,
+    pub(crate) claim_link_indices: Vec<usize>,
     pub(crate) claim_decisions: HashMap<ClaimId, Vec<ClaimDecision>>,
     pub(crate) stances_by_id: HashMap<String, AgentStance>,
     pub(crate) hypothesis_workspaces: HashMap<HypothesisWorkspaceId, HypothesisWorkspace>,
@@ -232,6 +233,26 @@ pub struct ClaimStore {
 }
 
 impl ClaimStore {
+    /// Validate sparse origin positions retained by scoped audit archives.
+    pub(crate) fn validate_link_indices(&self) -> Result<(), GraphError> {
+        // A scoped archive preserves source positions while excluding unrelated links.
+        // Reject malformed maps before reads, resolution or further appends.
+        if self.claim_link_indices.is_empty() {
+            return Ok(());
+        }
+        if self.claim_link_indices.len() != self.claim_links.len()
+            || self
+                .claim_link_indices
+                .windows(2)
+                .any(|pair| pair[0] >= pair[1])
+        {
+            return Err(GraphError::InvalidClaimLink(
+                "invalid sparse link ledger indices".into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub(crate) fn apply_display_confidence(
         &mut self,
         id: &ClaimId,
@@ -255,6 +276,7 @@ impl ClaimStore {
             known_observations: HashSet::new(),
             // Claim links.
             claim_links: Vec::new(),
+            claim_link_indices: Vec::new(),
             // Claim decisions.
             claim_decisions: HashMap::new(),
             // Stances by id.
@@ -821,7 +843,7 @@ impl ClaimStore {
         }
         self.ensure_claim_exists(link.target_claim_id())?;
 
-        self.claim_links.push(link.clone());
+        self.push_claim_link(link.clone())?;
 
         let explanation = EpistemicExplanation::new(
             format!("claim:{}", link.target_claim_id().as_str()),
@@ -852,6 +874,7 @@ impl ClaimStore {
             && self.known_evidence.is_empty()
             && self.known_observations.is_empty()
             && self.claim_links.is_empty()
+            && self.claim_link_indices.is_empty()
             && self.claim_decisions.is_empty()
             && self.stances_by_id.is_empty()
             && self.hypothesis_workspaces.is_empty()
@@ -996,6 +1019,34 @@ impl ClaimStore {
         );
 
         Ok(true)
+    }
+
+    /// Original append-only ledger index of a retained link position.
+    pub fn claim_link_index(&self, position: usize) -> usize {
+        self.claim_link_indices
+            .get(position)
+            .copied()
+            .unwrap_or(position)
+    }
+    /// Read a link by its stable ledger index, including after scoped restoration.
+    pub fn claim_link_at_index(&self, index: usize) -> Option<&ClaimLink> {
+        let position = if self.claim_link_indices.is_empty() {
+            index
+        } else {
+            self.claim_link_indices.binary_search(&index).ok()?
+        };
+        self.claim_links.get(position)
+    }
+    fn push_claim_link(&mut self, link: ClaimLink) -> Result<(), GraphError> {
+        self.validate_link_indices()?;
+        if let Some(last) = self.claim_link_indices.last() {
+            let next = last.checked_add(1).ok_or_else(|| {
+                GraphError::InvalidClaimLink("link ledger index exhausted".into())
+            })?;
+            self.claim_link_indices.push(next);
+        }
+        self.claim_links.push(link);
+        Ok(())
     }
 
     /// Read all persisted claim support/refutation links.
@@ -1170,7 +1221,7 @@ impl ClaimStore {
             target_claim_id,
             kind,
         );
-        self.claim_links.push(link.clone());
+        self.push_claim_link(link.clone())?;
 
         let explanation = EpistemicExplanation::new(
             format!("claim:{}", link.target_claim_id().as_str()),
@@ -1205,7 +1256,7 @@ impl ClaimStore {
             kind,
         )
         .with_explanation_ref(explanation_ref);
-        self.claim_links.push(link.clone());
+        self.push_claim_link(link.clone())?;
 
         let explanation = EpistemicExplanation::new(
             format!("claim:{}", link.target_claim_id().as_str()),
@@ -1401,6 +1452,8 @@ pub struct ClaimStoreSnapshot {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     claim_links: Vec<ClaimLink>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    claim_link_indices: Vec<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     claim_decisions: Vec<(ClaimId, Vec<ClaimDecision>)>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     stances: Vec<AgentStance>,
@@ -1460,6 +1513,7 @@ impl From<ClaimStore> for ClaimStoreSnapshot {
             known_evidence: sorted_ids(store.known_evidence),
             known_observations: sorted_ids(store.known_observations),
             claim_links: store.claim_links,
+            claim_link_indices: store.claim_link_indices,
             claim_decisions: sorted_by_key(store.claim_decisions),
             stances,
             hypothesis_workspaces,
@@ -1488,6 +1542,7 @@ impl From<ClaimStoreSnapshot> for ClaimStore {
             known_evidence: snapshot.known_evidence.into_iter().collect(),
             known_observations: snapshot.known_observations.into_iter().collect(),
             claim_links: snapshot.claim_links,
+            claim_link_indices: snapshot.claim_link_indices,
             claim_decisions: snapshot.claim_decisions.into_iter().collect(),
             stances_by_id: snapshot
                 .stances
@@ -1521,5 +1576,48 @@ impl From<ClaimStoreSnapshot> for ClaimStore {
             link_explanations: snapshot.link_explanations.into_iter().collect(),
             resolution_explanations: snapshot.resolution_explanations.into_iter().collect(),
         }
+    }
+}
+
+impl ClaimStore {
+    pub(crate) fn audit_subset(&self, ids: &std::collections::HashSet<ClaimId>) -> Self {
+        let mut subset = Self {
+            claims: self
+                .claims
+                .iter()
+                .filter(|(id, _)| ids.contains(*id))
+                .map(|(id, r)| (id.clone(), r.clone()))
+                .collect(),
+            ..Self::default()
+        };
+        for (position, link) in self.claim_links.iter().enumerate() {
+            if ids.contains(link.target_claim_id()) {
+                subset.claim_links.push(link.clone());
+                subset
+                    .claim_link_indices
+                    .push(self.claim_link_index(position));
+                match link.source() {
+                    ClaimLinkSource::Evidence(id) => {
+                        subset.known_evidence.insert(id.clone());
+                    }
+                    ClaimLinkSource::Observation(id) => {
+                        subset.known_observations.insert(id.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for claim in subset.claims.values() {
+            subset
+                .known_evidence
+                .extend(claim.evidence_refs().iter().cloned());
+        }
+        subset.claim_decisions = self
+            .claim_decisions
+            .iter()
+            .filter(|(id, _)| ids.contains(*id))
+            .map(|(id, r)| (id.clone(), r.clone()))
+            .collect();
+        subset
     }
 }

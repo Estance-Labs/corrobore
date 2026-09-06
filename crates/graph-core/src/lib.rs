@@ -473,3 +473,6 @@ pub use claim_audit::{ClaimAuditBindings, ClaimAuditReference};
 
 mod analyst_decision;
 pub use analyst_decision::{AnalystDecision, AnalystDecisionAction, AnalystDecisionStore};
+
+mod audit_archive;
+pub use audit_archive::AuditArchiveAttachment;

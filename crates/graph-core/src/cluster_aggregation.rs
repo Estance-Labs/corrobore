@@ -172,7 +172,13 @@ pub(crate) fn aggregate_components(
 ) -> Result<(ClusterAggregation, ConfidenceDimensions), GraphError> {
     let mut clusters = Vec::new();
     for cluster in structure.clusters() {
-        let links = || cluster.members().iter().map(|&i| &claims.claim_links()[i]);
+        let links = || {
+            cluster.members().iter().map(|&i| {
+                claims
+                    .claim_link_at_index(i)
+                    .expect("derived cluster member")
+            })
+        };
         clusters.push(ClusterContribution {
             cluster_id: cluster.id().to_owned(),
             support: channel(links().filter(|l| l.kind() == ClaimLinkKind::Supports))?,
@@ -202,10 +208,13 @@ pub(crate) fn aggregate_components(
                 .reasons()
                 .iter()
                 .any(|r| r.signal() == DependencySignal::UnknownIndependence)
-                && cluster
-                    .members()
-                    .iter()
-                    .any(|&i| claims.claim_links()[i].kind() == ClaimLinkKind::Supports)
+                && cluster.members().iter().any(|&i| {
+                    claims
+                        .claim_link_at_index(i)
+                        .expect("derived cluster member")
+                        .kind()
+                        == ClaimLinkKind::Supports
+                })
         })
         .count();
     let mut has_temporal = false;

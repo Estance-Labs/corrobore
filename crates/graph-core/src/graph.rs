@@ -147,6 +147,7 @@ impl Graph {
             .epistemic
             .analyst_decisions
             .validate(&snapshot.epistemic.claims)?;
+        snapshot.epistemic.claims.validate_link_indices()?;
         let mut graph = Graph {
             next_node_sequence: snapshot.next_node_sequence,
             next_node_version_sequence: snapshot.next_node_version_sequence,
@@ -1335,6 +1336,43 @@ fn validate_exportable_transition(
         ));
     }
     Ok(())
+}
+
+impl Graph {
+    pub(crate) fn scoped_audit_snapshot(
+        &self,
+        stores: crate::EpistemicStores,
+        evidence: &std::collections::HashSet<EvidenceId>,
+        roots: &[crate::ClaimId],
+    ) -> GraphPersistenceSnapshot {
+        let mut snapshot = self.persistence_snapshot();
+        let mut nodes = std::collections::HashSet::new();
+        let mut relationships = std::collections::HashSet::new();
+        for id in roots {
+            if let Ok(claim) = stores.claims.claim_by_id(id) {
+                match claim.target() {
+                    crate::ClaimTarget::Node(id) => {
+                        nodes.insert(id.clone());
+                    }
+                    crate::ClaimTarget::Relationship(id) => {
+                        relationships.insert(id.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        snapshot
+            .relationships
+            .retain(|r| relationships.contains(r.id()));
+        for r in &snapshot.relationships {
+            nodes.insert(r.source().clone());
+            nodes.insert(r.target().clone());
+        }
+        snapshot.nodes.retain(|r| nodes.contains(r.id()));
+        snapshot.evidence = self.evidence.audit_subset(evidence);
+        snapshot.epistemic = stores;
+        snapshot
+    }
 }
 
 #[cfg(test)]

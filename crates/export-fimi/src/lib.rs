@@ -36,6 +36,11 @@ use serde::{Deserialize, Serialize};
 pub struct FimiExportDocument {
     schema: &'static str,
     records: Vec<FimiRecord>,
+    #[serde(
+        rename = "x_corrobore_audit_archive",
+        skip_serializing_if = "graph_core::AuditArchiveAttachment::is_none"
+    )]
+    audit_archive: graph_core::AuditArchiveAttachment,
     export_metadata: ExportMetadataView,
 }
 
@@ -221,12 +226,27 @@ pub fn export_fimi_json_document(
 
     records.sort_by(|left, right| left.id.cmp(&right.id));
 
+    let audit_targets = records
+        .iter()
+        .filter_map(|record| {
+            if record.relationship_type.is_some() {
+                RelationshipId::new(&record.source_record_id)
+                    .ok()
+                    .map(graph_core::ClaimTarget::Relationship)
+            } else {
+                NodeId::new(&record.source_record_id)
+                    .ok()
+                    .map(graph_core::ClaimTarget::Node)
+            }
+        })
+        .collect::<Vec<_>>();
     let metadata = plan.metadata();
 
     FimiExportDocument {
         // Schema.
         schema: "fimi-json-mvp",
         records,
+        audit_archive: graph.audit_archive_for_export_targets(&audit_targets),
         // Export metadata.
         export_metadata: ExportMetadataView {
             // Snapshot id.
@@ -687,5 +707,57 @@ mod tests {
         assert_eq!(document.schema, "fimi-json-mvp");
         assert_eq!(document.export_metadata.profile, "fimi-json-mvp");
         assert_eq!(document.export_metadata.mode, "permissive");
+    }
+    #[test]
+    fn fimi_archive_restores_sources_verdict_dimensions_and_human_decisions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use graph_core::*;
+        for relationship in [false, true] {
+            let mut graph = Graph::new();
+            let node = graph
+                .create_node(NodeInput::new(["Narrative"]).with_status(RecordStatus::Exportable))?;
+            let target = if relationship {
+                let endpoint = graph.create_node(
+                    NodeInput::new(["Narrative"]).with_status(RecordStatus::Exportable),
+                )?;
+                ClaimTarget::Relationship(
+                    graph.create_relationship(
+                        RelationshipInput::new(node, "related_to", endpoint)?
+                            .with_status(RecordStatus::Exportable),
+                    )?,
+                )
+            } else {
+                ClaimTarget::Node(node)
+            };
+            let claim = ClaimId::new("fimi-audit")?;
+            graph
+                .epistemic_stores_mut()
+                .claims
+                .create_asserted_claim(ClaimInput::new(
+                    claim.clone(),
+                    ClaimStatement::new("Narrative assertion")?,
+                    target,
+                ))?;
+            make_claim_actionable(&mut graph, &claim);
+            graph.record_analyst_decision(AnalystDecision::new(
+                "note",
+                claim.clone(),
+                ActorId::new("analyst")?,
+                TemporalTimestamp::new("2026-09-06T12:00:00Z")?,
+                AnalystDecisionAction::Annotation {
+                    text: "Reviewed narrative".into(),
+                },
+            )?)?;
+            let plan = build_deterministic_export_plan(&graph, permissive_metadata(), &[])?;
+            let exported = serde_json::to_value(export_fimi_json_document(&graph, &plan))?;
+            let archive = &exported["x_corrobore_audit_archive"];
+            assert!(archive.is_object());
+            let restored = Graph::from_claim_audit_archive(archive)?;
+            assert_eq!(
+                graph.claim_audit_path(&claim)?,
+                restored.claim_audit_path(&claim)?
+            );
+        }
+        Ok(())
     }
 }

@@ -348,3 +348,19 @@ impl TryFrom<StoredMentions> for EntityMentionStore {
         })
     }
 }
+
+impl EntityMentionStore {
+    pub(crate) fn audit_subset(
+        &self,
+        observations: &std::collections::HashSet<ObservationId>,
+    ) -> Self {
+        Self {
+            mentions: self
+                .mentions
+                .iter()
+                .filter(|r| observations.contains(r.observation_id()))
+                .cloned()
+                .collect(),
+        }
+    }
+}

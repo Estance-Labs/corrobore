@@ -415,3 +415,20 @@ impl Graph {
         Ok(promotion)
     }
 }
+
+impl CandidateStore {
+    pub(crate) fn audit_subset(&self, ids: &std::collections::HashSet<CandidateId>) -> Self {
+        let mut subset = self.clone();
+        subset.records.retain(|r| ids.contains(r.id()));
+        subset.promotions.retain(|r| ids.contains(r.candidate_id()));
+        subset
+            .transitions
+            .retain(|r| matches!(&r.record, TierRecordRef::Candidate(id) if ids.contains(id)));
+        // Sequence numbers are local to the selected tier registry; immutable
+        // candidate, repair and promotion records retain their original content.
+        for (index, transition) in subset.transitions.iter_mut().enumerate() {
+            transition.sequence = index as u64;
+        }
+        subset
+    }
+}
