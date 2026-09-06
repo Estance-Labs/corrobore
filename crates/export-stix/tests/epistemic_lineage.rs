@@ -191,6 +191,18 @@ fn claim_lineage_exports_current_verification_coverage() {
         .expect("claim lineage");
     assert_eq!(claim["confidence_band"], "Exportable");
     assert_eq!(
+        claim["verdict_explanation"]["dimensions"]["actionability"],
+        1.0
+    );
+    assert_eq!(
+        claim["verdict_explanation"]["clusters"]
+            .as_array()
+            .expect("clusters")
+            .len(),
+        2
+    );
+    assert!(claim["verdict_explanation"]["uncertainty_kind"].is_null());
+    assert_eq!(
         claim["verification_coverage"]["entries"][0]["class"],
         "mechanically_checked"
     );
@@ -292,4 +304,55 @@ fn make_claim_actionable(graph: &mut graph_core::Graph, claim: &graph_core::Clai
         stamp,
     )
     .expect("resolve");
+}
+
+#[test]
+fn relationship_claims_export_the_same_explanation_payload() {
+    use graph_core::*;
+    let mut graph = graph_with_object(EvidenceInput::new(
+        EvidenceId::new("evidence--lineage").expect("id"),
+        "synthetic-report",
+        "payload",
+    ));
+    let source = graph.list_nodes().expect("nodes")[0].id().clone();
+    let target = graph
+        .create_node(
+            NodeInput::new(["Malware"])
+                .with_status(RecordStatus::Exportable)
+                .with_evidence_ref(EvidenceId::new("evidence--lineage").expect("id")),
+        )
+        .expect("node");
+    let relationship = graph
+        .create_relationship(
+            RelationshipInput::new(source, "USES", target)
+                .expect("input")
+                .with_status(RecordStatus::Exportable)
+                .with_evidence_ref(EvidenceId::new("evidence--lineage").expect("id")),
+        )
+        .expect("relationship");
+    let claim = ClaimId::new("claim--relationship").expect("id");
+    graph
+        .epistemic_stores_mut()
+        .claims
+        .create_asserted_claim(ClaimInput::new(
+            claim.clone(),
+            ClaimStatement::new("relationship is supported").expect("statement"),
+            ClaimTarget::Relationship(relationship),
+        ))
+        .expect("claim");
+    make_claim_actionable(&mut graph, &claim);
+    let value: Value = serde_json::from_slice(&bundle_bytes(&graph)).expect("json");
+    let object = value["objects"]
+        .as_array()
+        .expect("objects")
+        .iter()
+        .find(|o| o["type"] == "relationship")
+        .expect("relationship");
+    assert_eq!(
+        object["x_corrobore_lineage"][0]["verdict_explanation"]["clusters"]
+            .as_array()
+            .expect("clusters")
+            .len(),
+        2
+    );
 }

@@ -823,6 +823,8 @@ pub struct Verdict {
     hypothesis_set: Option<HypothesisSet>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     actionability: Option<crate::ActionabilityAssessment>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    explanation_links: BTreeMap<usize, String>,
     policy_version: String,
     stamp: BitemporalStamp,
 }
@@ -879,6 +881,8 @@ struct StoredVerdict {
     hypothesis_set: Option<HypothesisSet>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     actionability: Option<crate::ActionabilityAssessment>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    explanation_links: BTreeMap<usize, String>,
     policy_version: String,
     stamp: BitemporalStamp,
 }
@@ -908,6 +912,7 @@ impl TryFrom<StoredVerdict> for Verdict {
             cluster_aggregation: stored.cluster_aggregation,
             hypothesis_set: stored.hypothesis_set,
             actionability: stored.actionability,
+            explanation_links: stored.explanation_links,
             policy_version: stored.policy_version,
             stamp: stored.stamp,
         })
@@ -915,6 +920,10 @@ impl TryFrom<StoredVerdict> for Verdict {
 }
 
 impl Verdict {
+    /// Explain this stored snapshot without retrieval or resolution.
+    pub fn explanation(&self) -> crate::VerdictExplanation {
+        crate::VerdictExplanation::from_verdict(self, &self.explanation_links)
+    }
     /// Separate permission assessment, with all blocking reasons.
     pub fn actionability(&self) -> Option<&crate::ActionabilityAssessment> {
         self.actionability.as_ref()
@@ -981,6 +990,21 @@ impl Verdict {
     /// Project the verdict into additive, namespaced `verdict_*` properties.
     pub fn to_property_map(&self) -> PropertyMap {
         let mut properties = PropertyMap::new();
+        let explanation = self.explanation();
+        properties.insert(
+            "verdict_explanation".into(),
+            PropertyValue::Json(
+                serde_json::to_value(&explanation).expect("serializable explanation"),
+            ),
+        );
+        if let Some(kind) = explanation.uncertainty_kind() {
+            let value = serde_json::to_value(kind).expect("serializable kind");
+            properties.insert(
+                "verdict_uncertainty_kind".into(),
+                PropertyValue::String(value.as_str().expect("kind token").to_owned()),
+            );
+        }
+
         if let Some(assessment) = &self.actionability {
             properties.insert(
                 "verdict_actionability".into(),
@@ -1322,6 +1346,7 @@ impl VerdictStore {
             cluster_aggregation: None,
             hypothesis_set: None,
             actionability: None,
+            explanation_links: BTreeMap::new(),
             policy_version,
             stamp,
         });
@@ -2111,6 +2136,18 @@ fn resolve_single_claim_verdict(
         policy_version,
         stamp.clone(),
     )?;
+    // Capture stable references while the input snapshot is available. Historical
+    // verdicts retain their recorded indices without inventing missing refs.
+    verdicts
+        .verdicts
+        .last_mut()
+        .expect("just appended verdict")
+        .explanation_links = source_independence
+        .clusters()
+        .iter()
+        .flat_map(|cluster| cluster.members().iter())
+        .map(|&index| (index, claims.claim_links()[index].reference_key()))
+        .collect();
     // A new dependency snapshot is a new verdict even when its state is unchanged.
     // Preserve prior snapshots; only actual state changes create transitions.
     verdicts
