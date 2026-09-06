@@ -153,6 +153,7 @@ pub async fn validate_stix(
                     engine.graph(),
                     snapshot_id.as_deref(),
                     domain_providers.as_deref(),
+                    true,
                 )?;
                 Ok::<_, ApiError>((issues, playbooks, None))
             }
@@ -267,11 +268,28 @@ pub(crate) fn collect_cti_export_findings(
     graph: &graph_core::Graph,
 ) -> Result<Vec<graph_core::ValidationErrorRecord>, ApiError> {
     let provider = require_cti_provider(state)?;
-    let (issues, _) = validate_graph_nodes(graph, None, Some(provider))?;
+    let (issues, _) = validate_graph_nodes(graph, None, Some(provider), false)?;
     Ok(issues
         .into_iter()
         .filter_map(|issue| {
             let node_id = issue.node_id?;
+            // Preserve legacy provider findings as diagnostics on export only.
+            // The public validation endpoint still uses the original contract.
+            if matches!(
+                issue.code.as_str(),
+                "CTI_CONFIDENCE_REQUIRED" | "CTI_CONFIDENCE_TOO_LOW"
+            ) {
+                return Some(graph_core::ValidationErrorRecord::new(
+                    "EXPORT_LEGACY_CONFIDENCE_DIAGNOSTIC",
+                    graph_core::ValidationErrorSeverity::Warning,
+                    format!(
+                        "{}: {} (display-only criterion; permission is governed by actionability)",
+                        issue.code, issue.message
+                    ),
+                    graph_core::ValidationTarget::node(node_id),
+                ));
+            }
+
             Some(graph_core::ValidationErrorRecord::new(
                 issue.code,
                 if issue.severity == "error" {
@@ -295,6 +313,7 @@ fn validate_graph_nodes(
     graph: &graph_core::Graph,
     _snapshot_id: Option<&str>,
     providers: Option<&crate::enterprise::registry::DomainProviderRegistry>,
+    legacy_scalar_validation: bool,
 ) -> Result<(Vec<ValidationIssue>, Vec<AppliedPlaybook>), ApiError> {
     let providers = providers.ok_or_else(|| {
         ApiError::service_unavailable(
@@ -344,7 +363,7 @@ fn validate_graph_nodes(
                         .iter()
                         .map(|id| id.as_str())
                         .collect::<Vec<_>>(),
-                    "confidence": node.confidence().map(|value| value.value()),
+                    "confidence": if legacy_scalar_validation { node.confidence().map(|value| value.value()) } else { None },
                 }),
             })
             .map_err(|error| ApiError::bad_gateway("DOMAIN_PROVIDER_ERROR", error.to_string()))?;
@@ -381,6 +400,7 @@ fn validate_graph_nodes(
     _graph: &graph_core::Graph,
     _snapshot_id: Option<&str>,
     _providers: Option<&crate::enterprise::registry::DomainProviderRegistry>,
+    _legacy_scalar_validation: bool,
 ) -> Result<(Vec<ValidationIssue>, Vec<AppliedPlaybook>), ApiError> {
     Err(ApiError::forbidden(
         "FEATURE_NOT_AVAILABLE",

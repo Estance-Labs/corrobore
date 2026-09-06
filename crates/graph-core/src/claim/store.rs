@@ -232,6 +232,18 @@ pub struct ClaimStore {
 }
 
 impl ClaimStore {
+    pub(crate) fn apply_display_confidence(
+        &mut self,
+        id: &ClaimId,
+        confidence: Option<Confidence>,
+    ) -> Result<(), GraphError> {
+        self.claims
+            .get_mut(id)
+            .ok_or_else(|| GraphError::ClaimNotFound(id.clone()))?
+            .confidence = confidence;
+        Ok(())
+    }
+
     /// Creates a new instance.
     pub fn new() -> Self {
         Self {

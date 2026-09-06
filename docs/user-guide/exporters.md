@@ -30,7 +30,7 @@ Unknown labels and unsupported OpenCTI families never receive a generated
 identity.
 
 Strict mode rejects the export with named findings when an eligible CTI record
-is not export-ready, lacks confidence or retained evidence, has malformed
+is not export-ready, lacks retained evidence, has a governed claim with blocked or missing actionability, has malformed
 canonical identity, fails provider validation, or references an excluded
 endpoint. Permissive mode omits those records and returns at most 256
 machine-readable entries in `export_diagnostics.exclusions`; it never creates a
@@ -38,11 +38,16 @@ fallback STIX identity for an unsupported record.
 
 Exceptional operator-driven exports can set `StixExportOptions::force` in the
 embedded API or pass `force=true` to the HTTP route. Force keeps semantic
-confidence, missing-evidence, and provider findings as bounded deterministic
+missing-evidence and provider findings as bounded deterministic
 diagnostics while including the otherwise eligible record. It does not bypass
-export status, unsupported profile selection, malformed canonical identities,
+actionability, export status, unsupported profile selection, malformed canonical identities,
 dangling evidence references, excluded relationship endpoints, licensing, or
 provider readiness. The default is `false`.
+
+Scalar confidence is display metadata; raising it cannot grant export permission.
+For governed claims, refusals name the actionability blockers. Legacy scalar
+findings from older CTI providers remain export diagnostics; the separate public
+validation endpoint keeps its existing behavior.
 
 ### Agent export choreography
 

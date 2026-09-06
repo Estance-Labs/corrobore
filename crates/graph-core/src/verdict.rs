@@ -821,6 +821,8 @@ pub struct Verdict {
     cluster_aggregation: Option<crate::ClusterAggregation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     hypothesis_set: Option<HypothesisSet>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    actionability: Option<crate::ActionabilityAssessment>,
     policy_version: String,
     stamp: BitemporalStamp,
 }
@@ -875,6 +877,8 @@ struct StoredVerdict {
     cluster_aggregation: Option<crate::ClusterAggregation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     hypothesis_set: Option<HypothesisSet>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    actionability: Option<crate::ActionabilityAssessment>,
     policy_version: String,
     stamp: BitemporalStamp,
 }
@@ -903,6 +907,7 @@ impl TryFrom<StoredVerdict> for Verdict {
             authority_resolution: stored.authority_resolution,
             cluster_aggregation: stored.cluster_aggregation,
             hypothesis_set: stored.hypothesis_set,
+            actionability: stored.actionability,
             policy_version: stored.policy_version,
             stamp: stored.stamp,
         })
@@ -910,6 +915,15 @@ impl TryFrom<StoredVerdict> for Verdict {
 }
 
 impl Verdict {
+    /// Separate permission assessment, with all blocking reasons.
+    pub fn actionability(&self) -> Option<&crate::ActionabilityAssessment> {
+        self.actionability.as_ref()
+    }
+    /// Display-only scalar derived from named dimensions.
+    pub fn display_confidence(&self) -> Option<Confidence> {
+        self.confidence_dimensions.display_confidence()
+    }
+
     /// Retained ranked alternatives for this resolution snapshot.
     pub fn hypothesis_set(&self) -> Option<&HypothesisSet> {
         self.hypothesis_set.as_ref()
@@ -967,6 +981,20 @@ impl Verdict {
     /// Project the verdict into additive, namespaced `verdict_*` properties.
     pub fn to_property_map(&self) -> PropertyMap {
         let mut properties = PropertyMap::new();
+        if let Some(assessment) = &self.actionability {
+            properties.insert(
+                "verdict_actionability".into(),
+                PropertyValue::Json(
+                    serde_json::to_value(assessment).expect("serializable assessment"),
+                ),
+            );
+        }
+        if let Some(display) = self.display_confidence() {
+            properties.insert(
+                "verdict_display_confidence".into(),
+                PropertyValue::Float(display.value()),
+            );
+        }
         if let Some(set) = &self.hypothesis_set {
             properties.insert(
                 "verdict_hypothesis_set".to_owned(),
@@ -1293,6 +1321,7 @@ impl VerdictStore {
             authority_resolution: None,
             cluster_aggregation: None,
             hypothesis_set: None,
+            actionability: None,
             policy_version,
             stamp,
         });
@@ -1408,6 +1437,8 @@ impl VerdictStore {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ResolutionOutcome {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    actionability: Option<crate::ActionabilityAssessment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     hypothesis_set: Option<HypothesisSet>,
     claim_id: ClaimId,
     state: VerdictState,
@@ -1420,6 +1451,10 @@ pub struct ResolutionOutcome {
 }
 
 impl ResolutionOutcome {
+    /// Permission assessment, including all blockers, even for unchanged resolutions.
+    pub fn actionability(&self) -> Option<&crate::ActionabilityAssessment> {
+        self.actionability.as_ref()
+    }
     /// Retained ranked alternatives, also returned for unchanged resolutions.
     pub fn hypothesis_set(&self) -> Option<&HypothesisSet> {
         self.hypothesis_set.as_ref()
@@ -1460,6 +1495,7 @@ impl ResolutionOutcome {
 /// stores.
 #[derive(Clone, Copy, Debug)]
 pub struct ResolutionInputs<'a> {
+    actionability_policy: Option<&'a crate::ActionabilityPolicy>,
     verifications: &'a VerificationRecordStore,
     pub(crate) evidence: &'a EvidenceRecordStore,
     pub(crate) observations: &'a ObservationStore,
@@ -1468,6 +1504,12 @@ pub struct ResolutionInputs<'a> {
 }
 
 impl<'a> ResolutionInputs<'a> {
+    /// Select a versioned actionability policy for the resolved claim type.
+    pub fn with_actionability_policy(mut self, policy: &'a crate::ActionabilityPolicy) -> Self {
+        self.actionability_policy = Some(policy);
+        self
+    }
+
     /// Bundle the read-only stores.
     pub fn new(
         verifications: &'a VerificationRecordStore,
@@ -1476,6 +1518,7 @@ impl<'a> ResolutionInputs<'a> {
         sources: &'a SourceStore,
     ) -> Self {
         Self {
+            actionability_policy: None,
             verifications,
             evidence,
             observations,
@@ -1824,7 +1867,7 @@ fn resolve_single_claim_verdict(
     let deterministic_failure = deterministic_records
         .iter()
         .any(|r| r.result() == VerificationResult::Fail);
-    let (cluster_aggregation, dimensions) = if cluster_policy {
+    let (cluster_aggregation, mut dimensions) = if cluster_policy {
         let (report, dimensions) = crate::cluster_aggregation::aggregate_components(
             claims,
             &source_independence,
@@ -1974,11 +2017,52 @@ fn resolve_single_claim_verdict(
         state
     };
 
+    let actionability = if cluster_policy {
+        let independent_clusters = cluster_aggregation
+            .as_ref()
+            .expect("cluster report")
+            .clusters()
+            .iter()
+            .filter(|weighted| {
+                weighted
+                    .support()
+                    .is_some_and(|w| w.contribution().value() > 0.0)
+                    && source_independence.clusters().iter().any(|cluster| {
+                        cluster.id() == weighted.cluster_id()
+                            && !cluster.reasons().iter().any(|reason| {
+                                reason.signal() == crate::DependencySignal::UnknownIndependence
+                            })
+                    })
+            })
+            .count();
+        let covered = !deterministic_failure
+            && deterministic_records.iter().any(|record| {
+                record.result() == VerificationResult::Pass
+                    && record.stamp().valid_from.as_str() <= stamp.valid_from.as_str()
+                    && record
+                        .stamp()
+                        .valid_to
+                        .as_ref()
+                        .is_none_or(|end| stamp.valid_from.as_str() < end.as_str())
+                    && inputs.verification_resolves_to_observation(record)
+            });
+        let default_policy = crate::ActionabilityPolicy::default();
+        let assessment = inputs
+            .actionability_policy
+            .unwrap_or(&default_policy)
+            .evaluate(&dimensions, independent_clusters, covered, state);
+        dimensions.actionability = assessment.dimension();
+        Some(assessment)
+    } else {
+        None
+    };
+
     let previous = verdicts.current_verdict(claim_id).map(Verdict::state);
     if previous == Some(state)
         && verdicts.current_verdict(claim_id).is_some_and(|v| {
             v.policy_version() == policy_version
                 && v.hypothesis_set() == hypothesis_set.as_ref()
+                && v.actionability() == actionability.as_ref()
                 && v.confidence_dimensions() == &dimensions
                 && v.cluster_aggregation() == cluster_aggregation.as_ref()
         })
@@ -1992,6 +2076,7 @@ fn resolve_single_claim_verdict(
             == authority_resolution.as_ref()
     {
         return Ok(ResolutionOutcome {
+            actionability,
             hypothesis_set,
             claim_id: claim_id.clone(),
             state,
@@ -2048,6 +2133,11 @@ fn resolve_single_claim_verdict(
         .last_mut()
         .expect("just appended verdict")
         .hypothesis_set = hypothesis_set.clone();
+    verdicts
+        .verdicts
+        .last_mut()
+        .expect("just appended verdict")
+        .actionability = actionability.clone();
     if previous != Some(state) {
         verdicts.append_transition(StateTransition {
             id: transition_id,
@@ -2064,10 +2154,25 @@ fn resolve_single_claim_verdict(
         verdicts.reachability_gaps.push(gap.clone());
     }
 
-    let lifecycle_applied =
-        claims.apply_verdict_projection(claim_id, project_verdict_state(state, false))?;
+    if cluster_policy {
+        let display = verdicts
+            .verdicts
+            .last()
+            .expect("just appended verdict")
+            .display_confidence();
+        claims.apply_display_confidence(claim_id, display)?;
+    }
+
+    let lifecycle_applied = claims.apply_verdict_projection(
+        claim_id,
+        project_verdict_state(
+            state,
+            actionability.as_ref().is_some_and(|a| a.is_actionable()),
+        ),
+    )?;
 
     Ok(ResolutionOutcome {
+        actionability,
         hypothesis_set,
         claim_id: claim_id.clone(),
         state,

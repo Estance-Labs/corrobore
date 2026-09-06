@@ -99,6 +99,7 @@
 //! reaching into private modules. Tests should exercise the public API exposed
 //! here, not the crate's internal module layout.
 
+mod actionability;
 mod adjacency;
 mod advanced_loading_policy;
 mod anti_pheromone;
@@ -111,6 +112,7 @@ mod branch_resolution;
 mod calibrated_assessment;
 mod claim;
 mod cluster_aggregation;
+pub use actionability::{ActionabilityAssessment, ActionabilityBlocker, ActionabilityPolicy};
 mod confidence;
 mod confidence_dimensions;
 mod cross_branch_scoring;

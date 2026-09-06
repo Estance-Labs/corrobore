@@ -13,6 +13,7 @@ name = "export_stix"
 path = "src/lib.rs"
 
 [dependencies]
+domain-common = { path = "../domain-common" }
 graph-core = { path = "../graph-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }

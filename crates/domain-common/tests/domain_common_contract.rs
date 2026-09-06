@@ -219,3 +219,22 @@ fn installed_domain_schema_names_missing_property_and_type_assertion() {
             && text.contains("required type assertion 'Study'")
     }));
 }
+
+#[test]
+fn actionability_path_never_promotes_a_blocked_or_absent_permission() {
+    let mut dimensions = graph_core::ConfidenceDimensions::default();
+    assert_eq!(
+        domain_common::classify_confidence_band_with_actionability(&dimensions),
+        ConfidenceBand::Unknown
+    );
+    dimensions.actionability = Some(Confidence::new(0.0).expect("score"));
+    assert_eq!(
+        domain_common::classify_confidence_band_with_actionability(&dimensions),
+        ConfidenceBand::BelowValidated
+    );
+    dimensions.actionability = Some(Confidence::new(1.0).expect("score"));
+    assert_eq!(
+        domain_common::classify_confidence_band_with_actionability(&dimensions),
+        ConfidenceBand::Exportable
+    );
+}

@@ -131,6 +131,16 @@ impl ConfidenceDimension {
     }
 }
 impl ConfidenceDimensions {
+    /// Display-only projection; never an input to engine policies.
+    pub fn display_confidence(&self) -> Option<Confidence> {
+        Confidence::new(
+            self.evidence_sufficiency?
+                .value()
+                .min(self.source_independence?.value())
+                * self.verifier_strength.map_or(1.0, Confidence::value),
+        )
+        .ok()
+    }
     /// Whether every dimension is uncomputed.
     pub fn is_empty(&self) -> bool {
         self.present_values().next().is_none()

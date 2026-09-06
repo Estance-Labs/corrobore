@@ -238,7 +238,11 @@ mod e2e {
         let blocked_message = blocked.json["error"]["message"]
             .as_str()
             .unwrap_or_default();
-        for code in &expected_codes {
+        // Public validation keeps its scalar compatibility contract; export does not.
+        for code in expected_codes
+            .iter()
+            .filter(|code| code.as_str() != "CTI_CONFIDENCE_TOO_LOW")
+        {
             assert!(
                 blocked_message.contains(code),
                 "strict failure must name {code}: {blocked_message}"
