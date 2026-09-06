@@ -587,6 +587,12 @@ fn attach_epistemic_lineage(
         );
         if let Some(verdict) = stores.verdicts.current_verdict(claim.id()) {
             entry.insert(
+                "confidence_band".to_owned(),
+                serde_json::json!(domain_common::classify_confidence_band_with_actionability(
+                    verdict.confidence_dimensions()
+                )),
+            );
+            entry.insert(
                 "verdict_id".to_owned(),
                 Value::String(verdict.id().as_str().to_owned()),
             );

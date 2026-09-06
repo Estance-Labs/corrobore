@@ -60,6 +60,8 @@ struct FimiRecord {
 /// Epistemic lineage of one evidence reference.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct FimiLineage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    confidence_band: Option<domain_common::ConfidenceBand>,
     #[serde(skip_serializing_if = "Option::is_none")]
     evidence_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -96,6 +98,7 @@ fn epistemic_lineage(
                 return None;
             }
             Some(FimiLineage {
+                confidence_band: None,
                 evidence_id: Some(evidence_ref.clone()),
                 source_id: record.source_id().map(|id| id.as_str().to_owned()),
                 source_uri: record
@@ -126,6 +129,11 @@ fn epistemic_lineage(
     for claim in claims {
         let verdict = stores.verdicts.current_verdict(claim.id());
         lineage.push(FimiLineage {
+            confidence_band: verdict.map(|v| {
+                domain_common::classify_confidence_band_with_actionability(
+                    v.confidence_dimensions(),
+                )
+            }),
             evidence_id: None,
             source_id: None,
             source_uri: None,
@@ -302,6 +310,96 @@ mod tests {
         .expect("metadata should be valid")
     }
 
+    fn make_claim_actionable(graph: &mut graph_core::Graph, claim: &graph_core::ClaimId) {
+        use graph_core::*;
+        let t = TemporalTimestamp::new("2026-09-06T00:01:00Z").expect("time");
+        let stamp = BitemporalStamp::new(t.clone(), t).expect("stamp");
+        let stores = graph.epistemic_stores_mut();
+        let mut bindings = Vec::new();
+        for name in ["first", "second"] {
+            let source = SourceId::new(format!("source--gate-{name}")).expect("id");
+            stores
+                .sources
+                .register_source(SourceInput::new(
+                    source.clone(),
+                    format!("https://{name}.test"),
+                    EvidenceSourceType::Document,
+                ))
+                .expect("source");
+            let obs = ObservationId::new(format!("observation--gate-{name}")).expect("id");
+            stores
+                .observations
+                .create_observation(
+                    ObservationInput::new(
+                        obs.clone(),
+                        source.clone(),
+                        "grounded support",
+                        ObservationModality::Text,
+                    ),
+                    &stores.sources,
+                )
+                .expect("observation");
+            stores.claims.register_observation(obs.clone());
+            stores
+                .claims
+                .attach_link(
+                    ClaimLink::new(
+                        ClaimLinkSource::Observation(obs),
+                        claim.clone(),
+                        ClaimLinkKind::Supports,
+                    )
+                    .with_strength(Confidence::new(1.0).expect("score"))
+                    .with_bitemporal(stamp.clone()),
+                )
+                .expect("link");
+            bindings.push(
+                SourceAuthority::new(
+                    source,
+                    "test",
+                    "fact",
+                    Confidence::new(1.0).expect("score"),
+                    "lineage-authority-v1",
+                )
+                .expect("authority"),
+            );
+        }
+        stores
+            .verifications
+            .append(VerificationRecord::new(
+                VerificationRecordId::new("verification--grounded").expect("id"),
+                "zz.grounded",
+                "1",
+                true,
+                VerificationInputs::for_claim(claim.clone())
+                    .with_observation(ObservationId::new("observation--gate-first").expect("id")),
+                VerificationResult::Pass,
+                stamp.clone(),
+            ))
+            .expect("verification");
+        stores
+            .verdicts
+            .register_source_authority_policy(
+                SourceAuthorityPolicy::new("lineage-authority-v1", bindings).expect("policy"),
+            )
+            .expect("register");
+        let evidence = EvidenceRecordStore::new();
+        let inputs = ResolutionInputs::new(
+            &stores.verifications,
+            &evidence,
+            &stores.observations,
+            &stores.sources,
+        )
+        .with_source_authority("lineage-authority-v1", "test", "fact");
+        resolve_current_claim_verdict(
+            &mut stores.claims,
+            &mut stores.verdicts,
+            &inputs,
+            claim,
+            stamp,
+        )
+        .expect("resolve");
+    }
+
     #[test]
     fn fimi_export_json_is_deterministic_for_same_inputs() {
         let mut graph = Graph::new();
@@ -446,7 +544,7 @@ mod tests {
                 "fr.estance.corrobore.domain.fimi.claim.verify",
                 "1.4.0",
                 false,
-                VerificationInputs::for_claim(claim_id),
+                VerificationInputs::for_claim(claim_id.clone()),
                 VerificationResult::Pass,
                 BitemporalStamp::new(
                     TemporalTimestamp::new("2026-09-06T00:00:00Z").expect("valid time"),
@@ -456,6 +554,7 @@ mod tests {
             ))
             .expect("verification");
 
+        make_claim_actionable(&mut graph, &claim_id);
         let plan =
             build_deterministic_export_plan(&graph, permissive_metadata(), &[]).expect("plan");
         let json =
@@ -467,6 +566,7 @@ mod tests {
             .iter()
             .find(|entry| entry["claim_id"] == "claim--fimi-coverage")
             .expect("claim lineage");
+        assert_eq!(claim["confidence_band"], "Exportable");
         assert_eq!(
             claim["verification_coverage"]["entries"][0]["class"],
             "semantically_judged"

@@ -303,8 +303,8 @@ fn strict_export_rejects_only_eligible_cti_candidates_with_named_readiness_issue
         .expect_err("strict CTI export should reject missing native readiness metadata");
     let message = error.to_string();
 
-    assert!(message.contains("CTI_CONFIDENCE_REQUIRED"), "{message}");
-    assert!(message.contains("CTI_CONFIDENCE_TOO_LOW"), "{message}");
+    assert!(!message.contains("CTI_CONFIDENCE_REQUIRED"), "{message}");
+    assert!(!message.contains("CTI_CONFIDENCE_TOO_LOW"), "{message}");
     assert!(message.contains("CTI_EVIDENCE_REQUIRED"), "{message}");
     assert!(message.contains("EXPORT_STATUS_NOT_READY"), "{message}");
     assert!(
@@ -314,7 +314,7 @@ fn strict_export_rejects_only_eligible_cti_candidates_with_named_readiness_issue
 }
 
 #[test]
-fn forced_export_includes_low_confidence_record_and_preserves_diagnostic() {
+fn legacy_scalar_is_display_only_and_does_not_require_force() {
     let mut graph = Graph::new();
     let evidence = evidence_id("evidence--forced-low-confidence");
     graph
@@ -347,19 +347,17 @@ fn forced_export_includes_low_confidence_record_and_preserves_diagnostic() {
         )
         .expect("low-confidence CTI record should be created");
 
-    let error = build_deterministic_export_plan(&graph, metadata(ExportMode::Strict), &[])
-        .expect_err("unforced strict export should reject low confidence");
-    assert!(
-        error.to_string().contains("CTI_CONFIDENCE_TOO_LOW"),
-        "{error}"
-    );
+    let unforced = build_deterministic_export_plan(&graph, metadata(ExportMode::Strict), &[])
+        .expect("legacy scalar does not control export permission");
+    assert_eq!(unforced.records().len(), 1);
 
     let plan = forced_plan(&graph, &[])
         .expect("forced export should include an otherwise export-ready record");
     assert_eq!(plan.records().len(), 1);
     assert_eq!(plan.records()[0].record_id(), node_id.as_str());
     assert!(
-        plan.warnings()
+        !plan
+            .warnings()
             .iter()
             .any(|finding| finding.code() == "CTI_CONFIDENCE_TOO_LOW")
     );
@@ -371,11 +369,9 @@ fn forced_export_includes_low_confidence_record_and_preserves_diagnostic() {
         "indicator--13131313-1313-4131-8131-131313131313"
     );
     assert!(
-        bundle["export_diagnostics"]["exclusions"]
-            .as_array()
-            .expect("forced diagnostics should be machine readable")
-            .iter()
-            .any(|finding| finding["code"] == "CTI_CONFIDENCE_TOO_LOW")
+        bundle
+            .get("export_diagnostics")
+            .is_none_or(|d| d["exclusions"].as_array().is_none_or(|v| v.is_empty()))
     );
 }
 

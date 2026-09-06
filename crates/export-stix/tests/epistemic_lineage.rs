@@ -170,7 +170,7 @@ fn claim_lineage_exports_current_verification_coverage() {
             "verifier.identifier-syntax",
             "1.0.0",
             true,
-            VerificationInputs::for_claim(claim_id),
+            VerificationInputs::for_claim(claim_id.clone()),
             VerificationResult::Pass,
             BitemporalStamp::new(
                 TemporalTimestamp::new("2026-09-06T00:00:00Z").expect("valid time"),
@@ -180,6 +180,7 @@ fn claim_lineage_exports_current_verification_coverage() {
         ))
         .expect("verification");
 
+    make_claim_actionable(&mut graph, &claim_id);
     let value: Value = serde_json::from_slice(&bundle_bytes(&graph)).expect("json");
     let lineage = value["objects"][0]["x_corrobore_lineage"]
         .as_array()
@@ -188,6 +189,7 @@ fn claim_lineage_exports_current_verification_coverage() {
         .iter()
         .find(|entry| entry["claim_id"] == "claim--lineage")
         .expect("claim lineage");
+    assert_eq!(claim["confidence_band"], "Exportable");
     assert_eq!(
         claim["verification_coverage"]["entries"][0]["class"],
         "mechanically_checked"
@@ -200,4 +202,94 @@ fn claim_lineage_exports_current_verification_coverage() {
         claim["verification_coverage"]["entries"][0]["verifier_version"],
         "1.0.0"
     );
+}
+
+fn make_claim_actionable(graph: &mut graph_core::Graph, claim: &graph_core::ClaimId) {
+    use graph_core::*;
+    let t = TemporalTimestamp::new("2026-09-06T00:01:00Z").expect("time");
+    let stamp = BitemporalStamp::new(t.clone(), t).expect("stamp");
+    let stores = graph.epistemic_stores_mut();
+    let mut bindings = Vec::new();
+    for name in ["first", "second"] {
+        let source = SourceId::new(format!("source--gate-{name}")).expect("id");
+        stores
+            .sources
+            .register_source(SourceInput::new(
+                source.clone(),
+                format!("https://{name}.test"),
+                EvidenceSourceType::Document,
+            ))
+            .expect("source");
+        let obs = ObservationId::new(format!("observation--gate-{name}")).expect("id");
+        stores
+            .observations
+            .create_observation(
+                ObservationInput::new(
+                    obs.clone(),
+                    source.clone(),
+                    "grounded support",
+                    ObservationModality::Text,
+                ),
+                &stores.sources,
+            )
+            .expect("observation");
+        stores.claims.register_observation(obs.clone());
+        stores
+            .claims
+            .attach_link(
+                ClaimLink::new(
+                    ClaimLinkSource::Observation(obs),
+                    claim.clone(),
+                    ClaimLinkKind::Supports,
+                )
+                .with_strength(Confidence::new(1.0).expect("score"))
+                .with_bitemporal(stamp.clone()),
+            )
+            .expect("link");
+        bindings.push(
+            SourceAuthority::new(
+                source,
+                "test",
+                "fact",
+                Confidence::new(1.0).expect("score"),
+                "lineage-authority-v1",
+            )
+            .expect("authority"),
+        );
+    }
+    stores
+        .verifications
+        .append(VerificationRecord::new(
+            VerificationRecordId::new("verification--grounded").expect("id"),
+            "zz.grounded",
+            "1",
+            true,
+            VerificationInputs::for_claim(claim.clone())
+                .with_observation(ObservationId::new("observation--gate-first").expect("id")),
+            VerificationResult::Pass,
+            stamp.clone(),
+        ))
+        .expect("verification");
+    stores
+        .verdicts
+        .register_source_authority_policy(
+            SourceAuthorityPolicy::new("lineage-authority-v1", bindings).expect("policy"),
+        )
+        .expect("register");
+    let evidence = EvidenceRecordStore::new();
+    let inputs = ResolutionInputs::new(
+        &stores.verifications,
+        &evidence,
+        &stores.observations,
+        &stores.sources,
+    )
+    .with_source_authority("lineage-authority-v1", "test", "fact");
+    resolve_current_claim_verdict(
+        &mut stores.claims,
+        &mut stores.verdicts,
+        &inputs,
+        claim,
+        stamp,
+    )
+    .expect("resolve");
 }

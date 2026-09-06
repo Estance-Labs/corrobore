@@ -140,10 +140,7 @@ impl SemanticSeedResolver for GraphSemanticSeedResolver<'_> {
                 degrees.get(node.id().as_str()).copied().unwrap_or(0),
                 max_degree,
             );
-            let confidence = node
-                .confidence()
-                .map(|value| value.value())
-                .unwrap_or(NEUTRAL_CONFIDENCE);
+            let confidence = NEUTRAL_CONFIDENCE;
             let status_weight = status_signal(node.status());
 
             let score = if hybrid_mode {

@@ -879,7 +879,7 @@ async fn export_contract_uses_default_snapshot_with_ready_cti_provider() {
 
 #[cfg(all(unix, feature = "enterprise-cti"))]
 #[tokio::test]
-async fn export_contract_force_includes_low_confidence_record_with_diagnostic() {
+async fn export_contract_scalar_confidence_is_display_only() {
     let (provider_dir, manifest_file) = compile_c_provider_fixture();
     let app = test_app_with_store_dir_and_extra_env(
         unique_store_dir("export-force-low-confidence"),
@@ -982,12 +982,13 @@ async fn export_contract_force_includes_low_confidence_record_with_diagnostic() 
         .expect("strict response body should be readable");
     let strict_payload: Value =
         serde_json::from_slice(&strict_body).expect("strict response should be json");
-    assert_eq!(strict_status, StatusCode::BAD_REQUEST, "{strict_payload}");
-    assert_eq!(strict_payload["error"]["code"], "EXPORT_PLAN_FAILED");
+    assert_eq!(strict_status, StatusCode::OK, "{strict_payload}");
     assert!(
-        strict_payload["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("CTI_CONFIDENCE_TOO_LOW"))
+        strict_payload["objects"]
+            .as_array()
+            .expect("objects")
+            .iter()
+            .any(|object| object["id"] == "indicator--13131313-1313-4131-8131-131313131313")
     );
 
     let forced_request = Request::builder()
@@ -1017,9 +1018,9 @@ async fn export_contract_force_includes_low_confidence_record_with_diagnostic() 
     assert!(
         forced_payload["export_diagnostics"]["exclusions"]
             .as_array()
-            .expect("forced diagnostics should be an array")
+            .expect("diagnostics")
             .iter()
-            .any(|finding| finding["code"] == "CTI_CONFIDENCE_TOO_LOW")
+            .all(|finding| finding["code"] == "EXPORT_LEGACY_CONFIDENCE_DIAGNOSTIC")
     );
 }
 

@@ -502,7 +502,8 @@ fn contradiction_load_uses_directional_cluster_scores_and_advisory_checks_do_not
         v.confidence_dimensions().verifier_strength,
         Some(score(0.0))
     );
-    assert!(v.confidence_dimensions().actionability.is_none());
+    // WS-D item 6 now computes permission independently of advisory support.
+    assert_eq!(v.confidence_dimensions().actionability, Some(score(0.0)));
 }
 #[test]
 fn unstamped_evidence_does_not_invent_temporal_validity() {

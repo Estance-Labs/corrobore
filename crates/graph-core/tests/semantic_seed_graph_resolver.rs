@@ -168,7 +168,7 @@ fn resolver_full_text_mode_ignores_graph_signals() {
 }
 
 #[test]
-fn resolver_confidence_contributes_to_hybrid_ranking() {
+fn resolver_legacy_scalar_does_not_contribute_to_hybrid_ranking() {
     let mut graph = Graph::new();
     let trusted = graph
         .create_node(
@@ -205,7 +205,7 @@ fn resolver_confidence_contributes_to_hybrid_ranking() {
     assert_eq!(candidates.len(), 2);
     assert_eq!(candidates[0].node_id(), &trusted);
     assert_eq!(candidates[1].node_id(), &untrusted);
-    assert!(candidates[0].score() > candidates[1].score());
+    assert_eq!(candidates[0].score(), candidates[1].score());
 }
 
 #[test]

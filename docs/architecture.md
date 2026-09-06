@@ -239,7 +239,41 @@ The policy computes six dimensions independently:
 A deterministic failure remains non-trusted regardless of these dimensions.
 Active links without enough explicit inputs abstain as `InsufficientEvidence`;
 no evidence remains `Unknown`. The scalar claim confidence is never a fallback.
-The hypothesis set and actionability gate remain for subsequent WS-D items.
+WS-D item 6 computes permission separately through `ActionabilityPolicy`.
+The default `actionability-v1` requires a current, grounded deterministic pass,
+at least two positively weighted supporting clusters with known provenance,
+contradiction load at most 0.25, and temporal validity equal to one. A deterministic
+failure or unsupported verdict blocks permission. All reasons accumulate in a
+persisted `ActionabilityAssessment`, including the exact policy configuration.
+Callers select a versioned claim-type policy with `with_actionability_policy`;
+a type that does not require corroboration can require one cluster.
+Missing required dimensions abstain (`actionability` absent); explicit blocked
+and allowed decisions project to zero and one. Apparent support cannot replace
+a grounded deterministic check.
+
+The resolution outcome and `verdict_actionability` graph property expose the
+assessment. A policy change creates a new snapshot without rewriting history.
+Current resolutions derive scalar claim display confidence from
+`min(evidence_sufficiency, source_independence) * verifier_strength`, omitting the
+multiplier when verifier strength is absent; either missing base dimension leaves
+the display absent. Aggregation, actionability, export planning and hybrid seed
+ranking never read the stored scalar. Legacy `classify_confidence_band` callers
+keep their behavior; exporters use `classify_confidence_band_with_actionability`
+for governed lineage.
+
+Export requires every claim targeting a selected node or relationship to have a
+permitted current assessment. Historical assessments without permission abstain.
+Strict export names the blockers; permissive export excludes the record. Forced
+validation cannot bypass permission. Records without governed claims keep their
+lifecycle, evidence and structural checks, without a scalar threshold. The CTI
+export adapter does not send scalar confidence to providers and retains any
+legacy confidence findings as `EXPORT_LEGACY_CONFIDENCE_DIAGNOSTIC` warnings.
+The separate public CTI validation endpoint keeps its compatibility behavior;
+other provider criteria retain their existing export enforcement.
+
+Compatibility tests intentionally replace scalar-driven export and retrieval
+expectations. Lineage fixtures now supply corroborated, mechanically verified
+evidence before export. Historical verdict replay remains unchanged.
 
 ## Durability and transport boundaries
 

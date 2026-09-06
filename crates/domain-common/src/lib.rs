@@ -241,6 +241,18 @@ pub enum ConfidenceBand {
     Exportable,
 }
 
+/// Classify permission using the actionability dimension, never legacy confidence.
+/// Missing permission abstains; blocked permission cannot validate or export.
+pub fn classify_confidence_band_with_actionability(
+    dimensions: &graph_core::ConfidenceDimensions,
+) -> ConfidenceBand {
+    match dimensions.actionability {
+        None => ConfidenceBand::Unknown,
+        Some(value) if value.value() == 1.0 => ConfidenceBand::Exportable,
+        Some(_) => ConfidenceBand::BelowValidated,
+    }
+}
+
 /// Classify confidence band.
 pub fn classify_confidence_band(
     confidence: Option<Confidence>,

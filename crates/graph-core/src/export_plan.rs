@@ -21,9 +21,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    Confidence, EvidenceId, ExportMetadata, ExportMode, ExportProfile, Graph, GraphError, Node,
-    PropertyValue, RecordStatus, Relationship, ValidationErrorRecord, ValidationErrorSeverity,
-    ValidationTarget,
+    EvidenceId, ExportMetadata, ExportMode, ExportProfile, Graph, GraphError, Node, PropertyValue,
+    RecordStatus, Relationship, ValidationErrorRecord, ValidationErrorSeverity, ValidationTarget,
 };
 
 /// Deterministic export record category.
@@ -189,6 +188,14 @@ pub fn build_deterministic_export_plan_with_options(
         }));
     }
 
+    // Keep compatibility diagnostics from older providers visible, scoped to
+    // selected records. They cannot replace the non-overridable claim gate.
+    warnings.extend(findings.iter().filter(|finding| {
+        finding.code() == "EXPORT_LEGACY_CONFIDENCE_DIAGNOSTIC"
+            && finding.severity() == ValidationErrorSeverity::Warning
+            && matches!(finding.target(), ValidationTarget::Node(id) if selected_node_ids.contains(id))
+    }).cloned());
+
     let mut exported_node_ids = HashSet::new();
 
     for node in nodes {
@@ -202,7 +209,6 @@ pub fn build_deterministic_export_plan_with_options(
             mode,
             node_id,
             node.status(),
-            node.confidence(),
             node.evidence_refs(),
             ValidationTarget::node(node_id),
         );
@@ -271,7 +277,6 @@ pub fn build_deterministic_export_plan_with_options(
             mode,
             relationship_id,
             relationship.status(),
-            relationship.confidence(),
             relationship.evidence_refs(),
             ValidationTarget::relationship(relationship_id),
         );
@@ -521,7 +526,6 @@ fn profile_readiness_findings(
     mode: ExportMode,
     record_id: &str,
     status: RecordStatus,
-    confidence: Option<Confidence>,
     evidence_refs: &[EvidenceId],
     target: ValidationTarget,
 ) -> ProfileReadinessFindings {
@@ -537,25 +541,45 @@ fn profile_readiness_findings(
             target.clone(),
         ));
     }
+    // Permission is mandatory for every governed claim attached to the record.
+    // Historical or unresolved claims abstain; a lifecycle label cannot grant it.
+    let stores = graph.epistemic_stores();
+    for claim in stores.claims.claims() {
+        let matches_target = match (claim.target(), &target) {
+            (crate::ClaimTarget::Node(id), ValidationTarget::Node(target_id)) => {
+                id.as_str() == target_id
+            }
+            (crate::ClaimTarget::Relationship(id), ValidationTarget::Relationship(target_id)) => {
+                id.as_str() == target_id
+            }
+            _ => false,
+        };
+        if !matches_target {
+            continue;
+        }
+        let assessment = stores
+            .verdicts
+            .current_verdict(claim.id())
+            .and_then(crate::Verdict::actionability);
+        if assessment.is_some_and(|a| a.is_actionable()) {
+            continue;
+        }
+        let reasons = assessment.map_or_else(
+            || "actionability_assessment_missing".to_owned(),
+            |a| serde_json::to_string(a.blockers()).expect("serializable blockers"),
+        );
+        findings.enforced.push(ValidationErrorRecord::new(
+            "EXPORT_ACTIONABILITY_BLOCKED",
+            ValidationErrorSeverity::Error,
+            format!(
+                "record {record_id} claim {} actionability blocked: {reasons}",
+                claim.id().as_str()
+            ),
+            target.clone(),
+        ));
+    }
     if profile != &ExportProfile::StixMvp {
         return findings;
-    }
-    match confidence {
-        None => findings.overridable.push(ValidationErrorRecord::new(
-            "CTI_CONFIDENCE_REQUIRED",
-            ValidationErrorSeverity::Error,
-            format!("CTI record {record_id} requires native confidence"),
-            target.clone(),
-        )),
-        Some(value) if value.value() < 0.8 => {
-            findings.overridable.push(ValidationErrorRecord::new(
-                "CTI_CONFIDENCE_TOO_LOW",
-                ValidationErrorSeverity::Error,
-                format!("CTI record {record_id} confidence is below 0.8"),
-                target.clone(),
-            ))
-        }
-        Some(_) => {}
     }
     if evidence_refs.is_empty() {
         findings.overridable.push(ValidationErrorRecord::new(
