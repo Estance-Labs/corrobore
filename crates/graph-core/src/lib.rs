@@ -113,6 +113,11 @@ mod calibrated_assessment;
 mod claim;
 mod cluster_aggregation;
 pub use actionability::{ActionabilityAssessment, ActionabilityBlocker, ActionabilityPolicy};
+mod candidate_constraints;
+pub use candidate_constraints::{
+    CandidateConstraint, CandidateFailure, CandidateRepair, CandidateRule, CandidateValidation,
+    CandidateValueType,
+};
 mod candidate_ingestion;
 pub use candidate_ingestion::{
     CandidateInput, CandidatePromotion, CandidatePromotionInput, CandidateStore,

@@ -23,6 +23,7 @@ use crate::{app::AppState, error::ApiError};
 use axum::{
     Json,
     extract::{Path, State},
+    http::StatusCode,
 };
 use corrobore_engine::{EngineError, EngineMutationContext};
 use graph_core::{
@@ -40,6 +41,21 @@ pub struct Submission {
     raw_payload: String,
     actor: String,
     tier: Option<GraphTier>,
+    #[serde(default)]
+    constraints: Vec<graph_core::CandidateConstraint>,
+    workspace_id: Option<String>,
+    session_id: Option<String>,
+    budget_ref: Option<String>,
+}
+/// A new immutable version; rules and tier are inherited from the predecessor.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Repair {
+    id: String,
+    extraction_run_id: String,
+    raw_payload: String,
+    actor: String,
+    caused_by: Vec<String>,
     workspace_id: Option<String>,
     session_id: Option<String>,
     budget_ref: Option<String>,
@@ -117,7 +133,7 @@ fn candidate_response(graph: &Graph, id: &CandidateId) -> Result<Value, GraphErr
         .get(id)
         .ok_or_else(|| GraphError::InvalidPropertyValue("unknown candidate".into()))?;
     Ok(
-        json!({"ok":true,"candidate":candidate,"tier":store.tier_of(id),"promotions":store.promotions().iter().filter(|p| p.candidate_id() == id).collect::<Vec<_>>() }),
+        json!({"ok":true,"candidate":candidate,"validation":store.validation(id)?,"tier":store.tier_of(id),"promotions":store.promotions().iter().filter(|p| p.candidate_id() == id).collect::<Vec<_>>() }),
     )
 }
 async fn mutate(
@@ -161,7 +177,8 @@ pub async fn submit(
         ActorId::new(payload.actor).map_err(invalid)?,
     )
     .map_err(invalid)?
-    .with_tier(payload.tier.unwrap_or(GraphTier::Shadow));
+    .with_tier(payload.tier.unwrap_or(GraphTier::Shadow))
+    .with_constraints(payload.constraints);
     mutate(
         state,
         payload.workspace_id,
@@ -174,25 +191,65 @@ pub async fn submit(
     )
     .await
 }
-pub async fn promote(
+/// Append a repair and return precise feedback without promoting it.
+pub async fn repair(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(payload): Json<Promotion>,
+    Json(payload): Json<Repair>,
 ) -> Result<Json<Value>, ApiError> {
-    let id = CandidateId::new(id).map_err(invalid)?;
-    let actor = ActorId::new(payload.actor).map_err(invalid)?;
-    let input = payload.record.into_input().map_err(invalid)?;
+    let predecessor = CandidateId::new(id).map_err(invalid)?;
+    let candidate = CandidateInput::new(
+        payload.id,
+        ExtractionRunId::new(payload.extraction_run_id).map_err(invalid)?,
+        payload.raw_payload,
+        ActorId::new(payload.actor).map_err(invalid)?,
+    )
+    .map_err(invalid)?;
     mutate(
         state,
         payload.workspace_id,
         payload.session_id,
         payload.budget_ref,
         move |graph| {
+            let candidate = graph.repair_candidate(&predecessor, candidate, payload.caused_by)?;
+            candidate_response(graph, candidate.id())
+        },
+    )
+    .await
+}
+pub async fn promote(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(payload): Json<Promotion>,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    let id = CandidateId::new(id).map_err(invalid)?;
+    let actor = ActorId::new(payload.actor).map_err(invalid)?;
+    let input = payload.record.into_input().map_err(invalid)?;
+    let response = mutate(
+        state,
+        payload.workspace_id,
+        payload.session_id,
+        payload.budget_ref,
+        move |graph| {
+            // Evaluate under the same engine lock as promotion, so a failed
+            // attempt returns structured feedback without any canonical write.
+            let store = &graph.epistemic_stores().candidates;
+            let validation = store.validation(&id)?;
+            if !validation.valid {
+                return Ok(json!({"ok":false,"tier":store.tier_of(&id),"validation":validation,
+                    "error":{"code":"CANDIDATE_CONSTRAINTS_FAILED","message":"Repair the failing candidate fields before promotion"}}));
+            }
             let promotion = graph.promote_candidate(&id, actor, payload.reason, input)?;
             Ok(json!({"ok":true,"tier":GraphTier::Canonical,"promotion":promotion}))
         },
     )
-    .await
+    .await?;
+    let status = if response.0["ok"] == false {
+        StatusCode::UNPROCESSABLE_ENTITY
+    } else {
+        StatusCode::OK
+    };
+    Ok((status, response))
 }
 pub async fn inspect(
     State(state): State<AppState>,

@@ -219,6 +219,7 @@ async fn every_candidate_route_requires_authentication() {
     for (method, path) in [
         (Method::POST, "/v1/import/candidates"),
         (Method::GET, "/v1/import/candidates/candidate--1"),
+        (Method::POST, "/v1/import/candidates/candidate--1/repairs"),
         (Method::POST, "/v1/import/candidates/candidate--1/promote"),
     ] {
         let response = app
@@ -245,4 +246,98 @@ async fn every_candidate_route_requires_authentication() {
             .candidates
             .is_empty()
     );
+}
+
+#[tokio::test]
+async fn constraint_feedback_blocks_promotion_and_repair_history_survives_restart() {
+    let root = unique_path();
+    {
+        let state = state(&root);
+        let app = build_router(state.clone());
+        let (status, body) = send(
+            &app,
+            Method::POST,
+            "/v1/import/candidates",
+            json!({
+                "id":"c1","extraction_run_id":"run--1","actor":"extractor","raw_payload":" {} ",
+                "constraints":[{"id":"required-name","field":"/name","rule":{"kind":"required"}}]
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["validation"]["valid"], false);
+        assert_eq!(
+            body["validation"]["failures"][0]["constraint"]["field"],
+            "/name"
+        );
+        let (status, body) = send(
+            &app,
+            Method::POST,
+            "/v1/import/candidates/c1/promote",
+            json!({
+                "actor":"reviewer","reason":"checked","record":{"kind":"node","labels":["Entity"]}
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["error"]["code"], "CANDIDATE_CONSTRAINTS_FAILED");
+        assert_eq!(
+            body["validation"]["failures"][0]["constraint"]["id"],
+            "required-name"
+        );
+        let repair = json!({"id":"c2","extraction_run_id":"run--2","actor":"extractor","raw_payload":"{\"other\":1}","caused_by":["required-name"]});
+        let (status, body) = send(
+            &app,
+            Method::POST,
+            "/v1/import/candidates/c1/repairs",
+            repair.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["validation"]["failures"][0]["repeated"], true);
+        let (_, retry) = send(
+            &app,
+            Method::POST,
+            "/v1/import/candidates/c1/repairs",
+            repair,
+        )
+        .await;
+        assert_eq!(body, retry);
+        let (status,body)=send(&app,Method::POST,"/v1/import/candidates/c2/repairs",json!({"id":"c3","extraction_run_id":"run--3","actor":"extractor","raw_payload":"{\"name\":\"fixed\"}","caused_by":["required-name"]})).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["validation"]["valid"], true);
+        assert_eq!(body["tier"], "Shadow");
+        assert!(
+            state
+                .engine
+                .lock()
+                .expect("lock")
+                .graph()
+                .list_nodes()
+                .expect("nodes")
+                .is_empty()
+        );
+    }
+    let app = build_router(state(&root));
+    for (id, raw) in [
+        ("c1", " {} "),
+        ("c2", "{\"other\":1}"),
+        ("c3", "{\"name\":\"fixed\"}"),
+    ] {
+        let (status, body) = send(
+            &app,
+            Method::GET,
+            &format!("/v1/import/candidates/{id}"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["candidate"]["raw_payload"], raw);
+        if id == "c2" {
+            assert_eq!(body["validation"]["failures"][0]["repeated"], true);
+        }
+        if id == "c3" {
+            assert_eq!(body["candidate"]["repair"]["predecessor"]["value"], "c2");
+        }
+    }
 }

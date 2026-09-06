@@ -362,21 +362,101 @@ Unicode, and invalid extractor syntax. Validation does not promote a proposal.
 }
 ```
 
-The response contains `ok`, `candidate`, `tier`, and `promotions`. Native
+The response contains `ok`, `candidate`, `tier`, `validation`, and `promotions`. Native
 identifiers inside `candidate` are objects such as `{"value":"candidate--1"}`;
 `candidate.landing_tier` always records the original destination, while `tier`
 reports the current tier. An exact submission retry returns the existing
 record (including its current tier if already promoted). Reusing the ID with
-a different payload, actor, run, or landing tier is rejected.
+a different payload, actor, run, landing tier, or constraint contract is rejected.
 
 These endpoints use the standard Bearer authentication and engine mutation
 policy. Mutations accept optional `workspace_id`, `session_id`, and `budget_ref`
 context, like other import operations. Persistent storage retains proposals,
 promotion receipts, and the original tier audit order across restarts.
 
+### Candidate constraints and targeted feedback
+
+A submission can attach immutable `constraints` to its raw JSON document:
+
+```json
+{
+  "id": "candidate--1",
+  "extraction_run_id": "run--1",
+  "actor": "actor--extractor",
+  "raw_payload": "{\"name\":null,\"start\":\"2026-09-06T12:00:00Z\",\"end\":\"2026-09-05T12:00:00Z\"}",
+  "constraints": [
+    {"id":"name-required","field":"/name","rule":{"kind":"required"}},
+    {"id":"time-order","field":"/end","rule":{"kind":"temporal_order","after":"/start"}}
+  ]
+}
+```
+
+`field` is an RFC 6901 JSON pointer into the decoded raw document, including
+array indices; escape `/` as `~1` and `~` as `~0` within a field name. Rule IDs
+must be nonblank and unique. The five rule categories are:
+
+| Category | Rule | Contract |
+| --- | --- | --- |
+| Schema | `required` | Field exists and is not null. |
+| Type compatibility | `type`, `expected` | JSON kind is `string`, `number`, `integer`, `boolean`, `array`, or `object`. |
+| Cardinality | `cardinality`, `min`, optional `max` | Array length lies within inclusive bounds. |
+| Temporal ordering | `temporal_order`, `after` | Both fields are RFC 3339 timestamps; the addressed time is at or after the counterpart, comparing instants across offsets. |
+| Allowed predicates | `allowed_predicates`, `allowed` | String is an exact member of a nonempty vocabulary. |
+
+Validation reads a separate JSON view; stored raw text never changes. With a
+nonempty contract, malformed JSON produces the reserved `$json` constraint,
+`json_document` rule, and empty field pointer (the whole document). An explicit
+`json_document` rule can also require JSON syntax alone. Missing and ill-typed
+values fail the applicable rules. Invalid rule definitions are rejected before
+storage. Omitted or empty constraints preserve the unconstrained WS-C 1
+contract; they do not add domain rules or assert epistemic validity.
+
+Submission, inspection, and repair responses include `validation.valid` and
+`validation.failures`. Each failure retains the full `constraint`, exact
+failing `field`, `observed` JSON value, `present` flag, and `repeated` flag.
+`present: false` distinguishes a missing field from explicit null. A missing
+or malformed temporal counterpart is reported at that counterpart's pointer.
+These fields let the caller re-extract only the affected portion of the source.
+
+A failing candidate is still retained with HTTP 200 so its raw proposal remains
+queryable. Promotion fails with HTTP 422, `CANDIDATE_CONSTRAINTS_FAILED`, and the
+same structured `validation` report. The graph-core promotion API enforces the
+same gate. Rules validate the retained extraction proposal; the separate
+reviewed graph record still undergoes normal graph creation validation.
+
+## `POST /v1/import/candidates/{id}/repairs`
+
+Appends a new candidate version linked to the predecessor addressed by `id`.
+The request requires a new `id`, an `extraction_run_id`, `actor`, verbatim
+`raw_payload`, and nonempty `caused_by` list naming distinct constraints that
+actually failed on the predecessor:
+
+```json
+{
+  "id": "candidate--2",
+  "extraction_run_id": "run--2",
+  "actor": "actor--extractor",
+  "raw_payload": "{\"name\":\"fixed\",\"start\":\"2026-09-06T12:00:00Z\",\"end\":\"2026-09-06T13:00:00Z\"}",
+  "caused_by": ["name-required", "time-order"]
+}
+```
+
+Constraints and landing tier are inherited and cannot be replaced by the repair
+request. Optional workspace/session/budget context and authentication match
+submission. The response includes the new candidate, its validation report,
+and `candidate.repair` with the predecessor ID and causes. Exact retries return
+the same version. Conflicting IDs, invented causes, and repair of promoted
+candidates are rejected.
+
+If a rule fails again on the immediate predecessor's repair, its failure has
+`repeated: true`; no automatic repair loop runs. Every version remains available
+through `GET /v1/import/candidates/{id}`, including the original raw payload,
+constraints, extraction run, and predecessor link after restart. A successful
+repair remains noncanonical until a separate explicit promotion.
+
 ## `GET /v1/import/candidates/{id}`
 
-Returns the immutable `candidate`, current `tier`, and recorded `promotions`.
+Returns the immutable `candidate`, current `tier`, `validation` report, and recorded `promotions`.
 Unknown candidates return `400 INVALID_CANDIDATE_OPERATION`. The original raw
 payload remains available after promotion; reviewed content never replaces it.
 
@@ -418,7 +498,6 @@ mode flags, so such flags cannot silently fall through into typed STIX import.
 The JSON envelope still accepts legacy informational `schema_version` and
 `description` fields; neither changes import behavior. STIX extensions inside
 the bundle retain their existing import semantics.
-Constraint feedback and repair lineage are separate WS-C work items.
 
 ## `POST /v1/import/stix`
 

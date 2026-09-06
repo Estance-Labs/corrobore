@@ -1031,6 +1031,10 @@ pub fn build_router(state: AppState) -> Router {
             get(crate::handlers::candidates::inspect),
         )
         .route(
+            "/v1/import/candidates/{id}/repairs",
+            post(crate::handlers::candidates::repair),
+        )
+        .route(
             "/v1/import/candidates/{id}/promote",
             post(crate::handlers::candidates::promote),
         )
