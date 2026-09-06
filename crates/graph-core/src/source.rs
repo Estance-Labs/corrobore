@@ -682,3 +682,22 @@ fn is_lowercase_sha256(digest: &str) -> bool {
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
+
+impl SourceStore {
+    pub(crate) fn audit_subset(&self, ids: &std::collections::HashSet<SourceId>) -> Self {
+        Self {
+            versions: self
+                .versions
+                .iter()
+                .filter(|r| ids.contains(r.id()))
+                .cloned()
+                .collect(),
+            drifts: self
+                .drifts
+                .iter()
+                .filter(|r| ids.contains(r.source_id()))
+                .cloned()
+                .collect(),
+        }
+    }
+}

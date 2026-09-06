@@ -861,6 +861,20 @@ impl EvidenceRecordStore {
     }
 }
 
+impl EvidenceRecordStore {
+    pub(crate) fn audit_subset(&self, ids: &std::collections::HashSet<EvidenceId>) -> Self {
+        Self {
+            records: self
+                .records
+                .iter()
+                .filter(|r| ids.contains(r.id()))
+                .cloned()
+                .collect(),
+            ..Self::default()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

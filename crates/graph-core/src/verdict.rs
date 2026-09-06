@@ -2146,7 +2146,15 @@ fn resolve_single_claim_verdict(
         .clusters()
         .iter()
         .flat_map(|cluster| cluster.members().iter())
-        .map(|&index| (index, claims.claim_links()[index].reference_key()))
+        .map(|&index| {
+            (
+                index,
+                claims
+                    .claim_link_at_index(index)
+                    .expect("derived cluster member")
+                    .reference_key(),
+            )
+        })
         .collect();
     // A new dependency snapshot is a new verdict even when its state is unchanged.
     // Preserve prior snapshots; only actual state changes create transitions.
@@ -2345,4 +2353,48 @@ pub fn resolve_current_claim_verdict(
         stamp,
         crate::DEFAULT_VERDICT_POLICY_VERSION,
     )
+}
+
+impl VerificationRecordStore {
+    pub(crate) fn audit_subset(&self, ids: &std::collections::HashSet<ClaimId>) -> Self {
+        Self {
+            records: self
+                .records
+                .iter()
+                .filter(|r| ids.contains(r.inputs().claim_id()))
+                .cloned()
+                .collect(),
+        }
+    }
+}
+impl VerdictStore {
+    pub(crate) fn audit_subset(&self, ids: &std::collections::HashSet<ClaimId>) -> Self {
+        Self {
+            verdicts: self
+                .verdicts
+                .iter()
+                .filter(|r| ids.contains(r.claim_id()))
+                .cloned()
+                .collect(),
+            transitions: self
+                .transitions
+                .iter()
+                .filter(|r| ids.contains(r.claim_id()))
+                .cloned()
+                .collect(),
+            reachability_gaps: self
+                .reachability_gaps
+                .iter()
+                .filter(|r| ids.contains(r.claim_id()))
+                .cloned()
+                .collect(),
+            verification_disagreements: self
+                .verification_disagreements
+                .iter()
+                .filter(|r| ids.contains(&r.claim_id))
+                .cloned()
+                .collect(),
+            authority_policies: Vec::new(),
+        }
+    }
 }

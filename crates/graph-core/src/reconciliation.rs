@@ -576,3 +576,19 @@ impl TryFrom<StoredReconciliations> for ReconciliationStore {
         })
     }
 }
+
+impl ReconciliationStore {
+    pub(crate) fn audit_subset(
+        &self,
+        ids: &std::collections::HashSet<ReconciliationRecordId>,
+    ) -> Self {
+        Self {
+            records: self
+                .records
+                .iter()
+                .filter(|r| ids.contains(r.id()))
+                .cloned()
+                .collect(),
+        }
+    }
+}

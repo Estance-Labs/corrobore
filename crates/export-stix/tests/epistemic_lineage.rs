@@ -78,6 +78,7 @@ fn exports_without_governed_records_stay_byte_identical() {
     assert_eq!(bundle_bytes(&restored), before);
 
     let value: Value = serde_json::from_slice(&before).expect("json");
+    assert!(value.get("x_corrobore_audit_archive").is_none());
     for object in value["objects"].as_array().expect("objects") {
         assert!(
             object.get("x_corrobore_lineage").is_none(),
@@ -355,4 +356,74 @@ fn relationship_claims_export_the_same_explanation_payload() {
             .len(),
         2
     );
+    let restored = Graph::from_exported_audit_bundle(&value).expect("restore relationship audit");
+    assert_eq!(
+        restored.claim_audit_path(&claim).expect("restored audit"),
+        graph.claim_audit_path(&claim).expect("original audit")
+    );
+}
+
+#[test]
+fn scoped_stix_archive_round_trips_the_complete_audit_and_human_judgment()
+-> Result<(), Box<dyn std::error::Error>> {
+    use graph_core::*;
+    let mut graph = graph_with_object(EvidenceInput::new(
+        EvidenceId::new("evidence--lineage")?,
+        "source",
+        "original",
+    ));
+    let node = graph.list_nodes()?[0].id().clone();
+    let claim = ClaimId::new("exported-claim")?;
+    graph
+        .epistemic_stores_mut()
+        .claims
+        .create_asserted_claim(ClaimInput::new(
+            claim.clone(),
+            ClaimStatement::new("Audited claim")?,
+            ClaimTarget::Node(node),
+        ))?;
+    make_claim_actionable(&mut graph, &claim);
+    graph.record_analyst_decision(AnalystDecision::new(
+        "human",
+        claim.clone(),
+        ActorId::new("reviewer")?,
+        TemporalTimestamp::new("2026-09-06T12:00:00Z")?,
+        AnalystDecisionAction::Override {
+            judgment: "Human conclusion".into(),
+            rationale: "Reviewed".into(),
+        },
+    )?)?;
+    let excluded = graph.create_node(
+        NodeInput::new(["Malware"])
+            .with_status(RecordStatus::Exportable)
+            .with_evidence_ref(EvidenceId::new("evidence--lineage")?),
+    )?;
+    graph
+        .epistemic_stores_mut()
+        .claims
+        .create_asserted_claim(ClaimInput::new(
+            ClaimId::new("excluded-claim")?,
+            ClaimStatement::new("secret unrelated assertion")?,
+            ClaimTarget::Node(excluded),
+        ))?;
+    let metadata = ExportMetadata::new(
+        "archive",
+        TransactionId::new("archive")?,
+        "stix-mvp-v2",
+        ExportProfile::StixMvp,
+        ExportMode::Permissive,
+        None,
+    )?;
+    let plan = build_deterministic_export_plan(&graph, metadata, &[])?;
+    let exported = serde_json::to_value(export_stix_subset_bundle(&graph, &plan))?;
+    let archive = &exported["x_corrobore_audit_archive"];
+    assert!(archive.is_object());
+    assert!(!archive.to_string().contains("secret unrelated assertion"));
+    let restored = Graph::from_claim_audit_archive(archive)?;
+    assert_eq!(
+        restored.claim_audit_path(&claim)?,
+        graph.claim_audit_path(&claim)?
+    );
+    assert_eq!(restored.list_nodes()?.len(), 1);
+    Ok(())
 }

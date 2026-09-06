@@ -462,3 +462,22 @@ impl ObservationStore {
         self.observations.is_empty()
     }
 }
+
+impl ObservationStore {
+    pub(crate) fn audit_subset(&self, ids: &std::collections::HashSet<ObservationId>) -> Self {
+        Self {
+            observations: self
+                .observations
+                .iter()
+                .filter(|r| ids.contains(r.id()))
+                .cloned()
+                .collect(),
+            superseded_by: self
+                .superseded_by
+                .iter()
+                .filter(|(a, b)| ids.contains(*a) && ids.contains(*b))
+                .map(|(a, b)| (a.clone(), b.clone()))
+                .collect(),
+        }
+    }
+}
