@@ -271,6 +271,7 @@ fn expected_endpoints(
             &[EpistemicNodeKind::Decision],
             &[
                 EpistemicNodeKind::Assessment,
+                EpistemicNodeKind::EntityMention,
                 EpistemicNodeKind::Claim,
                 EpistemicNodeKind::Hypothesis,
             ],

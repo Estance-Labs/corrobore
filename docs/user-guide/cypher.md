@@ -79,7 +79,7 @@ not inherit either field from its source or target node.
 ## Epistemic projection (Epic 0029)
 
 Governed evidence records live beside the graph in the epistemic stores:
-sources, observations, entity mentions, claims with their evidence links, verification records,
+sources, observations, entity mentions, reconciliation records, claims with their evidence links, verification records,
 verdicts, and state transitions. They are not graph nodes, so ordinary
 `MATCH` does not see them. `Graph::epistemic_projection()` renders them as a
 read-only graph in the epistemic vocabulary that any read query can traverse:
@@ -93,6 +93,7 @@ read-only graph in the epistemic vocabulary that any read query can traverse:
 | `Claim` | `Claim` | `claim_id`, `claim_status`, `claim_statement`, `proposition_*`, `verdict_state`, `verdict_lifecycle_projection`, `verdict_id`, `verification_coverage*` |
 | `Verdict`, `Assessment` | `Verdict` | `verdict_id`, `verdict_claim`, `verdict_state`, `verdict_policy_version`, `verdict_valid_from`, `verdict_transaction_time`, `verdict_dimension_*`, `verdict_explanation`, `verdict_uncertainty_kind` |
 | `VerificationRecord`, `Assessment` | `VerificationRecord` | `verification_id`, `verification_claim`, `verification_verifier_id`, `verification_verifier_version`, `verification_deterministic`, `verification_result`, `verification_coverage_class`, `verification_coverage_current` |
+| `ReconciliationRecord`, `Decision` | `ReconciliationRecord` | `reconciliation_id`, `reconciliation_left`, `reconciliation_right`, `reconciliation_outcome`, `reconciliation_decider`, `reconciliation_citations` |
 | `StateTransition`, `Decision` | `StateTransition` | `transition_id`, `transition_claim`, `transition_from_state`, `transition_to_state`, `transition_trigger` |
 
 Relationships follow the vocabulary: `REPORTS` (source to observation),
@@ -100,7 +101,8 @@ Relationships follow the vocabulary: `REPORTS` (source to observation),
 evidence-link kinds `SUPPORTS`, `REFUTES`, `CONTRADICTS`, `SUPERSEDES`,
 `CONTEXT_FOR`, `DUPLICATES`, `DERIVED_FROM`, `DEPENDS_ON` (link source to
 claim, carrying `evidence_link_*` properties), `ASSESSES` (verdict and
-verification record to claim), and `DECIDES` (state transition to claim).
+verification record to claim), and `DECIDES` (state transition to claim or
+reconciliation record to each mention).
 
 ```cypher
 MATCH (c:Claim) RETURN c.claim_id, c.verdict_state, c.claim_status ORDER BY c.claim_id ASC
@@ -122,8 +124,8 @@ A mention is distinct from an `Entity`. Matching surface forms never populate
 candidate references or create identity links. Explicit `candidate_entities`
 are unresolved `NodeId` hints, retained in order; they neither prove the entity
 exists nor justify reconciliation. No canonical nodes or relationships are
-created when a mention is stored. Linking identity requires a later
-reconciliation record (WS-C item 4).
+created when a mention is stored. An evidence-cited reconciliation record
+justifies an identity judgment; applying it is a separate reversible operation.
 
 Mention features retain source context, role, time, location, affiliations and
 a relation neighbourhood. The neighbourhood records a predicate, incoming or
@@ -151,6 +153,64 @@ observation-to-mention edges. Candidate entity hints stay properties; projection
 never turns them into an identity relationship. The source graph remains
 unchanged. This is a graph-core creation API; no new HTTP ingestion route is
 introduced by WS-C item 3.
+
+### Reconciliation decisions (WS-C)
+
+`Graph::record_reconciliation` records a judgment on two distinct mentions in
+`EpistemicStores.reconciliations`. Outcomes are `Merge`, `Distinct`, and
+`Abstain`. The caller names the deciding actor, or a verifier ID and version,
+and supplies the decision time and a nonblank rationale. The core validates
+the record's evidence and provenance; it does not infer identity from names or
+replace the decider's semantic assessment.
+
+A `ReconciliationInput` cites existing evidence through typed references:
+
+- `ReconciliationEvidence::Mention` selects a feature on either mention:
+  `SurfaceForm`, `SourceContext`, `Role`, `Time`, `Location`, `Affiliations`, or
+  `RelationNeighbourhood`.
+- `ReconciliationEvidence::Observation` cites a registered observation's
+  verbatim payload as additional source context. This allows new evidence
+  after abstention without rewriting either mention.
+
+Both mentions must contribute citations, and at least one citation must provide
+context beyond `SurfaceForm`. Missing features, unrelated mention references,
+and duplicate references are rejected. Optional name or embedding similarity
+scores are retained only as hints. A similarity-only record is rejected for
+all outcomes; an abstention must also cite the context that justifies it.
+
+The store resolves citation values from governed records rather than accepting
+caller-supplied copies. Each citation retains its feature, observation, source,
+source metadata version captured when recorded, and exact value. A source's
+later artifact version does not rewrite prior citations or change an identical
+retry. Restoration checks citations against retained observations, mentions,
+and source versions.
+
+Records are append-only. An identical retry returns the existing ID; changing
+an existing ID is an `ImmutableRecordConflict`. `records_for_pair` returns the
+complete insertion-ordered history in either pair orientation, and
+`records_by_outcome(Abstain)` keeps abstentions queryable even after a later
+`Merge` or `Distinct`. New evidence produces a new record, preserving the
+previous judgment.
+
+The read projection labels each record `ReconciliationRecord` and `Decision`,
+with `DECIDES` edges to both mentions. Namespaced properties expose the outcome,
+pair, decider, time, rationale, citations and similarity hints:
+
+```cypher
+MATCH (r:ReconciliationRecord)-[:DECIDES]->(m:EntityMention) RETURN r.reconciliation_outcome, m.mention_id
+MATCH (r:ReconciliationRecord) RETURN r.reconciliation_id, r.reconciliation_decider, r.reconciliation_citations
+```
+
+Projected outcome tokens are `merge`, `distinct`, and `abstain`; native serde
+uses the Rust variant names. A stored `Merge` judgment does not execute a graph
+merge or create identity edges. Reversible application and undo belong to
+WS-C item 5. No HTTP mutation route is added in item 4.
+
+The mini alias/transliteration fixtures cover reviewed homonym (`Distinct`),
+supported alias and transliteration (`Merge`), and ambiguous (`Abstain`)
+judgments. They test the record and evidence gates, including rejection of
+name-only decisions; they are not an accuracy benchmark for an automatic
+identity classifier.
 
 ### Verdict dimensions
 
