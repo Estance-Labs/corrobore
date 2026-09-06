@@ -50,6 +50,14 @@ use crate::{
 /// below.
 #[derive(Clone, Debug, Error, PartialEq)]
 pub enum GraphError {
+    /// A later judgment used the identity being reversed.
+    #[error("cannot undo {merge_record:?}: dependent reconciliation {dependent_record:?}")]
+    DependentReconciliation {
+        /// Merge whose reversal was requested.
+        merge_record: crate::ReconciliationRecordId,
+        /// First unreversed dependent judgment in ledger order.
+        dependent_record: crate::ReconciliationRecordId,
+    },
     /// The requested stable node ID does not exist for an operation where absence
     /// is an error, such as update or tombstone.
     #[error("node not found: {0:?}")]

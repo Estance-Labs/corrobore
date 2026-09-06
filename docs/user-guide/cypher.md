@@ -203,8 +203,25 @@ MATCH (r:ReconciliationRecord) RETURN r.reconciliation_id, r.reconciliation_deci
 
 Projected outcome tokens are `merge`, `distinct`, and `abstain`; native serde
 uses the Rust variant names. A stored `Merge` judgment does not execute a graph
-merge or create identity edges. Reversible application and undo belong to
-WS-C item 5. No HTTP mutation route is added in item 4.
+merge or create identity edges. `Graph::apply_reconciliation_merge` explicitly
+joins the mention groups in the read projection. `Graph::undo_reconciliation_merge`
+appends an attributed reversal and restores their original observation links.
+The original stores and evidence citations remain immutable. A merged node has
+`mention_members` with every original mention; `HAS_MENTION.mention_id` retains
+each original endpoint. `Graph::resolved_mentions` gives the current mapping.
+
+Undo records project as `ReconciliationUndo` + `Decision`, with `undo_id`,
+`undo_reconciliation_id`, `undo_actor`, `undo_at` and `undo_rationale`, and
+`DECIDES` links to the currently resolved mentions. Original judgments remain
+visible after undo. Later judgments that depend on an active merge prevent its
+reversal with `DependentReconciliation`, naming the dependent record.
+
+```cypher
+MATCH (u:ReconciliationUndo) RETURN u.undo_id, u.undo_reconciliation_id, u.undo_actor
+```
+
+See the [HTTP reconciliation endpoints](http-server.md#post-v1reconciliations)
+for analyst inspection, explicit application and undo.
 
 The mini alias/transliteration fixtures cover reviewed homonym (`Distinct`),
 supported alias and transliteration (`Merge`), and ambiguous (`Abstain`)

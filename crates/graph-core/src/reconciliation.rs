@@ -359,12 +359,18 @@ impl Graph {
         input: ReconciliationInput,
     ) -> Result<ReconciliationRecordId, GraphError> {
         let stores = self.epistemic_stores_mut();
-        stores.reconciliations.create_record(
+        stores.merges.validate_bindings(&stores.reconciliations)?;
+        let existing = stores.reconciliations.record_by_id(&input.id).is_some();
+        let id = stores.reconciliations.create_record(
             input,
             &stores.mentions,
             &stores.observations,
             &stores.sources,
-        )
+        )?;
+        if !existing {
+            stores.merges.record_context(&id, &stores.reconciliations)?;
+        }
+        Ok(id)
     }
 }
 

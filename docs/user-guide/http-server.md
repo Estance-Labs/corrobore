@@ -344,6 +344,110 @@ the database-operations status.
 Returns bounded status for online snapshot, restore, migration, compaction and
 index-rebuild operations without exposing credentials or record payloads.
 
+## `POST /v1/reconciliations`
+
+Record an evidence-cited judgment on existing observation-bound mentions. The
+request contains `record` in native `ReconciliationInput` serde form and an
+optional `context` object (`workspace_id`, `session_id`, `budget_ref`). Identifiers
+inside the record use `{"value":"..."}`; timestamps are RFC 3339 strings. All
+three outcomes require evidence from both mentions and contextual support.
+
+```json
+{
+  "record": {
+    "id": {"value": "reconciliation--1"},
+    "left": {"value": "mention--1"},
+    "right": {"value": "mention--2"},
+    "outcome": "Merge",
+    "decider": {"Actor": {"value": "analyst--1"}},
+    "decided_at": "2026-09-06T12:00:00Z",
+    "rationale": "Both observations identify registry C001",
+    "evidence": [
+      {"Mention": {"mention_id": {"value": "mention--1"}, "feature": "SourceContext"}},
+      {"Mention": {"mention_id": {"value": "mention--2"}, "feature": "SourceContext"}}
+    ],
+    "similarity_hints": []
+  }
+}
+```
+
+The response includes the retained `record` with server-resolved `citations`,
+`active`, `resolved_left`, `resolved_right`, original `members`, `undos` and the
+first blocking `dependent_record` (or null). A judgment alone does not apply a
+merge. Mention creation remains an engine ingestion operation; this endpoint
+requires those mentions and their source observations to exist already.
+
+## `GET /v1/reconciliations/{id}`
+
+Inspect the same response without mutation. Each original member retains its
+observation ID, offsets, surface form, candidate hints and relation features.
+The original judgment and its pinned citations remain available after reversal.
+Unknown IDs return `404 RECONCILIATION_NOT_FOUND`.
+
+## `POST /v1/reconciliations/{id}/merge`
+
+Apply an existing `Merge` judgment with an empty JSON body `{}` or an object
+containing `workspace_id`, `session_id` and `budget_ref`. `Distinct` and `Abstain`
+are not applicable. The left mention's current group becomes the representative
+of the joined groups. This groups mention identity in the governed view; it does
+not merge arbitrary canonical entity nodes or candidate entity hints.
+
+Every original mention is retained. In the epistemic Cypher projection, the
+representative carries `mention_members` containing the full original records;
+all observation `HAS_MENTION` links lead to that representative while carrying
+their original `mention_id`. Undo reconstructs the separate mentions and links
+from these immutable originals. Direct canonical graph records are unchanged.
+
+An exact apply retry is a no-op. Reapplying a reversed judgment is rejected;
+record a new evidence-cited judgment instead.
+
+## `POST /v1/reconciliations/{id}/undo`
+
+Reverse an active merge with an attributed, immutable undo record:
+
+```json
+{
+  "id": "undo--1",
+  "actor": "analyst--1",
+  "undone_at": "2026-09-06T13:00:00Z",
+  "rationale": "The registry reference was misattributed"
+}
+```
+
+Optional `context` uses the same shape as judgment submission. An exact retry
+returns the existing result; a conflicting undo ID or an already reversed target
+with a different undo ID returns `400 INVALID_RECONCILIATION_OPERATION`.
+
+The ledger tracks dependencies in mutation order, not caller timestamp order.
+A new judgment on either active identity group, or a later application joining
+one of those groups, depends on the active merges it used. This includes
+`Distinct` and `Abstain` judgments. Unrelated pairs do not block reversal. A
+blocking decision returns HTTP 409 without changing state:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "DEPENDENT_RECONCILIATION",
+    "message": "A later reconciliation depends on this merge",
+    "merge_record": "reconciliation--1",
+    "dependent_record": "reconciliation--2"
+  }
+}
+```
+
+Applied dependent merges can be undone in reverse order before their parents.
+A dependent judgment that has not itself been reversed remains a blocker; this
+API deliberately provides no silent cascade or history deletion. Older stored
+judgments without ledger events remain unapplied until explicitly applied.
+Use the Graph reconciliation methods for ingestion so decision dependencies are
+captured; direct governed-store access is a trusted persistence/internal boundary.
+
+All four routes require the configured bearer token. Writes use the engine's
+atomic mutation and persistence policy; the merge ledger survives restart with
+the governed stores. The supplied actor is an attribution recorded by the
+caller, not a separately authenticated user identity.
+
 ## `POST /v1/import/candidates`
 
 Stores an immutable extraction proposal in `Shadow` (default) or `Hypothesis`.
