@@ -1236,3 +1236,41 @@ projection: sources, observations, claims, stored verdicts and their relations.
 The authenticated read exposes the same projection used by epistemic queries.
 It does not alter canonical records or resolve new verdicts. Projection-local
 node identifiers are not canonical entity identifiers.
+
+## `POST /v1/claims/{id}/decisions`
+
+Appends an attributed human decision to a separate ledger. This authenticated
+write accepts `id`, `actor`, `recorded_at` (UTC RFC3339), and `action`. The actor
+is the caller's declared attribution; a shared bearer token does not independently
+attest that person's identity. Integrations must supply their authenticated actor.
+
+```json
+{
+  "id": "review-001",
+  "actor": "analyst-17",
+  "recorded_at": "2026-09-06T18:00:00Z",
+  "action": {
+    "kind": "override",
+    "judgment": "Needs further investigation",
+    "rationale": "The original source leaves a material ambiguity"
+  }
+}
+```
+
+An `annotation` action requires `text`. An `override` requires `judgment` and
+`rationale`; it records the human conclusion beside the unchanged machine verdict.
+A `reversal` requires `decision_id` and `rationale` and withdraws an earlier
+annotation or override on the same claim. It cannot target another reversal or
+an already withdrawn decision. Reinstating a judgment requires a new decision.
+
+Identifiers and action text must be nonblank. Reusing an identifier with the
+same complete record is an idempotent retry; conflicting reuse is rejected.
+Reversals are independent records, so the original and its withdrawal both remain
+queryable after restart. The ledger preserves append order; `recorded_at` is the
+caller-supplied event time, not an ordering key.
+
+The claim audit returns these records under `analyst_decisions`, distinctly from
+`current_verdict`, `verifications`, and `observations`. No human decision changes
+those machine records or recalculates the verdict. Unknown claims return 404;
+invalid attribution, conflicting identifiers and invalid reversal targets return
+400. The write is persisted atomically through the engine mutation journal.

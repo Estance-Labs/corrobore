@@ -44,3 +44,5 @@ pub mod stix_validate;
 pub mod reconciliations;
 
 pub mod claim_audit;
+
+pub mod analyst_decisions;

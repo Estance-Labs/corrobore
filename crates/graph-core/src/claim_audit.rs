@@ -105,6 +105,7 @@ impl Graph {
         let stores = self.epistemic_stores();
         let claim = stores.claims.claim_by_id(id)?;
         stores.audit_bindings.validate(stores)?;
+        stores.analyst_decisions.validate(&stores.claims)?;
         let mut gaps = Vec::new();
         let mut claim_ids = BTreeSet::from([id.as_str().to_owned()]);
         // Follow retained claim-source links to a fixed point; cycles terminate.
@@ -313,6 +314,7 @@ impl Graph {
         });
         Ok(json!({
             "claim":claim,
+            "analyst_decisions":stores.analyst_decisions.records_for_claim(id),
             "related_claims":array(claims.iter().filter(|c|c.id()!=id))?,
             "evidence_links":array(&links)?,
             "link_membership":array(link_membership)?,

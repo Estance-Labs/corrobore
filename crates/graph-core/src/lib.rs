@@ -470,3 +470,6 @@ pub use ingestion_metrics::{
 
 mod claim_audit;
 pub use claim_audit::{ClaimAuditBindings, ClaimAuditReference};
+
+mod analyst_decision;
+pub use analyst_decision::{AnalystDecision, AnalystDecisionAction, AnalystDecisionStore};

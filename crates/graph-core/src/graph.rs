@@ -143,6 +143,10 @@ impl Graph {
             .epistemic
             .audit_bindings
             .validate(&snapshot.epistemic)?;
+        snapshot
+            .epistemic
+            .analyst_decisions
+            .validate(&snapshot.epistemic.claims)?;
         let mut graph = Graph {
             next_node_sequence: snapshot.next_node_sequence,
             next_node_version_sequence: snapshot.next_node_version_sequence,

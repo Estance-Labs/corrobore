@@ -1005,6 +1005,10 @@ pub fn build_router(state: AppState) -> Router {
 
     let protected = Router::new()
         .route(
+            "/v1/claims/{id}/decisions",
+            post(crate::handlers::analyst_decisions::submit),
+        )
+        .route(
             "/v1/claims/{id}/audit",
             get(crate::handlers::claim_audit::audit),
         )
