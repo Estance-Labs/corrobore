@@ -21,6 +21,12 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
 ### Added
 
+- WS-E v1 stage instrumentation with explicit input/output units, failed-input
+  counts, producer attribution, idempotent measurements and bounded per-engine
+  reports. The authenticated stage API emits all seven stages, preserving null
+  counters for unmeasured work; benchmark reports consume the schema additively
+  (#209).
+
 - WS-F claim audit: deterministic retained provenance, explicit verification
   coverage, stored dimensions/clusters and history; separate attributed,
   reversible human decisions; scoped offline audit archives in STIX/FIMI and

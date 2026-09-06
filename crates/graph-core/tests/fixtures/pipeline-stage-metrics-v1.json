@@ -1,0 +1,91 @@
+{
+  "schema_version": "corrobore-stage-metrics-v1",
+  "run_id": "regression",
+  "source": "stage_instrumentation",
+  "stages": [
+    {
+      "stage": "extraction",
+      "input_unit": "documents",
+      "output_unit": "candidate_assertions",
+      "measurements": 1,
+      "producers": [
+        "fixture-v1"
+      ],
+      "inputs": 10,
+      "outputs": 10,
+      "failures": 0
+    },
+    {
+      "stage": "entity_resolution",
+      "input_unit": "mention_comparisons",
+      "output_unit": "identity_decisions",
+      "measurements": 1,
+      "producers": [
+        "fixture-v1"
+      ],
+      "inputs": 10,
+      "outputs": 10,
+      "failures": 0
+    },
+    {
+      "stage": "retrieval",
+      "input_unit": "retrieval_requests",
+      "output_unit": "evidence_items",
+      "measurements": 1,
+      "producers": [
+        "fixture-v1"
+      ],
+      "inputs": 10,
+      "outputs": 7,
+      "failures": 3
+    },
+    {
+      "stage": "subgraph_construction",
+      "input_unit": "seed_sets",
+      "output_unit": "subgraphs",
+      "measurements": 1,
+      "producers": [
+        "fixture-v1"
+      ],
+      "inputs": 10,
+      "outputs": 10,
+      "failures": 0
+    },
+    {
+      "stage": "evidence_sufficiency",
+      "input_unit": "claim_evidence_sets",
+      "output_unit": "sufficiency_assessments",
+      "measurements": 1,
+      "producers": [
+        "fixture-v1"
+      ],
+      "inputs": 10,
+      "outputs": 10,
+      "failures": 0
+    },
+    {
+      "stage": "verifier",
+      "input_unit": "verification_requests",
+      "output_unit": "verification_records",
+      "measurements": 1,
+      "producers": [
+        "fixture-v1"
+      ],
+      "inputs": 10,
+      "outputs": 10,
+      "failures": 0
+    },
+    {
+      "stage": "verdict",
+      "input_unit": "claims",
+      "output_unit": "stored_verdicts",
+      "measurements": 1,
+      "producers": [
+        "fixture-v1"
+      ],
+      "inputs": 10,
+      "outputs": 10,
+      "failures": 0
+    }
+  ]
+}

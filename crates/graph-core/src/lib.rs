@@ -476,3 +476,9 @@ pub use analyst_decision::{AnalystDecision, AnalystDecisionAction, AnalystDecisi
 
 mod audit_archive;
 pub use audit_archive::AuditArchiveAttachment;
+
+mod pipeline_metrics;
+pub use pipeline_metrics::{
+    PipelineStage, PipelineStageReport, StageMeasurement, StageMetric, StageMetricError,
+    StageMetricsRegistry,
+};

@@ -1274,3 +1274,14 @@ The claim audit returns these records under `analyst_decisions`, distinctly from
 those machine records or recalculates the verdict. Unknown claims return 404;
 invalid attribution, conflicting identifiers and invalid reversal targets return
 400. The write is persisted atomically through the engine mutation journal.
+
+## `GET /v1/metrics/stages/{run_id}` and `POST /v1/metrics/stages/{run_id}`
+
+Authenticated per-run pipeline instrumentation. POST records a completed stage
+batch and returns the direct versioned report; GET reads the retained report.
+The body uses `schema_version: "corrobore-stage-metrics-v1"`, `measurement_id`,
+`stage`, `producer`, and nonnegative integer `inputs`, `outputs`, `failures`.
+Exact run/stage/measurement retries are idempotent; conflicting content is 400.
+Unknown runs are 404, malformed or incompatible payloads 422, and exhausted
+telemetry capacity 503 without eviction. See the [stage contract](stage-metrics.md)
+for count semantics, units, retention and benchmark consumption.
