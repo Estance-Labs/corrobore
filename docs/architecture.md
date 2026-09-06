@@ -147,6 +147,34 @@ is defined. A structure change appends a verdict snapshot even if the state
 stays the same; it does not append a false state transition. Weighting and
 authority remain outside this component.
 
+Source authority (WS-D item 3) is registered through
+`VerdictStore::register_source_authority_policy`. Each immutable
+`SourceAuthorityPolicy` binds a source identity, authority domain and predicate
+class to an explicit bounded weight. A conflicting re-registration under the
+same version fails; a new version retains earlier policies and verdicts.
+Registries also persist when no verdict has been computed yet.
+
+Callers select the exact version and scope with
+`ResolutionInputs::with_source_authority(version, domain, predicate_class)`;
+there is no latest-version fallback or inferred classification from claim text.
+Only registered sources behind active supporting, refuting or contradicting
+links contribute. No binding means absent authority, even when trust inputs
+exist. Authority never creates a support signal or changes deterministic
+verification precedence.
+
+The stored `SourceReliabilityCapV1` rule caps a binding by the minimum applicable
+`TrustInputKind::SourceReliability` value for that source. Inputs scoped to other
+claims, future inputs and expired/superseded inputs are excluded; untimed inputs
+apply unless explicitly scoped elsewhere. Other reliability categories are not
+source authority. `Verdict::authority_resolution()` retains the binding,
+effective weight, consumed inputs and their provenance/reason references. The
+`source_authority` dimension is the maximum known effective weight among distinct
+signal sources, so repeated records cannot raise it; cluster contribution
+weighting is deferred to WS-D item 4. The exact authority version, domain and
+predicate class are also exposed as `verdict_source_authority_*` properties.
+Changing authority produces a new verdict snapshot without rewriting history or
+creating a false state transition.
+
 ## Durability and transport boundaries
 
 The current HTTP runtime keeps its graph in process. Session metadata and JSONL logs are durable on disk, while `graph-storage` provides the append-only storage and pager building blocks used by lower-level integrations. `corrobore-ingest` deliberately imports through HTTP instead of depending on graph internals.
