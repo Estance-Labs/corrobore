@@ -20,7 +20,7 @@ use std::{
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, SecondsFormat, Utc};
 use graph_core::{Graph, Node, NodeId, PropertyValue, Relationship};
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 pub use opencti_access::{
     AccessContext, AccessDecision, AccessDecisionReason, AccessMetadata, AccessPolicyError,
     OpenCtiAccessPolicy,

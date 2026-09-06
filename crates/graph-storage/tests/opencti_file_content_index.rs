@@ -54,7 +54,10 @@ fn canonical_store_publishes_searches_deletes_and_rebuilds_file_content() {
         blob_key: "opencti/persistent.txt".to_owned(),
         name: "persistent.txt".to_owned(),
         mime_type: "text/plain".to_owned(),
-        content_hash: format!("{:x}", Sha256::digest(&content)),
+        content_hash: Sha256::digest(&content)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
         version: 1,
         access: AccessMetadata {
             marking_ids: vec!["marking--clear".to_owned()],
@@ -105,7 +108,10 @@ fn canonical_store_publishes_searches_deletes_and_rebuilds_file_content() {
                 blob_key: "opencti/worker.txt".to_owned(),
                 name: "worker.txt".to_owned(),
                 mime_type: "text/plain".to_owned(),
-                content_hash: format!("{:x}", Sha256::digest(&worker_content)),
+                content_hash: Sha256::digest(&worker_content)
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect(),
                 version: 1,
                 access: AccessMetadata {
                     marking_ids: vec!["marking--clear".to_owned()],

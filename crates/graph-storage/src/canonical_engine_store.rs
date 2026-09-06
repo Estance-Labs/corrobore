@@ -810,9 +810,13 @@ impl CanonicalEngineStore {
                 digest.update(relationship.id().as_str().as_bytes());
                 digest.update(relationship.version_id().as_str().as_bytes());
             }
+            let digest = digest.finalize();
             let transaction_id = DurableTransactionId::new(format!(
-                "tx--derived-adjacency-rebuild-{:x}",
-                digest.finalize()
+                "tx--derived-adjacency-rebuild-{}",
+                digest
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
             ))
             .map_err(|error| GraphStorageError::OperationFailed {
                 operation: "rebuild_compact_indexes",

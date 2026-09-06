@@ -5,7 +5,7 @@
 
 use chrono::Utc;
 use graph_storage::SnapshotArtifactStore;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use reqwest::{Method, Url, blocking::Client};
 use sha2::{Digest, Sha256};
 

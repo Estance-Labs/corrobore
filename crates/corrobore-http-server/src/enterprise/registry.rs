@@ -148,7 +148,10 @@ impl DomainProviderRegistry {
                     entry.domain.as_str()
                 ))
             })?;
-            let actual_hash = format!("{:x}", Sha256::digest(bytes));
+            let actual_hash = Sha256::digest(bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
             if actual_hash != entry.sha256 {
                 return Err(DomainProviderRegistryError::Initialization(format!(
                     "SHA-256 mismatch for {} provider library",
@@ -1274,10 +1277,10 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
 
-        let hash = format!(
-            "{:x}",
-            Sha256::digest(fs::read(&library).expect("fixture library should be readable"))
-        );
+        let hash = Sha256::digest(fs::read(&library).expect("fixture library should be readable"))
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
         let manifest = root.join("providers.json");
         fs::write(
             &manifest,

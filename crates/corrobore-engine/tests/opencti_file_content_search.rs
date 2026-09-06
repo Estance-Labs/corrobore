@@ -87,7 +87,10 @@ fn knowledge_data_search_routes_file_content_without_graph_hydration_or_access_l
                 blob_key: "opencti/report.txt".to_owned(),
                 name: "synthetic-report.txt".to_owned(),
                 mime_type: "text/plain".to_owned(),
-                content_hash: format!("{:x}", Sha256::digest(&content)),
+                content_hash: Sha256::digest(&content)
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect(),
                 version: 1,
                 access: AccessMetadata {
                     marking_ids: vec!["marking--clear".to_owned()],
@@ -118,7 +121,10 @@ fn knowledge_data_search_routes_file_content_without_graph_hydration_or_access_l
                 blob_key: "opencti/report.html".to_owned(),
                 name: "synthetic-report.html".to_owned(),
                 mime_type: "text/html".to_owned(),
-                content_hash: format!("{:x}", Sha256::digest(&second_content)),
+                content_hash: Sha256::digest(&second_content)
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect(),
                 version: 1,
                 access: AccessMetadata {
                     marking_ids: vec!["marking--clear".to_owned()],
@@ -148,7 +154,10 @@ fn knowledge_data_search_routes_file_content_without_graph_hydration_or_access_l
                 blob_key: "opencti/hidden.txt".to_owned(),
                 name: "hidden.txt".to_owned(),
                 mime_type: "text/plain".to_owned(),
-                content_hash: format!("{:x}", Sha256::digest(&denied_content)),
+                content_hash: Sha256::digest(&denied_content)
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect(),
                 version: 1,
                 access: AccessMetadata {
                     marking_ids: vec!["marking--amber".to_owned()],

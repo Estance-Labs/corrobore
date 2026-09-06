@@ -51,7 +51,10 @@ fn descriptor(
         blob_key: format!("opencti/{file_id}/{version}"),
         name: name.to_owned(),
         mime_type: mime_type.to_owned(),
-        content_hash: format!("{:x}", Sha256::digest(content)),
+        content_hash: Sha256::digest(content)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
         version,
         access: AccessMetadata {
             marking_ids: vec![marking.to_owned()],

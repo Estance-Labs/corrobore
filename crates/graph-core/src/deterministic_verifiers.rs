@@ -1374,7 +1374,10 @@ impl HashComparison {
         Self {
             reference,
             recorded: recorded.to_owned(),
-            computed: format!("{:x}", Sha256::digest(payload.as_bytes())),
+            computed: Sha256::digest(payload.as_bytes())
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
         }
     }
 
