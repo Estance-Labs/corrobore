@@ -98,6 +98,7 @@ nav:
   - Developer Guide:
     - Contributing: developer-guide/contributing.md
     - Architecture Internals: developer-guide/internals.md
+    - Synthetic Red-Team Adapter: developer-guide/red-team-adapter.md
     - OpenCTI Compatibility Inventory: developer-guide/opencti-compatibility.md
     - OpenCTI Model Adapter: developer-guide/opencti-model-adapter.md
     - Knowledge Data Engine Contract: developer-guide/knowledge-data-engine.md
