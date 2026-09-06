@@ -113,6 +113,10 @@ mod calibrated_assessment;
 mod claim;
 mod cluster_aggregation;
 pub use actionability::{ActionabilityAssessment, ActionabilityBlocker, ActionabilityPolicy};
+mod candidate_ingestion;
+pub use candidate_ingestion::{
+    CandidateInput, CandidatePromotion, CandidatePromotionInput, CandidateStore,
+};
 mod confidence;
 mod confidence_dimensions;
 mod cross_branch_scoring;
@@ -281,10 +285,11 @@ pub use hyperrelation::{
     HyperrelationSchema, HyperrelationTimeWindow,
 };
 pub use ids::{
-    ActorId, ClaimId, ClaimVersionId, EvidenceId, ExtractionRunId, FactId, HypothesisWorkspaceId,
-    NodeId, NodeVersionId, ObservationId, RelationshipId, RelationshipVersionId, RequestId,
-    RuntimeId, SessionId, SnapshotId, SourceId, SourceVersionId, StateTransitionId, TransactionId,
-    ValidationErrorId, VerdictId, VerificationRecordId, WorkspaceId,
+    ActorId, CandidateId, ClaimId, ClaimVersionId, EvidenceId, ExtractionRunId, FactId,
+    HypothesisWorkspaceId, NodeId, NodeVersionId, ObservationId, RelationshipId,
+    RelationshipVersionId, RequestId, RuntimeId, SessionId, SnapshotId, SourceId, SourceVersionId,
+    StateTransitionId, TransactionId, ValidationErrorId, VerdictId, VerificationRecordId,
+    WorkspaceId,
 };
 pub use immune_response::{ImmuneResponder, ImmuneResponse, ImmuneResponseAction};
 pub use independence::{

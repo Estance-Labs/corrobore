@@ -344,6 +344,82 @@ the database-operations status.
 Returns bounded status for online snapshot, restore, migration, compaction and
 index-rebuild operations without exposing credentials or record payloads.
 
+## `POST /v1/import/candidates`
+
+Stores an immutable extraction proposal in `Shadow` (default) or `Hypothesis`.
+No node or relationship is created by submission. `id`, `extraction_run_id`,
+`actor`, and the string `raw_payload` are required; identifiers must not be
+blank. The decoded payload string is preserved verbatim, including whitespace,
+Unicode, and invalid extractor syntax. Validation does not promote a proposal.
+
+```json
+{
+  "id": "candidate--1",
+  "extraction_run_id": "run--1",
+  "actor": "actor--extractor",
+  "tier": "Shadow",
+  "raw_payload": " { \"name\": \"proposed entity\" } \n"
+}
+```
+
+The response contains `ok`, `candidate`, `tier`, and `promotions`. Native
+identifiers inside `candidate` are objects such as `{"value":"candidate--1"}`;
+`candidate.landing_tier` always records the original destination, while `tier`
+reports the current tier. An exact submission retry returns the existing
+record (including its current tier if already promoted). Reusing the ID with
+a different payload, actor, run, or landing tier is rejected.
+
+These endpoints use the standard Bearer authentication and engine mutation
+policy. Mutations accept optional `workspace_id`, `session_id`, and `budget_ref`
+context, like other import operations. Persistent storage retains proposals,
+promotion receipts, and the original tier audit order across restarts.
+
+## `GET /v1/import/candidates/{id}`
+
+Returns the immutable `candidate`, current `tier`, and recorded `promotions`.
+Unknown candidates return `400 INVALID_CANDIDATE_OPERATION`. The original raw
+payload remains available after promotion; reviewed content never replaces it.
+
+## `POST /v1/import/candidates/{id}/promote`
+
+Explicitly creates one reviewed canonical node or relationship and records the
+reviewer's `actor`, nonblank `reason`, reviewed input, and resulting record ID.
+The created record inherits the candidate's extraction run. Tier promotion does
+not assert epistemic verification: the normal node/relationship status and
+evidence rules still apply.
+
+```json
+{
+  "actor": "actor--reviewer",
+  "reason": "Reviewed against the extraction source",
+  "record": {
+    "kind": "node",
+    "labels": ["Entity"],
+    "properties": {"name": {"String": "reviewed entity"}}
+  }
+}
+```
+
+For a relationship, provide `kind: "relationship"`, existing node IDs in `source`
+and `target`, `relationship_type`, and optional `properties`. Properties use the
+native tagged `PropertyValue` representation shown above.
+
+The response contains `ok`, `tier: "Canonical"`, and `promotion`. The receipt
+uses native identifier objects and a tagged target such as
+`{"Node":{"value":"node--1"}}`. An exact retry returns the same receipt without
+creating a second record. A different review after promotion is rejected.
+Creation and promotion are atomic: failed validation leaves both graph and
+ledger unchanged. Unknown fields and malformed requests are rejected; semantic
+candidate errors return `400 INVALID_CANDIDATE_OPERATION`.
+
+Raw extraction proposals must use these candidate routes. The legacy STIX
+JSON envelope and multipart metadata reject unknown fields, including candidate
+mode flags, so such flags cannot silently fall through into typed STIX import.
+The JSON envelope still accepts legacy informational `schema_version` and
+`description` fields; neither changes import behavior. STIX extensions inside
+the bundle retain their existing import semantics.
+Constraint feedback and repair lineage are separate WS-C work items.
+
 ## `POST /v1/import/stix`
 
 Imports a STIX 2.1 bundle as one atomic typed graph mutation. Plain bundles
