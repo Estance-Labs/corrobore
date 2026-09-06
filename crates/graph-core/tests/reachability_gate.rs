@@ -434,7 +434,7 @@ fn governed_records_reject_in_place_updates_with_one_typed_error() {
             verdict_id.clone(),
             claim_id("claim--x"),
             VerdictState::Unknown,
-            std::collections::BTreeMap::new(),
+            graph_core::ConfidenceDimensions::default(),
             "policy",
             stamp("2026-08-30T09:00:00Z"),
         )
@@ -444,7 +444,7 @@ fn governed_records_reject_in_place_updates_with_one_typed_error() {
             verdict_id,
             claim_id("claim--x"),
             VerdictState::Supported,
-            std::collections::BTreeMap::new(),
+            graph_core::ConfidenceDimensions::default(),
             "policy",
             stamp("2026-08-30T09:30:00Z"),
         ),
