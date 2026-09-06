@@ -61,9 +61,13 @@ components:
     ClaimAuditPath:
       type: object
       description: Stored provenance only; no resolver or verifier execution. Arrays of records are deterministic; histories retain ledger order.
-      required: [claim, current_verdict, explanation, related_claims, evidence_links, link_membership, contradictions, observations, source_versions, evidence, mentions, reconciliations, merge_undos, verifications, coverage, verdict_history, state_transitions, claim_decisions, verification_disagreements, candidates, promotions, unverified_steps]
+      required: [claim, current_verdict, explanation, analyst_decisions, related_claims, evidence_links, link_membership, contradictions, observations, source_versions, evidence, mentions, reconciliations, merge_undos, verifications, coverage, verdict_history, state_transitions, claim_decisions, verification_disagreements, candidates, promotions, unverified_steps]
       properties:
         claim: {type: object, additionalProperties: true}
+        analyst_decisions:
+          type: array
+          description: Append-only human ledger, separate from all machine records
+          items: {type: object, additionalProperties: true}
         current_verdict: {type: [object, 'null'], additionalProperties: true}
         explanation: {type: [object, 'null'], additionalProperties: true}
         related_claims:
@@ -1739,6 +1743,65 @@ paths:
                             ready: {type: boolean}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/BadRequest'}
+
+  /v1/claims/{id}/decisions:
+    post:
+      operationId: recordAnalystDecision
+      summary: Append a human annotation, override or reversal beside machine evidence
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [id, actor, recorded_at, action]
+              properties:
+                id: {type: string, minLength: 1}
+                actor: {type: string, minLength: 1}
+                recorded_at: {type: string, format: date-time}
+                action:
+                  oneOf:
+                    - type: object
+                      additionalProperties: false
+                      required: [kind, text]
+                      properties:
+                        kind: {const: annotation}
+                        text: {type: string, minLength: 1}
+                    - type: object
+                      additionalProperties: false
+                      required: [kind, judgment, rationale]
+                      properties:
+                        kind: {const: override}
+                        judgment: {type: string, minLength: 1}
+                        rationale: {type: string, minLength: 1}
+                    - type: object
+                      additionalProperties: false
+                      required: [kind, decision_id, rationale]
+                      properties:
+                        kind: {const: reversal}
+                        decision_id: {type: string, minLength: 1}
+                        rationale: {type: string, minLength: 1}
+      responses:
+        '200':
+          description: Recorded decision identifier; exact retries are idempotent
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, decision_id]
+                properties:
+                  ok: {const: true}
+                  decision_id: {type: string}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {description: Unknown claim}
+        '422': {description: Malformed submission or unknown fields}
 
   /v1/claims/{id}/audit:
     get:

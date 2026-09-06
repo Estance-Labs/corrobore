@@ -39,6 +39,9 @@ use crate::{ClaimStore, ObservationStore, SourceStore, VerdictStore, Verificatio
 /// The governed evidence stores of one graph.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct EpistemicStores {
+    /// Human judgments, separate from machine evidence and verdicts.
+    #[serde(default, skip_serializing_if = "crate::AnalystDecisionStore::is_empty")]
+    pub analyst_decisions: crate::AnalystDecisionStore,
     /// Exact provenance associations for the claim audit read surface.
     #[serde(default, skip_serializing_if = "crate::ClaimAuditBindings::is_empty")]
     pub audit_bindings: crate::ClaimAuditBindings,
@@ -81,7 +84,8 @@ pub struct EpistemicStores {
 impl EpistemicStores {
     /// Whether every store is empty.
     pub fn is_empty(&self) -> bool {
-        self.audit_bindings.is_empty()
+        self.analyst_decisions.is_empty()
+            && self.audit_bindings.is_empty()
             && self.ingestion_evaluations.is_empty()
             && self.merges.is_empty()
             && self.reconciliations.is_empty()
