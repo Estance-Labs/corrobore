@@ -27,7 +27,7 @@
 
 use graph_core::{
     DeterministicExportPlan, ExportMode, ExportProfile, ExportRecordKind, Graph, Node, NodeId,
-    RelationshipId,
+    RelationshipId, VerificationCoverage,
 };
 use serde::{Deserialize, Serialize};
 
@@ -60,18 +60,34 @@ struct FimiRecord {
 /// Epistemic lineage of one evidence reference.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct FimiLineage {
-    evidence_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    evidence_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     source_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     source_uri: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     observation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    claim_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verdict_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verdict_state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transitions: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verification_coverage: Option<VerificationCoverage>,
 }
 
-fn epistemic_lineage(graph: &Graph, evidence_refs: &[String]) -> Vec<FimiLineage> {
+fn epistemic_lineage(
+    graph: &Graph,
+    evidence_refs: &[String],
+    node_id: Option<&NodeId>,
+    relationship_id: Option<&RelationshipId>,
+) -> Vec<FimiLineage> {
     let stores = graph.epistemic_stores();
-    evidence_refs
+    let mut lineage: Vec<FimiLineage> = evidence_refs
         .iter()
         .filter_map(|evidence_ref| {
             let evidence_id = graph_core::EvidenceId::new(evidence_ref).ok()?;
@@ -80,16 +96,48 @@ fn epistemic_lineage(graph: &Graph, evidence_refs: &[String]) -> Vec<FimiLineage
                 return None;
             }
             Some(FimiLineage {
-                evidence_id: evidence_ref.clone(),
+                evidence_id: Some(evidence_ref.clone()),
                 source_id: record.source_id().map(|id| id.as_str().to_owned()),
                 source_uri: record
                     .source_id()
                     .and_then(|id| stores.sources.current_source(id))
                     .map(|source| source.uri().to_owned()),
                 observation_id: record.observation_id().map(|id| id.as_str().to_owned()),
+                claim_id: None,
+                verdict_id: None,
+                verdict_state: None,
+                transitions: None,
+                verification_coverage: None,
             })
         })
-        .collect()
+        .collect();
+
+    let mut claims: Vec<_> = stores
+        .claims
+        .claims()
+        .into_iter()
+        .filter(|claim| match claim.target() {
+            graph_core::ClaimTarget::Node(target) => node_id == Some(target),
+            graph_core::ClaimTarget::Relationship(target) => relationship_id == Some(target),
+            _ => false,
+        })
+        .collect();
+    claims.sort_by(|left, right| left.id().as_str().cmp(right.id().as_str()));
+    for claim in claims {
+        let verdict = stores.verdicts.current_verdict(claim.id());
+        lineage.push(FimiLineage {
+            evidence_id: None,
+            source_id: None,
+            source_uri: None,
+            observation_id: None,
+            claim_id: Some(claim.id().as_str().to_owned()),
+            verdict_id: verdict.map(|value| value.id().as_str().to_owned()),
+            verdict_state: verdict.map(|value| value.state().as_str().to_owned()),
+            transitions: verdict.map(|_| stores.verdicts.transitions_for_claim(claim.id()).len()),
+            verification_coverage: Some(VerificationCoverage::derive(claim, &stores.verifications)),
+        });
+    }
+    lineage
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -130,7 +178,7 @@ pub fn export_fimi_json_document(
                         source_node_id: Some(node.id().as_str().to_owned()),
                         target_node_id: None,
                         relationship_type: None,
-                        lineage: epistemic_lineage(graph, &evidence_refs),
+                        lineage: epistemic_lineage(graph, &evidence_refs, Some(node.id()), None),
                         evidence_refs,
                     })
                 }
@@ -145,7 +193,12 @@ pub fn export_fimi_json_document(
                         source_node_id: Some(relationship.source().as_str().to_owned()),
                         target_node_id: Some(relationship.target().as_str().to_owned()),
                         relationship_type: Some(relationship.rel_type().as_str().to_lowercase()),
-                        lineage: epistemic_lineage(graph, &evidence_refs),
+                        lineage: epistemic_lineage(
+                            graph,
+                            &evidence_refs,
+                            None,
+                            Some(relationship.id()),
+                        ),
                         evidence_refs,
                     })
                 }
@@ -363,6 +416,69 @@ mod tests {
         assert_eq!(lineage[0]["source_id"], "source--outlet");
         assert_eq!(lineage[0]["observation_id"], "observation--post");
         assert_eq!(lineage[0]["source_uri"], "https://outlet.example/post");
+    }
+
+    #[test]
+    fn fimi_claim_lineage_carries_verification_coverage() {
+        use graph_core::{
+            BitemporalStamp, ClaimId, ClaimInput, ClaimStatement, ClaimTarget, TemporalTimestamp,
+            VerificationInputs, VerificationRecord, VerificationRecordId, VerificationResult,
+        };
+
+        let mut graph = Graph::new();
+        let node_id = graph
+            .create_node(NodeInput::new(["Narrative"]).with_status(RecordStatus::Exportable))
+            .expect("node");
+        let claim_id = ClaimId::new("claim--fimi-coverage").expect("claim id");
+        let stores = graph.epistemic_stores_mut();
+        stores
+            .claims
+            .create_asserted_claim(ClaimInput::new(
+                claim_id.clone(),
+                ClaimStatement::new("The narrative claim was checked").expect("statement"),
+                ClaimTarget::Node(node_id),
+            ))
+            .expect("claim");
+        stores
+            .verifications
+            .append(VerificationRecord::new(
+                VerificationRecordId::new("verification--fimi-coverage").expect("verification id"),
+                "fr.estance.corrobore.domain.fimi.claim.verify",
+                "1.4.0",
+                false,
+                VerificationInputs::for_claim(claim_id),
+                VerificationResult::Pass,
+                BitemporalStamp::new(
+                    TemporalTimestamp::new("2026-09-06T00:00:00Z").expect("valid time"),
+                    TemporalTimestamp::new("2026-09-06T00:01:00Z").expect("system time"),
+                )
+                .expect("stamp"),
+            ))
+            .expect("verification");
+
+        let plan =
+            build_deterministic_export_plan(&graph, permissive_metadata(), &[]).expect("plan");
+        let json =
+            serde_json::to_value(export_fimi_json_document(&graph, &plan)).expect("document");
+        let lineage = json["records"][0]["lineage"]
+            .as_array()
+            .expect("lineage array");
+        let claim = lineage
+            .iter()
+            .find(|entry| entry["claim_id"] == "claim--fimi-coverage")
+            .expect("claim lineage");
+        assert_eq!(
+            claim["verification_coverage"]["entries"][0]["class"],
+            "semantically_judged"
+        );
+        assert_eq!(
+            claim["verification_coverage"]["entries"][0]["verifier_id"],
+            "fr.estance.corrobore.domain.fimi.claim.verify"
+        );
+        assert_eq!(
+            claim["verification_coverage"]["entries"][0]["verifier_version"],
+            "1.4.0"
+        );
     }
 
     #[test]

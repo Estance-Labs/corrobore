@@ -122,6 +122,12 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   host registers capability adapters in `VerifierRegistry`, keeps provenance
   and precedence in the core, accepts existing ABI v1.1 providers unchanged,
   and rejects dispatch of unknown capabilities (Epic 0029 WS-B, #167).
+- `graph-core`, Cypher projection, and STIX/FIMI exporters: derived
+  `VerificationCoverage` selects the current record per verifier without
+  rewriting history, distinguishes mechanical, semantic, unchecked, and
+  failing claim coverage, and carries verifier id/version through projections
+  and additive lineage. The `epic_0029_ws_b_acceptance` suite closes every
+  deterministic-first workstream gate (Epic 0029 WS-B, #168).
 
 ## Releases
 

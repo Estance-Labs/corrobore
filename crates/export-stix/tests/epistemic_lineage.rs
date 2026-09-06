@@ -4,10 +4,11 @@
 //! additively, and stay byte-identical for graphs with no governed record.
 use export_stix::export_stix_subset_bundle;
 use graph_core::{
-    Confidence, EvidenceId, EvidenceInput, EvidenceSourceType, ExportMetadata, ExportMode,
-    ExportProfile, Graph, NodeInput, ObservationId, ObservationInput, ObservationModality,
-    PropertyValue, RecordStatus, SourceId, SourceInput, TransactionId,
-    build_deterministic_export_plan,
+    BitemporalStamp, ClaimId, ClaimInput, ClaimStatement, ClaimTarget, Confidence, EvidenceId,
+    EvidenceInput, EvidenceSourceType, ExportMetadata, ExportMode, ExportProfile, Graph, NodeInput,
+    ObservationId, ObservationInput, ObservationModality, PropertyValue, RecordStatus, SourceId,
+    SourceInput, TemporalTimestamp, TransactionId, VerificationInputs, VerificationRecord,
+    VerificationRecordId, VerificationResult, build_deterministic_export_plan,
 };
 use serde_json::{Value, json};
 
@@ -134,5 +135,69 @@ fn exports_with_governed_records_carry_additive_lineage() {
     assert!(
         lineage[0].get("verdicts").is_none(),
         "no verdict lineage without claims on this node"
+    );
+}
+
+#[test]
+fn claim_lineage_exports_current_verification_coverage() {
+    let mut graph = graph_with_object(EvidenceInput::new(
+        EvidenceId::new("evidence--lineage").expect("id"),
+        "synthetic-report",
+        "payload",
+    ));
+    let node_id = graph
+        .list_nodes()
+        .expect("nodes")
+        .into_iter()
+        .next()
+        .expect("exported node")
+        .id()
+        .clone();
+    let claim_id = ClaimId::new("claim--lineage").expect("claim id");
+    let stores = graph.epistemic_stores_mut();
+    stores
+        .claims
+        .create_asserted_claim(ClaimInput::new(
+            claim_id.clone(),
+            ClaimStatement::new("The indicator is valid").expect("statement"),
+            ClaimTarget::Node(node_id),
+        ))
+        .expect("claim");
+    stores
+        .verifications
+        .append(VerificationRecord::new(
+            VerificationRecordId::new("verification--lineage").expect("verification id"),
+            "verifier.identifier-syntax",
+            "1.0.0",
+            true,
+            VerificationInputs::for_claim(claim_id),
+            VerificationResult::Pass,
+            BitemporalStamp::new(
+                TemporalTimestamp::new("2026-09-06T00:00:00Z").expect("valid time"),
+                TemporalTimestamp::new("2026-09-06T00:01:00Z").expect("system time"),
+            )
+            .expect("stamp"),
+        ))
+        .expect("verification");
+
+    let value: Value = serde_json::from_slice(&bundle_bytes(&graph)).expect("json");
+    let lineage = value["objects"][0]["x_corrobore_lineage"]
+        .as_array()
+        .expect("lineage array");
+    let claim = lineage
+        .iter()
+        .find(|entry| entry["claim_id"] == "claim--lineage")
+        .expect("claim lineage");
+    assert_eq!(
+        claim["verification_coverage"]["entries"][0]["class"],
+        "mechanically_checked"
+    );
+    assert_eq!(
+        claim["verification_coverage"]["entries"][0]["verifier_id"],
+        "verifier.identifier-syntax"
+    );
+    assert_eq!(
+        claim["verification_coverage"]["entries"][0]["verifier_version"],
+        "1.0.0"
     );
 }

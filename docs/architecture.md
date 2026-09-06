@@ -115,6 +115,17 @@ read-only graph in the epistemic vocabulary documented in the
 FIMI exports add `x_corrobore_lineage` and `lineage` entries (source,
 observation, current verdict) only when governed records exist.
 
+Verification follows the ADR-0017 deterministic-first boundary. Core checks
+cover public syntax, hashes, temporal and arithmetic coherence, graph
+consistency, and pack-supplied schemas; domain verifiers enter through the
+`claim.verify/1` provider capability. A deterministic failure cannot be
+overridden by a semantic score, while advisory disagreement stays visible.
+`VerificationCoverage` derives one current entry per verifier from the claim,
+its optional proposition, and append-only verification history. It exposes
+mechanical, semantic, unchecked, and failing coverage on projected claim and
+verification nodes and inside STIX/FIMI lineage, without persisting a second
+report or changing precedence when a domain pack is absent.
+
 ## Durability and transport boundaries
 
 The current HTTP runtime keeps its graph in process. Session metadata and JSONL logs are durable on disk, while `graph-storage` provides the append-only storage and pager building blocks used by lower-level integrations. `corrobore-ingest` deliberately imports through HTTP instead of depending on graph internals.

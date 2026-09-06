@@ -578,6 +578,13 @@ fn attach_epistemic_lineage(
             "claim_id".to_owned(),
             Value::String(claim.id().as_str().to_owned()),
         );
+        entry.insert(
+            "verification_coverage".to_owned(),
+            serde_json::json!(graph_core::VerificationCoverage::derive(
+                claim,
+                &stores.verifications
+            )),
+        );
         if let Some(verdict) = stores.verdicts.current_verdict(claim.id()) {
             entry.insert(
                 "verdict_id".to_owned(),

@@ -89,9 +89,9 @@ read-only graph in the epistemic vocabulary that any read query can traverse:
 | `Source` | `Source` version | `source_id`, `source_version`, `source_uri`, `source_type`, `source_artifact_sha256`, `source_derived_from_legacy` |
 | `Observation` | `Observation` | `observation_id`, `observation_source`, `observation_selector`, `observation_payload`, `observation_modality` |
 | `Evidence` | `EvidenceRecord` | `evidence_id`, `evidence_source_ref`, `evidence_source`, `evidence_observation` |
-| `Claim` | `Claim` | `claim_id`, `claim_status`, `claim_statement`, `proposition_*`, `verdict_state`, `verdict_lifecycle_projection`, `verdict_id` |
+| `Claim` | `Claim` | `claim_id`, `claim_status`, `claim_statement`, `proposition_*`, `verdict_state`, `verdict_lifecycle_projection`, `verdict_id`, `verification_coverage*` |
 | `Verdict`, `Assessment` | `Verdict` | `verdict_id`, `verdict_claim`, `verdict_state`, `verdict_policy_version`, `verdict_valid_from`, `verdict_transaction_time` |
-| `VerificationRecord`, `Assessment` | `VerificationRecord` | `verification_id`, `verification_claim`, `verification_verifier_id`, `verification_deterministic`, `verification_result` |
+| `VerificationRecord`, `Assessment` | `VerificationRecord` | `verification_id`, `verification_claim`, `verification_verifier_id`, `verification_verifier_version`, `verification_deterministic`, `verification_result`, `verification_coverage_class`, `verification_coverage_current` |
 | `StateTransition`, `Decision` | `StateTransition` | `transition_id`, `transition_claim`, `transition_from_state`, `transition_to_state`, `transition_trigger` |
 
 Relationships follow the vocabulary: `REPORTS` (source to observation), the
@@ -102,6 +102,7 @@ verification record to claim), and `DECIDES` (state transition to claim).
 
 ```cypher
 MATCH (c:Claim) RETURN c.claim_id, c.verdict_state, c.claim_status ORDER BY c.claim_id ASC
+MATCH (c:Claim) RETURN c.claim_id, c.verification_coverage, c.verification_coverage_unchecked
 MATCH (o:Observation)-[:SUPPORTS]->(c:Claim) RETURN c.claim_id, o.observation_payload
 MATCH (t:StateTransition) RETURN t.transition_claim, t.transition_from_state, t.transition_to_state
 ```
@@ -111,6 +112,19 @@ properties. The projection is read-only: verdicts are computed by the engine
 (`resolve_claim_verdict`) and no write clause reaches the epistemic stores.
 `verdict_state` is the computed epistemic state; `claim_status` is the
 lifecycle status the ADR-0016 projection table derives from it.
+
+Verification coverage is a current, derived view rather than another stored
+report. `verification_coverage` lists `mechanically_checked`,
+`semantically_judged`, `unchecked`, or `failing` entries. The companion
+`verification_coverage_mechanical`, `verification_coverage_semantic`, and
+`verification_coverage_failing` properties name each verifier as
+`<id>@<version>`; `verification_coverage_target` says whether the check
+covered a structured proposition or a text-only statement. A failing entry
+keeps `verification_deterministic` on its `VerificationRecord`, so callers
+can distinguish an authoritative mechanical failure from an advisory semantic
+failure. Older verification records remain queryable and carry
+`verification_coverage_current = false` when a newer verifier version or run
+has replaced them in the current view.
 
 ## Parameters and modes
 
