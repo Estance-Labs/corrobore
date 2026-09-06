@@ -145,6 +145,256 @@ impl VerificationResult {
     }
 }
 
+/// Classification of one current verification step in the claim coverage
+/// view. A failing result is kept distinct from the authority axis while the
+/// entry retains whether its verifier was deterministic.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationCoverageClass {
+    /// A deterministic verifier ran without reporting failure.
+    MechanicallyChecked,
+    /// A non-deterministic verifier supplied a semantic assessment.
+    SemanticallyJudged,
+    /// No verifier has examined the claim.
+    Unchecked,
+    /// A current verifier result reports failure.
+    Failing,
+}
+
+impl VerificationCoverageClass {
+    /// Canonical token used by projections and exporters.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::MechanicallyChecked => "mechanically_checked",
+            Self::SemanticallyJudged => "semantically_judged",
+            Self::Unchecked => "unchecked",
+            Self::Failing => "failing",
+        }
+    }
+}
+
+/// Claim surface covered by verification records.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationCoverageTarget {
+    /// The claim exposes a structured proposition.
+    Proposition,
+    /// Only the claim's text statement is available.
+    Statement,
+}
+
+impl VerificationCoverageTarget {
+    /// Canonical token used by projections and exporters.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Proposition => "proposition",
+            Self::Statement => "statement",
+        }
+    }
+}
+
+/// One current entry in a claim's derived verification coverage.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct VerificationCoverageEntry {
+    class: VerificationCoverageClass,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    record_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verifier_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verifier_version: Option<String>,
+    deterministic: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<String>,
+}
+
+impl VerificationCoverageEntry {
+    /// Coverage classification.
+    pub fn class(&self) -> VerificationCoverageClass {
+        self.class
+    }
+
+    /// Verification record behind this entry, absent only when unchecked.
+    pub fn record_id(&self) -> Option<&str> {
+        self.record_id.as_deref()
+    }
+
+    /// Verifier identifier behind this entry, absent only when unchecked.
+    pub fn verifier_id(&self) -> Option<&str> {
+        self.verifier_id.as_deref()
+    }
+
+    /// Verifier version behind this entry, absent only when unchecked.
+    pub fn verifier_version(&self) -> Option<&str> {
+        self.verifier_version.as_deref()
+    }
+
+    /// Whether the backing verifier is deterministic.
+    pub fn deterministic(&self) -> bool {
+        self.deterministic
+    }
+
+    /// Lowercase verification result, absent only when unchecked.
+    pub fn result(&self) -> Option<&str> {
+        self.result.as_deref()
+    }
+
+    fn verifier_reference(&self) -> Option<String> {
+        Some(format!(
+            "{}@{}",
+            self.verifier_id.as_deref()?,
+            self.verifier_version.as_deref()?
+        ))
+    }
+}
+
+/// Current verification coverage derived from a claim and its append-only
+/// verification records. It is a read view, never a separately persisted
+/// report.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct VerificationCoverage {
+    claim_id: String,
+    target: VerificationCoverageTarget,
+    entries: Vec<VerificationCoverageEntry>,
+}
+
+impl VerificationCoverage {
+    /// Derive the current coverage view.
+    ///
+    /// Selects the newest logic version per verifier, classifies deterministic
+    /// and semantic checks, retains failures, and emits one explicit unchecked
+    /// entry when no verifier has run.
+    pub fn derive(claim: &crate::Claim, records: &VerificationRecordStore) -> Self {
+        let mut current: BTreeMap<&str, &VerificationRecord> = BTreeMap::new();
+        for record in records.records_for_claim(claim.id()) {
+            current
+                .entry(record.verifier_id())
+                .and_modify(|selected| {
+                    if verification_authority_order(record, selected).is_gt() {
+                        *selected = record;
+                    }
+                })
+                .or_insert(record);
+        }
+        let mut entries: Vec<VerificationCoverageEntry> = current
+            .into_values()
+            .map(VerificationCoverageEntry::from_record)
+            .collect();
+        if entries.is_empty() {
+            entries.push(VerificationCoverageEntry {
+                class: VerificationCoverageClass::Unchecked,
+                record_id: None,
+                verifier_id: None,
+                verifier_version: None,
+                deterministic: false,
+                result: None,
+            });
+        }
+
+        Self {
+            claim_id: claim.id().as_str().to_owned(),
+            target: if claim.proposition().is_some() {
+                VerificationCoverageTarget::Proposition
+            } else {
+                VerificationCoverageTarget::Statement
+            },
+            entries,
+        }
+    }
+
+    /// Covered claim identifier.
+    pub fn claim_id(&self) -> &str {
+        self.claim_id.as_str()
+    }
+
+    /// Whether records cover a proposition or a text-only statement.
+    pub fn target(&self) -> VerificationCoverageTarget {
+        self.target
+    }
+
+    /// Current coverage entries in stable verifier order.
+    pub fn entries(&self) -> &[VerificationCoverageEntry] {
+        &self.entries
+    }
+
+    /// Additive graph properties used on projected claim nodes.
+    pub fn to_property_map(&self) -> PropertyMap {
+        let mut properties = PropertyMap::new();
+        properties.insert(
+            "verification_coverage".to_owned(),
+            PropertyValue::StringList(
+                self.entries
+                    .iter()
+                    .map(|entry| entry.class.as_str().to_owned())
+                    .collect(),
+            ),
+        );
+        properties.insert(
+            "verification_coverage_target".to_owned(),
+            PropertyValue::String(self.target.as_str().to_owned()),
+        );
+        properties.insert(
+            "verification_coverage_unchecked".to_owned(),
+            PropertyValue::Bool(
+                self.entries
+                    .iter()
+                    .any(|entry| entry.class == VerificationCoverageClass::Unchecked),
+            ),
+        );
+        for (name, predicate) in [
+            (
+                "verification_coverage_mechanical",
+                VerificationCoverageEntry::is_mechanical as fn(&VerificationCoverageEntry) -> bool,
+            ),
+            (
+                "verification_coverage_semantic",
+                VerificationCoverageEntry::is_semantic as fn(&VerificationCoverageEntry) -> bool,
+            ),
+            (
+                "verification_coverage_failing",
+                VerificationCoverageEntry::is_failing as fn(&VerificationCoverageEntry) -> bool,
+            ),
+        ] {
+            properties.insert(
+                name.to_owned(),
+                PropertyValue::StringList(
+                    self.entries
+                        .iter()
+                        .filter(|entry| predicate(entry))
+                        .filter_map(VerificationCoverageEntry::verifier_reference)
+                        .collect(),
+                ),
+            );
+        }
+        properties
+    }
+}
+
+impl VerificationCoverageEntry {
+    fn from_record(record: &VerificationRecord) -> Self {
+        Self {
+            class: record.coverage_class(),
+            record_id: Some(record.id().as_str().to_owned()),
+            verifier_id: Some(record.verifier_id().to_owned()),
+            verifier_version: Some(record.verifier_version().to_owned()),
+            deterministic: record.deterministic(),
+            result: Some(record.result().as_str().to_owned()),
+        }
+    }
+
+    fn is_mechanical(&self) -> bool {
+        self.record_id.is_some() && self.deterministic
+    }
+
+    fn is_semantic(&self) -> bool {
+        self.record_id.is_some() && !self.deterministic
+    }
+
+    fn is_failing(&self) -> bool {
+        self.class == VerificationCoverageClass::Failing
+    }
+}
+
 /// What a verification record examined.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerificationInputs {
@@ -282,6 +532,19 @@ impl VerificationRecord {
     /// Result.
     pub fn result(&self) -> VerificationResult {
         self.result
+    }
+
+    /// Classification contributed by this record to the current coverage
+    /// view. Failures remain visibly failing while the deterministic flag
+    /// continues to expose their mechanical or semantic authority.
+    pub fn coverage_class(&self) -> VerificationCoverageClass {
+        if self.result == VerificationResult::Fail {
+            VerificationCoverageClass::Failing
+        } else if self.deterministic {
+            VerificationCoverageClass::MechanicallyChecked
+        } else {
+            VerificationCoverageClass::SemanticallyJudged
+        }
     }
 
     /// Rationale, when given.

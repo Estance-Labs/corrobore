@@ -12,7 +12,8 @@ use graph_core::{
     BitemporalStamp, ClaimAnalyticalTarget, ClaimId, ClaimInput, ClaimLink, ClaimLinkKind,
     ClaimLinkSource, ClaimStatement, ClaimTarget, EpistemicStores, EvidenceRecordStore,
     EvidenceSourceType, Graph, ObservationId, ObservationInput, ObservationModality,
-    ResolutionInputs, SourceId, SourceInput, TemporalTimestamp, resolve_claim_verdict,
+    ResolutionInputs, SourceId, SourceInput, TemporalTimestamp, VerificationInputs,
+    VerificationRecord, VerificationRecordId, VerificationResult, resolve_claim_verdict,
 };
 
 fn ts(value: &str) -> TemporalTimestamp {
@@ -29,9 +30,14 @@ fn projection() -> Graph {
             EvidenceSourceType::Document,
         ))
         .unwrap();
-    for (index, kind) in [ClaimLinkKind::Supports, ClaimLinkKind::Refutes]
-        .into_iter()
-        .enumerate()
+    for (index, kind) in [
+        ClaimLinkKind::Supports,
+        ClaimLinkKind::Refutes,
+        ClaimLinkKind::Supports,
+        ClaimLinkKind::Refutes,
+    ]
+    .into_iter()
+    .enumerate()
     {
         let observation = ObservationId::new(format!("observation--{index}")).unwrap();
         stores
@@ -87,6 +93,36 @@ fn projection() -> Graph {
         .unwrap();
         stores.claims = claims;
         stores.verdicts = verdicts;
+
+        let coverage_record = match index {
+            0 => Some(("verifier.identifier-syntax", true, VerificationResult::Pass)),
+            1 => Some((
+                "fr.estance.corrobore.domain.cti.claim.verify",
+                false,
+                VerificationResult::Pass,
+            )),
+            2 => None,
+            3 => Some(("verifier.schema-constraint", true, VerificationResult::Fail)),
+            _ => unreachable!(),
+        };
+        if let Some((verifier_id, deterministic, result)) = coverage_record {
+            stores
+                .verifications
+                .append(VerificationRecord::new(
+                    VerificationRecordId::new(format!("verification--{index}")).unwrap(),
+                    verifier_id,
+                    "1.0.0",
+                    deterministic,
+                    VerificationInputs::for_claim(claim),
+                    result,
+                    BitemporalStamp::new(
+                        ts("2026-08-01T00:00:00Z"),
+                        ts(&format!("2026-08-30T11:0{index}:00Z")),
+                    )
+                    .unwrap(),
+                ))
+                .unwrap();
+        }
     }
     let mut graph = Graph::new();
     graph.replace_epistemic_stores(stores);
@@ -117,7 +153,7 @@ fn claims_expose_their_verdict_state_and_lifecycle_projection_through_match() {
     let rows = records(
         "MATCH (c:Claim) RETURN c.claim_id, c.verdict_state, c.claim_status ORDER BY c.claim_id ASC",
     );
-    assert_eq!(rows.len(), 2);
+    assert_eq!(rows.len(), 4);
     assert_eq!(rows[0]["c.claim_id"], "claim--0");
     assert_eq!(rows[0]["c.verdict_state"], "supported");
     assert_eq!(rows[0]["c.claim_status"], "supported");
@@ -130,7 +166,7 @@ fn verdicts_and_sources_are_readable_as_vocabulary_nodes() {
     let verdicts = records(
         "MATCH (v:Verdict) RETURN v.verdict_claim, v.verdict_state ORDER BY v.verdict_claim ASC",
     );
-    assert_eq!(verdicts.len(), 2);
+    assert_eq!(verdicts.len(), 4);
     assert_eq!(verdicts[1]["v.verdict_state"], "refuted");
 
     let sources = records("MATCH (s:Source) RETURN s.source_uri");
@@ -142,12 +178,38 @@ fn verdicts_and_sources_are_readable_as_vocabulary_nodes() {
 
     let observations =
         records("MATCH (o:Observation) RETURN o.observation_source ORDER BY o.observation_id ASC");
-    assert_eq!(observations.len(), 2);
+    assert_eq!(observations.len(), 4);
     assert_eq!(observations[0]["o.observation_source"], "source--report");
 
     let transitions = records(
         "MATCH (t:StateTransition) RETURN t.transition_to_state ORDER BY t.transition_to_state ASC",
     );
-    assert_eq!(transitions.len(), 2);
+    assert_eq!(transitions.len(), 4);
     assert_eq!(transitions[0]["t.transition_to_state"], "refuted");
+}
+
+#[test]
+fn claim_and_verification_nodes_expose_queryable_coverage() {
+    let claims = records(
+        "MATCH (c:Claim) RETURN c.claim_id, c.verification_coverage, c.verification_coverage_unchecked ORDER BY c.claim_id ASC",
+    );
+    assert_eq!(claims[0]["c.verification_coverage"], "mechanically_checked");
+    assert_eq!(claims[1]["c.verification_coverage"], "semantically_judged");
+    assert_eq!(claims[2]["c.verification_coverage"], "unchecked");
+    assert_eq!(claims[2]["c.verification_coverage_unchecked"], "true");
+    assert_eq!(claims[3]["c.verification_coverage"], "failing");
+
+    let verifications = records(
+        "MATCH (v:VerificationRecord) RETURN v.verification_claim, v.verification_coverage_class ORDER BY v.verification_claim ASC",
+    );
+    assert_eq!(verifications.len(), 3);
+    assert_eq!(
+        verifications[0]["v.verification_coverage_class"],
+        "mechanically_checked"
+    );
+    assert_eq!(
+        verifications[1]["v.verification_coverage_class"],
+        "semantically_judged"
+    );
+    assert_eq!(verifications[2]["v.verification_coverage_class"], "failing");
 }

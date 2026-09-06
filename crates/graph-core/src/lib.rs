@@ -360,9 +360,10 @@ pub use validation::{
 pub use verdict::{
     CLAIM_UNREACHABLE_EVIDENCE_CODE, ReachabilityGap, ResolutionInputs, ResolutionOutcome,
     StateTransition, TransitionTrigger, VERIFICATION_AUTHORITY_DISAGREEMENT_CODE, Verdict,
-    VerdictAsOf, VerdictState, VerdictStore, VerificationDisagreement, VerificationInputs,
-    VerificationRecord, VerificationRecordStore, VerificationResult, lifecycle_token,
-    project_verdict_state, resolve_claim_verdict,
+    VerdictAsOf, VerdictState, VerdictStore, VerificationCoverage, VerificationCoverageClass,
+    VerificationCoverageEntry, VerificationCoverageTarget, VerificationDisagreement,
+    VerificationInputs, VerificationRecord, VerificationRecordStore, VerificationResult,
+    lifecycle_token, project_verdict_state, resolve_claim_verdict,
 };
 pub use verification_probes::{
     ProbeAnswer, ProbeKind, ProbeRegistry, ProbeStatus, ProbeTransition, VerificationProbe,

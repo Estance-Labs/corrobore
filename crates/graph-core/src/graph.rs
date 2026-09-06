@@ -452,6 +452,9 @@ impl Graph {
             if let Some(proposition) = claim.proposition() {
                 properties.extend(proposition.to_property_map());
             }
+            let verification_coverage =
+                crate::VerificationCoverage::derive(claim, &stores.verifications);
+            properties.extend(verification_coverage.to_property_map());
             if let Some(verdict) = stores.verdicts.current_verdict(claim.id()) {
                 properties.insert(
                     "verdict_state".to_owned(),
@@ -510,6 +513,8 @@ impl Graph {
             let Some(target_node) = claim_nodes.get(claim_id.as_str()).cloned() else {
                 continue;
             };
+            let verification_coverage =
+                crate::VerificationCoverage::derive(claim, &stores.verifications);
             for verdict in stores.verdicts.verdicts_for_claim(claim_id) {
                 let node_id = projection.create_node(with_properties(
                     &["Verdict", EpistemicNodeKind::Assessment.canonical_label()],
@@ -522,12 +527,30 @@ impl Graph {
                 )?)?;
             }
             for record in stores.verifications.records_for_claim(claim_id) {
+                let mut properties = record.to_property_map();
+                properties.insert(
+                    "verification_coverage_class".to_owned(),
+                    PropertyValue::String(record.coverage_class().as_str().to_owned()),
+                );
+                properties.insert(
+                    "verification_coverage_target".to_owned(),
+                    PropertyValue::String(verification_coverage.target().as_str().to_owned()),
+                );
+                properties.insert(
+                    "verification_coverage_current".to_owned(),
+                    PropertyValue::Bool(
+                        verification_coverage
+                            .entries()
+                            .iter()
+                            .any(|entry| entry.record_id() == Some(record.id().as_str())),
+                    ),
+                );
                 let node_id = projection.create_node(with_properties(
                     &[
                         "VerificationRecord",
                         EpistemicNodeKind::Assessment.canonical_label(),
                     ],
-                    record.to_property_map(),
+                    properties,
                 ))?;
                 projection.create_relationship(RelationshipInput::new(
                     node_id,
