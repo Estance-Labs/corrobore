@@ -63,6 +63,11 @@ pub struct SourceInput {
     artifact_sha256: Option<String>,
     signature: Option<String>,
     parent_source: Option<SourceId>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::SourceDependencySignals::is_empty"
+    )]
+    dependency_signals: crate::SourceDependencySignals,
 }
 
 impl SourceInput {
@@ -78,7 +83,14 @@ impl SourceInput {
             artifact_sha256: None,
             signature: None,
             parent_source: None,
+            dependency_signals: crate::SourceDependencySignals::default(),
         }
+    }
+
+    /// Record explicit dependencies used by source clustering.
+    pub fn with_dependency_signals(mut self, signals: crate::SourceDependencySignals) -> Self {
+        self.dependency_signals = signals;
+        self
     }
 
     /// Set the publisher or origin organisation.
@@ -123,6 +135,7 @@ impl SourceInput {
     ///
     /// [`GraphError::InvalidPropertyValue`] naming the offending field.
     fn validate(&self) -> Result<(), GraphError> {
+        self.dependency_signals.validate()?;
         if self.uri.trim().is_empty() {
             return Err(GraphError::InvalidPropertyValue(
                 "source uri must not be empty".to_owned(),
@@ -175,6 +188,11 @@ pub struct Source {
     artifact_sha256: Option<String>,
     signature: Option<String>,
     parent_source: Option<SourceId>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::SourceDependencySignals::is_empty"
+    )]
+    dependency_signals: crate::SourceDependencySignals,
     supersedes: Option<SourceVersionId>,
     derived_from_legacy: bool,
 }
@@ -317,6 +335,11 @@ impl Source {
         properties
     }
 
+    /// Recorded dependency signals for this immutable source version.
+    pub fn dependency_signals(&self) -> &crate::SourceDependencySignals {
+        &self.dependency_signals
+    }
+
     /// Whether `input` describes the same descriptive content as this
     /// version, ignoring version bookkeeping and the legacy marker.
     fn matches_input(&self, input: &SourceInput) -> bool {
@@ -329,6 +352,7 @@ impl Source {
             && self.artifact_sha256 == input.artifact_sha256
             && self.signature == input.signature
             && self.parent_source == input.parent_source
+            && self.dependency_signals == input.dependency_signals
     }
 }
 
@@ -586,6 +610,7 @@ impl SourceStore {
             artifact_sha256: input.artifact_sha256,
             signature: input.signature,
             parent_source: input.parent_source,
+            dependency_signals: input.dependency_signals,
             supersedes,
             derived_from_legacy,
         })

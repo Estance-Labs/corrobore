@@ -126,6 +126,27 @@ mechanical, semantic, unchecked, and failing coverage on projected claim and
 verification nodes and inside STIX/FIMI lineage, without persisting a second
 report or changing precedence when a domain pack is absent.
 
+Source independence (WS-D item 2) is reported as dependency components, not a
+bounded confidence score. Resolution assigns `EvidenceLink::independence_cluster`
+from source identity and ancestry, publisher, upstream citations, artifact
+identity, and extraction run or qualified model pipeline. Additional source
+signals are carried by `SourceDependencySignals`; existing evidence extraction
+metadata is also consumed. Near-duplicate artifacts require an explicit digest
+reference and attributed reason; similar-looking SHA-256 strings never imply
+similar content.
+
+`Verdict::source_independence()` retains an explainable snapshot, including
+membership positions in `ClaimStore::claim_links()` and the signal connecting
+each pair. Its `supporting_cluster_count()` counts components with supporting
+links. Separate components mean no recorded dependency, not proven independence;
+links with no assignable provenance get explicit unknown-independence singletons.
+Projected verdicts expose `verdict_source_independence_supporting_clusters` and
+`verdict_source_independence_unknown_clusters`. The bounded
+`confidence_dimensions.source_independence` stays absent until a scoring policy
+is defined. A structure change appends a verdict snapshot even if the state
+stays the same; it does not append a false state transition. Weighting and
+authority remain outside this component.
+
 ## Durability and transport boundaries
 
 The current HTTP runtime keeps its graph in process. Session metadata and JSONL logs are durable on disk, while `graph-storage` provides the append-only storage and pager building blocks used by lower-level integrations. `corrobore-ingest` deliberately imports through HTTP instead of depending on graph internals.

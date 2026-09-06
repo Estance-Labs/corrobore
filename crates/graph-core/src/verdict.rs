@@ -760,6 +760,8 @@ pub struct Verdict {
     confidence_dimensions: ConfidenceDimensions,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     dimension_migration_findings: Vec<DimensionMigrationFinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_independence: Option<crate::SourceIndependence>,
     policy_version: String,
     stamp: BitemporalStamp,
 }
@@ -806,6 +808,8 @@ struct StoredVerdict {
     confidence_dimensions: BTreeMap<String, Option<Confidence>>,
     #[serde(default)]
     dimension_migration_findings: Vec<DimensionMigrationFinding>,
+    #[serde(default)]
+    source_independence: Option<crate::SourceIndependence>,
     policy_version: String,
     stamp: BitemporalStamp,
 }
@@ -830,6 +834,7 @@ impl TryFrom<StoredVerdict> for Verdict {
             state: stored.state,
             confidence_dimensions,
             dimension_migration_findings: stored.dimension_migration_findings,
+            source_independence: stored.source_independence,
             policy_version: stored.policy_version,
             stamp: stored.stamp,
         })
@@ -850,6 +855,11 @@ impl Verdict {
     /// Computed state.
     pub fn state(&self) -> VerdictState {
         self.state
+    }
+
+    /// Dependency structure behind the active evidence links, separately from bounded scores.
+    pub fn source_independence(&self) -> Option<&crate::SourceIndependence> {
+        self.source_independence.as_ref()
     }
 
     /// Confidence dimensions.
@@ -903,6 +913,16 @@ impl Verdict {
             "verdict_transaction_time".to_owned(),
             PropertyValue::String(self.stamp.transaction_time.as_str().to_owned()),
         );
+        if let Some(report) = &self.source_independence {
+            properties.insert(
+                "verdict_source_independence_supporting_clusters".to_owned(),
+                PropertyValue::Integer(report.supporting_cluster_count() as i64),
+            );
+            properties.insert(
+                "verdict_source_independence_unknown_clusters".to_owned(),
+                PropertyValue::Integer(report.unknown_cluster_count() as i64),
+            );
+        }
         for (name, value) in self.confidence_dimensions.present_values() {
             properties.insert(
                 format!("verdict_dimension_{name}"),
@@ -1132,6 +1152,7 @@ impl VerdictStore {
             state,
             confidence_dimensions,
             dimension_migration_findings: Vec::new(),
+            source_independence: None,
             policy_version,
             stamp,
         });
@@ -1273,7 +1294,7 @@ impl ResolutionOutcome {
         self.state
     }
 
-    /// Whether a new verdict and transition were appended.
+    /// Whether a new verdict was appended (a transition requires a changed state).
     pub fn changed(&self) -> bool {
         self.changed
     }
@@ -1453,6 +1474,14 @@ pub fn resolve_claim_verdict(
     let policy_version = policy_version.into();
     let as_of = VerdictAsOf::new(stamp.valid_from.clone(), stamp.transaction_time.clone());
 
+    let source_independence = claims.assign_independence_clusters(
+        claim_id,
+        &as_of,
+        inputs.evidence,
+        inputs.observations,
+        inputs.sources,
+    )?;
+
     let mut support = 0_usize;
     let mut refute = 0_usize;
     let mut superseded = false;
@@ -1583,7 +1612,12 @@ pub fn resolve_claim_verdict(
     };
 
     let previous = verdicts.current_verdict(claim_id).map(Verdict::state);
-    if previous == Some(state) {
+    if previous == Some(state)
+        && verdicts
+            .current_verdict(claim_id)
+            .and_then(Verdict::source_independence)
+            == Some(&source_independence)
+    {
         return Ok(ResolutionOutcome {
             claim_id: claim_id.clone(),
             state,
@@ -1618,15 +1652,24 @@ pub fn resolve_claim_verdict(
         policy_version,
         stamp.clone(),
     )?;
-    verdicts.append_transition(StateTransition {
-        id: transition_id,
-        claim_id: claim_id.clone(),
-        from_state: previous,
-        to_state: state,
-        trigger,
-        superseding_verdict_id: Some(verdict_id.clone()),
-        stamp,
-    })?;
+    // A new dependency snapshot is a new verdict even when its state is unchanged.
+    // Preserve prior snapshots; only actual state changes create transitions.
+    verdicts
+        .verdicts
+        .last_mut()
+        .expect("just appended verdict")
+        .source_independence = Some(source_independence);
+    if previous != Some(state) {
+        verdicts.append_transition(StateTransition {
+            id: transition_id,
+            claim_id: claim_id.clone(),
+            from_state: previous,
+            to_state: state,
+            trigger,
+            superseding_verdict_id: Some(verdict_id.clone()),
+            stamp,
+        })?;
+    }
 
     if let Some(gap) = &gate {
         verdicts.reachability_gaps.push(gap.clone());
