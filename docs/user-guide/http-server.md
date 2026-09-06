@@ -1201,3 +1201,38 @@ JSON output includes matched counts, stop reason, entries, the log path, and aud
 Persists the session in `stopped` state and returns its id, status, and update time.
 
 The machine-readable definitions are in the [OpenAPI specification](../api/openapi.yaml).
+
+## `GET /v1/claims/{id}/audit`
+
+Returns retained claim provenance in one authenticated read. `observations`
+contains the original payload and span metadata; `evidence_links`,
+`link_membership`, and the stored `explanation` connect support and refutation
+to dependency clusters. Link indices refer to the append-only claim-link store,
+not positions in the sorted response. Historical cluster references remain absent
+when they were not recorded; cluster membership is never recomputed here.
+
+`reconciliations`, `merge_undos`, `candidates`, and `promotions` expose exact
+provenance associations and repair predecessors. Sharing an extraction run or
+observation is not treated as proof of influence. Ingestion integrations can
+record exact associations through `Graph::link_claim_audit_record`; missing
+associations are reported in `unverified_steps`. `mentions` contains contextual
+mentions of the included observations.
+
+`current_verdict`, `explanation`, `verdict_history`, `state_transitions`, and
+`claim_decisions` answer why the claim has its stored status and what changed.
+`verifications` and `coverage` distinguish mechanical, semantic, failing and
+unchecked steps. Missing records or stages remain explicit in `unverified_steps`;
+a missing verdict is `null`. Claim-source links are followed transitively, with
+cycles bounded by visited claim IDs. Unknown claims return 404.
+
+The read never executes a verifier, resolver, or ingestion pipeline. Repeated
+reads over unchanged persisted state return the same payload. Set-like arrays
+are sorted deterministically; decision and verdict histories retain ledger order.
+
+## `GET /v1/epistemic/projection`
+
+Returns the persisted-snapshot representation of the ephemeral epistemic graph
+projection: sources, observations, claims, stored verdicts and their relations.
+The authenticated read exposes the same projection used by epistemic queries.
+It does not alter canonical records or resolve new verdicts. Projection-local
+node identifiers are not canonical entity identifiers.

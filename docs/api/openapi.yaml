@@ -58,6 +58,71 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorEnvelope'
   schemas:
+    ClaimAuditPath:
+      type: object
+      description: Stored provenance only; no resolver or verifier execution. Arrays of records are deterministic; histories retain ledger order.
+      required: [claim, current_verdict, explanation, related_claims, evidence_links, link_membership, contradictions, observations, source_versions, evidence, mentions, reconciliations, merge_undos, verifications, coverage, verdict_history, state_transitions, claim_decisions, verification_disagreements, candidates, promotions, unverified_steps]
+      properties:
+        claim: {type: object, additionalProperties: true}
+        current_verdict: {type: [object, 'null'], additionalProperties: true}
+        explanation: {type: [object, 'null'], additionalProperties: true}
+        related_claims:
+          type: array
+          items: {type: object, additionalProperties: true}
+        evidence_links:
+          type: array
+          items: {type: object, additionalProperties: true}
+        link_membership:
+          type: array
+          items: {type: object, additionalProperties: true}
+        contradictions:
+          type: array
+          items: {type: object, additionalProperties: true}
+        observations:
+          type: array
+          items: {type: object, additionalProperties: true}
+        source_versions:
+          type: array
+          items: {type: object, additionalProperties: true}
+        evidence:
+          type: array
+          items: {type: object, additionalProperties: true}
+        mentions:
+          type: array
+          items: {type: object, additionalProperties: true}
+        reconciliations:
+          type: array
+          items: {type: object, additionalProperties: true}
+        merge_undos:
+          type: array
+          items: {type: object, additionalProperties: true}
+        verifications:
+          type: array
+          items: {type: object, additionalProperties: true}
+        coverage:
+          type: array
+          items: {type: object, additionalProperties: true}
+        verdict_history:
+          type: array
+          items: {type: object, additionalProperties: true}
+        state_transitions:
+          type: array
+          items: {type: object, additionalProperties: true}
+        claim_decisions:
+          type: array
+          items: {type: object, additionalProperties: true}
+        verification_disagreements:
+          type: array
+          items: {type: object, additionalProperties: true}
+        candidates:
+          type: array
+          items: {type: object, additionalProperties: true}
+        promotions:
+          type: array
+          items: {type: object, additionalProperties: true}
+        unverified_steps:
+          type: array
+          items: {type: object, additionalProperties: true}
     ReadinessResponse:
       type: object
       required: [status, ready, service, lifecycle_state, checks]
@@ -1674,6 +1739,39 @@ paths:
                             ready: {type: boolean}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/BadRequest'}
+
+  /v1/claims/{id}/audit:
+    get:
+      operationId: getClaimAuditPath
+      summary: Read retained claim provenance, stored verdict and unchecked steps
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Deterministic read-only view of stored records
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ClaimAuditPath'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {description: Unknown claim}
+
+  /v1/epistemic/projection:
+    get:
+      operationId: getEpistemicProjection
+      summary: Read the epistemic graph projection without resolving verdicts
+      responses:
+        '200':
+          description: Deterministic read-only view of stored records
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {description: Unknown claim}
 
   /v1/reconciliations:
     post:
