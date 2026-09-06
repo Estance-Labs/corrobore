@@ -402,6 +402,15 @@ struct PersistentEnginePersistence {
 }
 
 impl EnginePersistence for PersistentEnginePersistence {
+    fn ingestion_metrics(&self) -> Result<Option<graph_core::IngestionMetrics>, String> {
+        self.store
+            .lock()
+            .map_err(|_| "canonical graph store lock is poisoned".to_owned())?
+            .ingestion_metrics()
+            .map(Some)
+            .map_err(|error| error.to_string())
+    }
+
     fn load_graph(&self) -> Result<graph_core::Graph, String> {
         // Persistent startup stays metadata-only. The first request asks the
         // adapter for a bounded pager-backed projection.

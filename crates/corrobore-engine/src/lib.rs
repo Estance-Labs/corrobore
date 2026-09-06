@@ -256,6 +256,12 @@ pub trait EnginePersistence: std::fmt::Debug + Send {
     /// Loads the graph before the engine accepts requests.
     fn load_graph(&self) -> Result<Graph, String>;
 
+    /// Optional metadata-only quality snapshot for paged persistence adapters.
+    /// Snapshot adapters use the engine's already loaded graph by default.
+    fn ingestion_metrics(&self) -> Result<Option<graph_core::IngestionMetrics>, String> {
+        Ok(None)
+    }
+
     /// Atomically commits the graph after a successful mutation.
     fn persist_graph(&mut self, graph: &Graph) -> Result<(), String>;
 
@@ -742,6 +748,18 @@ impl CorroboreEngine {
     /// Returns an immutable view of the runtime graph.
     pub fn graph(&self) -> &Graph {
         self.gateway.graph()
+    }
+
+    /// Read ingestion quality without paging in canonical graph payloads.
+    pub fn ingestion_metrics(&self) -> Result<graph_core::IngestionMetrics, EngineError> {
+        if let Some(adapter) = &self.persistence
+            && let Some(metrics) = adapter
+                .ingestion_metrics()
+                .map_err(EngineError::Persistence)?
+        {
+            return Ok(metrics);
+        }
+        self.graph().ingestion_metrics().map_err(EngineError::Graph)
     }
 
     /// Hydrates the complete current graph from a configured paged persistence

@@ -292,6 +292,10 @@ impl CandidateStore {
     pub fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
+    /// Every immutable candidate version, including repairs and promoted inputs.
+    pub fn records(&self) -> &[CandidateInput] {
+        &self.records
+    }
     /// Look up the original proposal, including after promotion.
     pub fn get(&self, id: &CandidateId) -> Option<&CandidateInput> {
         self.records.iter().find(|r| r.id() == id)

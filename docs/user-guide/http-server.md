@@ -197,6 +197,63 @@ metrics grouped only by bounded query class. Storage index counts include the
 payload-free `node_access` and `relationship_access` projections used to
 authorize candidates before page-in.
 
+### Ingestion quality (WS-C)
+
+The same public endpoint exports bounded, aggregate `corrobore_ingestion_*`
+gauges. Accuracy requires independently reviewed reference labels; passing a
+constraint or promoting a candidate is not proof of semantic correctness.
+
+| Series (after `corrobore_ingestion_`) | Definition |
+| --- | --- |
+| `extraction_accuracy` | Correct reviewed original candidates / reviewed original candidates; excludes repair versions. |
+| `repair_success_rate` | Incorrect-to-correct transitions / fully reviewed repair transitions. |
+| `false_repair_rate` | Correct-to-incorrect transitions / fully reviewed repair transitions. |
+| `reconciliation_accuracy{outcome="merge\|distinct\|abstain"}` | Decisions matching their expected outcome / reviewed decisions **predicted** as that outcome. This is per-outcome precision, not recall. |
+| `abstain_rate` | All recorded abstentions / all recorded decisions, regardless of evaluation coverage. |
+| `extraction_count`, `reviewed_extraction_count` | Original candidate population and labeled denominator. |
+| `repair_count`, `reviewed_repair_count` | All repair links and links with labels for both endpoints. |
+| `successful_repair_count`, `false_repair_count` | Numerators of the two repair rates. |
+| `reconciliation_count{outcome="…"}`, `reviewed_reconciliation_count{outcome="…"}` | Observed and reviewed populations, using only the three fixed outcome labels. |
+| `snapshot_available` | `1` when the snapshot was read successfully; `0` on lock, storage, evaluation or timeout failure. |
+
+A zero denominator exports `NaN`, not a claim of zero or perfect accuracy.
+An observed engine with no abstentions exports `abstain_rate 0`; an engine with
+no decisions exports `NaN`. Missing evaluations remain visible in the population
+counts and never enter an accuracy denominator. If the snapshot cannot be read,
+only its availability sample is emitted for this metric family.
+
+An unsuccessful repair of an already incorrect candidate is neither a success
+nor a false repair under these definitions. Similarly, a repair that leaves a
+correct candidate correct is neither. The two rates therefore need not sum to
+one. Each link in a repair chain is measured once; repeated scrape requests or
+identical assessment retries do not create new samples. The seeded over-repairing
+fixture has extraction accuracy `0.5`, repair success `0.25`, and false repair
+`0.5`, despite all repaired candidates passing their structural constraints.
+
+Ingestion/evaluation adapters record reference labels through
+`Graph::record_candidate_assessment(CandidateAssessment::new(candidate_id,
+correct, reviewer, reference))` and
+`Graph::record_reconciliation_assessment(ReconciliationAssessment::new(record_id,
+expected_outcome, reviewer, reference))`, inside the engine's atomic mutation
+boundary. `reference` is a nonblank reference to the evaluation evidence or
+labeled corpus, and `reviewer` attributes the supplied label. Establishing that
+reference independently is the evaluator's responsibility. This issue adds no
+HTTP label-writing route or automatic correctness classifier.
+
+One immutable assessment is retained per candidate version or reconciliation
+record; an identical retry is accepted and a conflicting assessment is rejected.
+Candidate evaluations are joined through the actual predecessor/repair lineage,
+so a repair is reviewed only when both versions have labels. Assessments persist
+with the governed stores and restoration rejects missing targets and duplicate
+labels. Historical decisions remain counted after a merge is undone; undo alone
+does not infer an expected outcome or erase an evaluation.
+
+Persistent metric reads use the governed metadata sidecar without warming
+canonical node or relationship payloads. The metrics include no candidate,
+reviewer, reference, workspace or record identifiers. They describe the retained
+graph history, not a sliding time window; counts are gauges because replacing
+or restoring the graph can change the observed population.
+
 ## Bounded CLI status probe
 
 `corrobore server status` loads the same host, port, and timeout configuration

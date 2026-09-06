@@ -461,3 +461,9 @@ pub use verdict::resolve_current_claim_verdict;
 
 mod reconciliation_merge;
 pub use reconciliation_merge::{MergeStore, MergeUndo};
+
+mod ingestion_metrics;
+pub use ingestion_metrics::{
+    CandidateAssessment, EvaluatedCount, IngestionEvaluationStore, IngestionMetrics,
+    ReconciliationAssessment,
+};

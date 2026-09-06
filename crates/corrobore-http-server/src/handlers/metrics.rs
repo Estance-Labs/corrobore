@@ -530,6 +530,7 @@ corrobore_opencti_reconciliation_parity_verified {}\n",
         database.rebuild_records_scanned,
     ));
 
+    append_ingestion_metrics(&mut body, &state).await;
     ([(header::CONTENT_TYPE, PROMETHEUS_CONTENT_TYPE)], body)
 }
 
@@ -556,4 +557,126 @@ fn prometheus_label(value: &str) -> String {
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
         .replace('\n', "\\n")
+}
+
+async fn append_ingestion_metrics(body: &mut String, state: &AppState) {
+    // Read durable governed metadata without warming canonical payloads. Keep
+    // snapshot computation off the async executor; omit samples when it cannot
+    // be read rather than claiming zero observations or perfect quality.
+    let engine = state.engine.clone();
+    let timeout = std::time::Duration::from_millis(state.config.request_timeout_ms);
+    let snapshot = tokio::time::timeout(
+        timeout,
+        tokio::task::spawn_blocking(move || {
+            let engine = engine.try_lock().ok()?;
+            engine.ingestion_metrics().ok()
+        }),
+    )
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .flatten();
+    ingestion_gauge(
+        body,
+        "snapshot_available",
+        "Whether the current ingestion quality snapshot was read successfully.",
+        u8::from(snapshot.is_some()),
+    );
+    let Some(metrics) = snapshot else {
+        return;
+    };
+    ingestion_gauge(
+        body,
+        "extraction_count",
+        "Original candidates, excluding repair versions.",
+        metrics.extraction.total,
+    );
+    ingestion_gauge(
+        body,
+        "reviewed_extraction_count",
+        "Original candidates with an independent reference evaluation.",
+        metrics.extraction.reviewed,
+    );
+    ingestion_gauge(
+        body,
+        "extraction_accuracy",
+        "Correct original extractions divided by reviewed original extractions; NaN without labels.",
+        metrics.extraction.accuracy().unwrap_or(f64::NAN),
+    );
+    ingestion_gauge(
+        body,
+        "repair_count",
+        "Retained repair transitions, including unreviewed transitions.",
+        metrics.repairs,
+    );
+    ingestion_gauge(
+        body,
+        "reviewed_repair_count",
+        "Repair transitions with both endpoints independently evaluated.",
+        metrics.reviewed_repairs,
+    );
+    ingestion_gauge(
+        body,
+        "successful_repair_count",
+        "Incorrect-to-correct repair transitions.",
+        metrics.successful_repairs,
+    );
+    ingestion_gauge(
+        body,
+        "false_repair_count",
+        "Correct-to-incorrect repair transitions.",
+        metrics.false_repairs,
+    );
+    ingestion_gauge(
+        body,
+        "repair_success_rate",
+        "Incorrect-to-correct transitions divided by reviewed repairs; NaN without labels.",
+        metrics.repair_success_rate().unwrap_or(f64::NAN),
+    );
+    ingestion_gauge(
+        body,
+        "false_repair_rate",
+        "Correct-to-incorrect transitions divided by reviewed repairs; NaN without labels.",
+        metrics.false_repair_rate().unwrap_or(f64::NAN),
+    );
+    ingestion_gauge(
+        body,
+        "abstain_rate",
+        "Observed abstentions divided by all reconciliation decisions; NaN without decisions.",
+        metrics.abstain_rate().unwrap_or(f64::NAN),
+    );
+    for (name, help) in [
+        (
+            "reconciliation_count",
+            "Retained decisions by predicted outcome, including unreviewed and reversed decisions.",
+        ),
+        (
+            "reviewed_reconciliation_count",
+            "Decisions with independent expected outcomes, by predicted outcome.",
+        ),
+        (
+            "reconciliation_accuracy",
+            "Matching expected outcomes divided by reviewed predictions of this outcome; NaN without labels.",
+        ),
+    ] {
+        body.push_str(&format!(
+            "# HELP corrobore_ingestion_{name} {help}\n# TYPE corrobore_ingestion_{name} gauge\n"
+        ));
+        for (outcome, counts) in ["merge", "distinct", "abstain"]
+            .into_iter()
+            .zip(&metrics.reconciliation)
+        {
+            let value = match name {
+                "reconciliation_count" => counts.total as f64,
+                "reviewed_reconciliation_count" => counts.reviewed as f64,
+                _ => counts.accuracy().unwrap_or(f64::NAN),
+            };
+            body.push_str(&format!(
+                "corrobore_ingestion_{name}{{outcome=\"{outcome}\"}} {value}\n"
+            ));
+        }
+    }
+}
+fn ingestion_gauge(body: &mut String, name: &str, help: &str, value: impl std::fmt::Display) {
+    body.push_str(&format!("# HELP corrobore_ingestion_{name} {help}\n# TYPE corrobore_ingestion_{name} gauge\ncorrobore_ingestion_{name} {value}\n"));
 }
