@@ -58,6 +58,46 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorEnvelope'
   schemas:
+    StageMeasurement:
+      type: object
+      additionalProperties: false
+      required: [schema_version, measurement_id, stage, producer, inputs, outputs, failures]
+      properties:
+        schema_version: {type: string, const: corrobore-stage-metrics-v1}
+        measurement_id: {type: string, minLength: 1, maxLength: 256}
+        stage: {$ref: '#/components/schemas/PipelineStage'}
+        producer: {type: string, minLength: 1, maxLength: 256}
+        inputs: {type: integer, minimum: 0, maximum: 9007199254740991}
+        outputs: {type: integer, minimum: 0, maximum: 9007199254740991}
+        failures: {type: integer, minimum: 0, maximum: 9007199254740991}
+      description: Completed stage instrumentation batch. Failures are failed input work items (at most inputs), not negative verification results or fact correctness. Identities are bounded to 256 UTF-8 bytes and reject blank/control characters. Retries reuse the entire payload.
+    PipelineStage:
+      type: string
+      enum: [extraction, entity_resolution, retrieval, subgraph_construction, evidence_sufficiency, verifier, verdict]
+    PipelineStageReport:
+      type: object
+      required: [schema_version, run_id, source, stages]
+      properties:
+        schema_version: {type: string, const: corrobore-stage-metrics-v1}
+        run_id: {type: string}
+        source: {type: string, const: stage_instrumentation}
+        stages:
+          type: array
+          minItems: 7
+          maxItems: 7
+          items:
+            type: object
+            required: [stage, input_unit, output_unit, measurements, producers, inputs, outputs, failures]
+            properties:
+              stage: {$ref: '#/components/schemas/PipelineStage'}
+              input_unit: {type: string}
+              output_unit: {type: string}
+              measurements: {type: integer, minimum: 0}
+              producers: {type: array, uniqueItems: true, items: {type: string}}
+              inputs: {type: [integer, 'null'], minimum: 0, maximum: 9007199254740991}
+              outputs: {type: [integer, 'null'], minimum: 0, maximum: 9007199254740991}
+              failures: {type: [integer, 'null'], minimum: 0, maximum: 9007199254740991}
+      description: All seven stages in canonical order. Null counters mean unmeasured, never successful zeroes. Per-engine telemetry is separate from claim evidence and must be archived by the caller before engine shutdown.
     VerificationCoverageEntry:
       type: object
       required: [class, deterministic]
@@ -1824,6 +1864,42 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {description: Unknown claim}
         '422': {description: Malformed submission or unknown fields}
+
+  /v1/metrics/stages/{run_id}:
+    parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 256}
+    get:
+      operationId: getPipelineStageMetrics
+      summary: Read retained stage instrumentation for one run
+      responses:
+        '200':
+          description: Direct versioned stage report
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PipelineStageReport'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {description: No measurements for this run in this engine instance}
+    post:
+      operationId: recordPipelineStageMetrics
+      summary: Record an instrumented stage batch without changing graph evidence
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/StageMeasurement'}
+      responses:
+        '200':
+          description: Updated report; exact retries do not double-count
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PipelineStageReport'}
+        '400': {description: Invalid identity/count, aggregate overflow or conflicting measurement retry}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '422': {description: Unsupported schema version, stage, unknown fields or malformed body}
+        '503': {description: Telemetry capacity reached; previous reports are retained}
 
   /v1/claims/{id}/audit:
     get:

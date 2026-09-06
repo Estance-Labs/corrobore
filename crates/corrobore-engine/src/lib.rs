@@ -508,6 +508,7 @@ impl CorroboreEngineBuilder {
             runtime_policy,
             persistence,
             core_read_metrics: CoreReadMetrics::default(),
+            pipeline_metrics: graph_core::StageMetricsRegistry::default(),
             security_audit_events: Vec::new(),
             advanced_query_cache: BTreeMap::new(),
             memory_recall_traces: BTreeMap::new(),
@@ -525,6 +526,7 @@ pub struct CorroboreEngine {
     runtime_policy: RuntimePolicy,
     persistence: Option<Box<dyn EnginePersistence>>,
     core_read_metrics: CoreReadMetrics,
+    pipeline_metrics: graph_core::StageMetricsRegistry,
     security_audit_events: Vec<SecurityAuditEvent>,
     advanced_query_cache: BTreeMap<String, AggregationResult>,
     memory_recall_traces: BTreeMap<String, RecallResult>,
@@ -541,6 +543,25 @@ impl CorroboreEngine {
     /// Returns a builder for custom engine configuration.
     pub fn builder() -> CorroboreEngineBuilder {
         CorroboreEngineBuilder::default()
+    }
+
+    /// Record a completed instrumented stage batch without mutating evidence.
+    /// Identity retries are exact and per-run counts remain bounded.
+    pub fn record_pipeline_stage(
+        &mut self,
+        run_id: &str,
+        measurement: graph_core::StageMeasurement,
+    ) -> Result<graph_core::PipelineStageReport, graph_core::StageMetricError> {
+        self.pipeline_metrics.record(run_id, measurement)?;
+        self.pipeline_metrics.report(run_id)
+    }
+
+    /// Emit a versioned report from this engine instance's retained stage measurements.
+    pub fn pipeline_stage_report(
+        &self,
+        run_id: &str,
+    ) -> Result<graph_core::PipelineStageReport, graph_core::StageMetricError> {
+        self.pipeline_metrics.report(run_id)
     }
 
     /// Return cumulative low-cardinality metrics for fundamental read classes.

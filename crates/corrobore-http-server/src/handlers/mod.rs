@@ -46,3 +46,5 @@ pub mod reconciliations;
 pub mod claim_audit;
 
 pub mod analyst_decisions;
+
+pub mod pipeline_metrics;

@@ -1009,6 +1009,11 @@ pub fn build_router(state: AppState) -> Router {
             post(crate::handlers::analyst_decisions::submit),
         )
         .route(
+            "/v1/metrics/stages/{run_id}",
+            get(crate::handlers::pipeline_metrics::read)
+                .post(crate::handlers::pipeline_metrics::record),
+        )
+        .route(
             "/v1/claims/{id}/audit",
             get(crate::handlers::claim_audit::audit),
         )

@@ -86,6 +86,7 @@ nav:
     - Cypher Support: user-guide/cypher.md
     - Intelligence Domains: user-guide/domains.md
     - Domain Provider Operations: user-guide/domain-provider-operations.md
+    - Pipeline Stage Metrics: user-guide/stage-metrics.md
     - Claim Audit: user-guide/claim-audit.md
     - Exporters & Validation: user-guide/exporters.md
     - Learned Working Set: user-guide/working-set.md
