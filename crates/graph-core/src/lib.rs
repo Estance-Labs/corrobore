@@ -467,3 +467,6 @@ pub use ingestion_metrics::{
     CandidateAssessment, EvaluatedCount, IngestionEvaluationStore, IngestionMetrics,
     ReconciliationAssessment,
 };
+
+mod claim_audit;
+pub use claim_audit::{ClaimAuditBindings, ClaimAuditReference};

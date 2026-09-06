@@ -1004,6 +1004,14 @@ pub fn build_router(state: AppState) -> Router {
         );
 
     let protected = Router::new()
+        .route(
+            "/v1/claims/{id}/audit",
+            get(crate::handlers::claim_audit::audit),
+        )
+        .route(
+            "/v1/epistemic/projection",
+            get(crate::handlers::claim_audit::projection),
+        )
         .route("/v1/cypher/execute", post(execute_cypher))
         .route("/v1/cypher/read", post(execute_read_cypher))
         .route("/v1/cypher/write", post(execute_write_cypher))
