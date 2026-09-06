@@ -180,6 +180,8 @@ impl EvidenceLocator {
 /// [`EvidenceAttachment`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EvidenceRecord {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    risk_assessment_ids: Vec<String>,
     id: EvidenceId,
     source_ref: String,
     payload: String,
@@ -628,6 +630,8 @@ impl EvidenceAttachment {
 /// attachment targets are registered before allowing an evidence link.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct EvidenceRecordStore {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    risk_assessments: Vec<crate::StoredEvidenceRiskAssessment>,
     records: Vec<EvidenceRecord>,
     attachments: Vec<EvidenceAttachment>,
     known_node_targets: HashSet<NodeId>,
@@ -654,6 +658,7 @@ impl EvidenceRecordStore {
 
         let evidence_id = input.id;
         let record = EvidenceRecord {
+            risk_assessment_ids: Vec::new(),
             id: evidence_id.clone(),
             source_ref: input.source_ref,
             payload: input.payload,
@@ -680,7 +685,9 @@ impl EvidenceRecordStore {
             .iter()
             .find(|existing| existing.id == evidence_id)
         {
-            if existing == &record {
+            let mut immutable_content = existing.clone();
+            immutable_content.risk_assessment_ids.clear();
+            if immutable_content == record {
                 return Ok(evidence_id);
             }
             return Err(GraphError::InvalidPropertyValue(format!(
@@ -863,7 +870,19 @@ impl EvidenceRecordStore {
 
 impl EvidenceRecordStore {
     pub(crate) fn audit_subset(&self, ids: &std::collections::HashSet<EvidenceId>) -> Self {
+        let receipts: HashSet<_> = self
+            .records
+            .iter()
+            .filter(|r| ids.contains(r.id()))
+            .flat_map(|r| r.risk_assessment_ids.iter())
+            .collect();
         Self {
+            risk_assessments: self
+                .risk_assessments
+                .iter()
+                .filter(|r| receipts.contains(&r.id))
+                .cloned()
+                .collect(),
             records: self
                 .records
                 .iter()
@@ -873,6 +892,124 @@ impl EvidenceRecordStore {
             ..Self::default()
         }
     }
+}
+
+impl EvidenceRecord {
+    /// References to shared append-only risk receipts; immutable content is unchanged.
+    pub fn risk_assessment_ids(&self) -> &[String] {
+        &self.risk_assessment_ids
+    }
+}
+impl EvidenceRecordStore {
+    /// Retained assessment receipts, each stored once for all implicated records.
+    pub fn risk_assessments(&self) -> &[crate::StoredEvidenceRiskAssessment] {
+        &self.risk_assessments
+    }
+    /// Resolve an evidence record's retained risk receipts.
+    pub fn risk_assessments_for(&self, id: &EvidenceId) -> Vec<&crate::EvidenceRiskAnnotation> {
+        let Some(record) = self.evidence_by_id(id) else {
+            return Vec::new();
+        };
+        self.risk_assessments
+            .iter()
+            .filter(|r| record.risk_assessment_ids.contains(&r.id))
+            .map(|r| &r.assessment)
+            .collect()
+    }
+    pub(crate) fn retain_risk_assessment(
+        &mut self,
+        assessment: crate::EvidenceRiskAnnotation,
+    ) -> String {
+        let id = risk_receipt_id(&assessment);
+        if !self.risk_assessments.iter().any(|r| r.id == id) {
+            self.risk_assessments
+                .push(crate::StoredEvidenceRiskAssessment {
+                    id: id.clone(),
+                    assessment,
+                });
+            self.risk_assessments.sort_by(|a, b| a.id.cmp(&b.id));
+        }
+        id
+    }
+    pub(crate) fn attach_risk_reference(
+        &mut self,
+        id: &EvidenceId,
+        receipt: &str,
+    ) -> Result<(), GraphError> {
+        let record = self
+            .records
+            .iter_mut()
+            .find(|r| r.id() == id)
+            .ok_or_else(|| GraphError::EvidenceNotFound(id.clone()))?;
+        if !record.risk_assessment_ids.iter().any(|r| r == receipt) {
+            record.risk_assessment_ids.push(receipt.to_owned());
+            record.risk_assessment_ids.sort();
+        }
+        Ok(())
+    }
+    pub(crate) fn validate_risk_references(&self) -> Result<(), GraphError> {
+        let invalid = || {
+            GraphError::InvalidPropertyValue(
+                "invalid evidence risk receipt or provenance reference".into(),
+            )
+        };
+        let record_ids: HashSet<_> = self.records.iter().map(EvidenceRecord::id).collect();
+        let mut receipt_members = std::collections::HashMap::new();
+        for receipt in &self.risk_assessments {
+            let members: HashSet<_> = receipt.assessment.quarantined_evidence_ids.iter().collect();
+            if receipt_members
+                .insert(receipt.id.as_str(), members)
+                .is_some()
+                || risk_receipt_id(&receipt.assessment) != receipt.id
+            {
+                return Err(invalid());
+            }
+            for id in receipt
+                .assessment
+                .finding
+                .evidence_ids
+                .iter()
+                .chain(&receipt.assessment.quarantined_evidence_ids)
+                .chain(
+                    receipt
+                        .assessment
+                        .finding
+                        .witnesses
+                        .iter()
+                        .flat_map(|w| &w.evidence_ids),
+                )
+            {
+                if !record_ids.contains(id) {
+                    return Err(invalid());
+                }
+            }
+        }
+        for record in &self.records {
+            let mut seen = HashSet::new();
+            for id in &record.risk_assessment_ids {
+                if !seen.insert(id) {
+                    return Err(invalid());
+                }
+                let members = receipt_members.get(id.as_str()).ok_or_else(invalid)?;
+                if !members.contains(record.id()) {
+                    return Err(invalid());
+                }
+            }
+        }
+        Ok(())
+    }
+}
+fn risk_receipt_id(assessment: &crate::EvidenceRiskAnnotation) -> String {
+    use sha2::{Digest, Sha256};
+    let bytes =
+        serde_json::to_vec(assessment).expect("risk assessment contains serializable values");
+    format!(
+        "risk-assessment--{}",
+        Sha256::digest(bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    )
 }
 
 #[cfg(test)]

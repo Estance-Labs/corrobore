@@ -42,6 +42,7 @@ impl DomainValidationIssue {
     /// domain severity vocabulary has no informational level.
     pub fn from_validation_record(record: &graph_core::ValidationErrorRecord) -> Self {
         let (kind, id) = match record.target() {
+            graph_core::ValidationTarget::Evidence(id) => ("evidence", id),
             graph_core::ValidationTarget::Node(id) => ("node", id),
             graph_core::ValidationTarget::Relationship(id) => ("relationship", id),
             graph_core::ValidationTarget::Claim(id) => ("claim", id),

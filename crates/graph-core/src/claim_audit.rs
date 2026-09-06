@@ -103,6 +103,7 @@ impl Graph {
         use serde_json::json;
         use std::collections::BTreeSet;
         let stores = self.epistemic_stores();
+        self.evidence_store().validate_risk_references()?;
         let claim = stores.claims.claim_by_id(id)?;
         stores.audit_bindings.validate(stores)?;
         stores.claims.validate_link_indices()?;
@@ -196,6 +197,39 @@ impl Graph {
                     .iter()
                     .map(|id| id.as_str().to_owned()),
             );
+        }
+        // Exact observation bindings and retained risk-group references are
+        // provenance, unlike mere shared-source or extraction-run membership.
+        evidence_ids.extend(
+            self.evidence_store()
+                .records()
+                .iter()
+                .filter(|r| {
+                    r.observation_id()
+                        .is_some_and(|id| observations.contains(id.as_str()))
+                })
+                .map(|r| r.id().as_str().to_owned()),
+        );
+        loop {
+            let before = evidence_ids.len();
+            let mut related = Vec::new();
+            for key in &evidence_ids {
+                if let Some(record) = self.evidence_by_id(&EvidenceId::new(key)?) {
+                    for risk in self.evidence_store().risk_assessments_for(record.id()) {
+                        related.extend(
+                            risk.finding
+                                .evidence_ids
+                                .iter()
+                                .chain(&risk.quarantined_evidence_ids)
+                                .map(|id| id.as_str().to_owned()),
+                        );
+                    }
+                }
+            }
+            evidence_ids.extend(related);
+            if evidence_ids.len() == before {
+                break;
+            }
         }
         let mut sources = BTreeSet::new();
         let mut evidence = Vec::new();
@@ -314,7 +348,11 @@ impl Graph {
                 ClaimLinkKind::Refutes | ClaimLinkKind::Contradicts
             )
         });
-        Ok(json!({
+        let risk_ids: BTreeSet<_> = evidence
+            .iter()
+            .flat_map(|r| r.risk_assessment_ids())
+            .collect();
+        let mut audit = json!({
             "claim":claim,
             "analyst_decisions":stores.analyst_decisions.records_for_claim(id),
             "related_claims":array(claims.iter().filter(|c|c.id()!=id))?,
@@ -338,7 +376,16 @@ impl Graph {
             "candidates":array(candidates)?,
             "promotions":array(promotions)?,
             "unverified_steps":array(gaps)?
-        }))
+        });
+        if !risk_ids.is_empty() {
+            audit["evidence_risk_assessments"] = array(
+                self.evidence_store()
+                    .risk_assessments()
+                    .iter()
+                    .filter(|r| risk_ids.contains(&r.id)),
+            )?;
+        }
+        Ok(audit)
     }
 }
 

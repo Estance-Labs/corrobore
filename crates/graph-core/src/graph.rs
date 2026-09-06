@@ -122,6 +122,7 @@ impl Graph {
     pub fn from_persistence_snapshot(
         snapshot: GraphPersistenceSnapshot,
     ) -> Result<Self, GraphError> {
+        snapshot.evidence.validate_risk_references()?;
         snapshot
             .epistemic
             .mentions

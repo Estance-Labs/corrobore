@@ -545,3 +545,78 @@ fn unknown_policy_never_silently_uses_the_legacy_algorithm() {
     );
     assert_eq!(f.stores, before);
 }
+
+#[test]
+fn evidence_risk_reduces_independence_and_weight_without_overriding_deterministic_failure() {
+    let mut f = Fixture::new();
+    for name in ["source--root", "source--second", "source--third"] {
+        f.add(name, None, ClaimLinkKind::Supports, Some(0.8), Some(1.0));
+        f.evidence
+            .create_evidence(
+                EvidenceInput::new(
+                    EvidenceId::new(format!("evidence--{name}")).expect("id"),
+                    name,
+                    "same copied factual report",
+                )
+                .with_source_id(SourceId::new(name).expect("id"))
+                .with_observation_id(
+                    ObservationId::new(format!("observation--{name}")).expect("id"),
+                ),
+            )
+            .expect("evidence");
+    }
+    let before = f.resolve(CLUSTER_AGGREGATION_POLICY_VERSION);
+    let mut graph = Graph::new();
+    graph.replace_epistemic_stores(f.stores.clone());
+    graph.replace_evidence_store(f.evidence.clone());
+    let features: Vec<_> = graph
+        .evidence_store()
+        .records()
+        .iter()
+        .map(|e| EvidenceRiskFeatures::new(e.id().clone(), "fixture-v1"))
+        .collect();
+    graph
+        .apply_evidence_risks(
+            &f.claim,
+            &features,
+            stamp(),
+            "risk-review",
+            &mut GraphTierRegistry::new(),
+            &mut ImmuneResponder::new(),
+        )
+        .expect("risk application");
+    f.stores = graph.epistemic_stores().clone();
+    f.evidence = graph.evidence_store().clone();
+    let after = f.resolve(CLUSTER_AGGREGATION_POLICY_VERSION);
+    assert!(
+        after
+            .confidence_dimensions()
+            .source_independence
+            .expect("dimension")
+            .value()
+            < before
+                .confidence_dimensions()
+                .source_independence
+                .expect("dimension")
+                .value()
+    );
+    assert!(
+        after
+            .cluster_aggregation()
+            .expect("aggregation")
+            .support_score()
+            .expect("score")
+            .value()
+            < before
+                .cluster_aggregation()
+                .expect("aggregation")
+                .support_score()
+                .expect("score")
+                .value()
+    );
+    f.verifier(VerificationResult::Fail, true);
+    assert_eq!(
+        f.resolve(CLUSTER_AGGREGATION_POLICY_VERSION).state(),
+        VerdictState::Refuted
+    );
+}

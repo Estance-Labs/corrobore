@@ -314,6 +314,9 @@ impl ImmuneResponder {
 /// Map a validation target onto a tier-trackable record.
 fn tier_record_for(target: &ValidationTarget) -> Result<TierRecordRef, GraphError> {
     match target {
+        ValidationTarget::Evidence(value) => Ok(TierRecordRef::Evidence(crate::EvidenceId::new(
+            value.clone(),
+        )?)),
         ValidationTarget::Node(value) => Ok(TierRecordRef::Node(NodeId::new(value.clone())?)),
         ValidationTarget::Relationship(value) => Ok(TierRecordRef::Relationship(
             RelationshipId::new(value.clone())?,

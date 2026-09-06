@@ -40,6 +40,8 @@ pub struct ClusterWeight {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ClusterContribution {
     cluster_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    risk_multiplier: Option<Confidence>,
     support: Option<ClusterWeight>,
     refutation: Option<ClusterWeight>,
 }
@@ -77,12 +79,17 @@ impl ClusterWeight {
     pub fn authority(&self) -> Confidence {
         self.authority
     }
-    /// `(best_strength + increment) * authority` for this component and direction.
+    /// `(best_strength + increment) * authority`, adjusted by the component risk multiplier.
     pub fn contribution(&self) -> Confidence {
         self.contribution
     }
 }
 impl ClusterContribution {
+    /// Risk multiplier applied once to this component; absent means no recorded risk penalty.
+    pub fn risk_multiplier(&self) -> Option<Confidence> {
+        self.risk_multiplier
+    }
+
     /// Identifier shared with the verdict's independence structure.
     pub fn cluster_id(&self) -> &str {
         &self.cluster_id
@@ -179,15 +186,25 @@ pub(crate) fn aggregate_components(
                     .expect("derived cluster member")
             })
         };
+        let risk_multiplier = risk_multiplier(cluster);
+        let apply_risk = |weight: Option<ClusterWeight>| {
+            weight.map(|mut weight| {
+                weight.contribution = bounded(weight.contribution.value() * risk_multiplier);
+                weight
+            })
+        };
         clusters.push(ClusterContribution {
             cluster_id: cluster.id().to_owned(),
-            support: channel(links().filter(|l| l.kind() == ClaimLinkKind::Supports))?,
-            refutation: channel(links().filter(|l| {
+            risk_multiplier: (risk_multiplier < 1.0).then(|| bounded(risk_multiplier)),
+            support: apply_risk(channel(
+                links().filter(|l| l.kind() == ClaimLinkKind::Supports),
+            )?),
+            refutation: apply_risk(channel(links().filter(|l| {
                 matches!(
                     l.kind(),
                     ClaimLinkKind::Refutes | ClaimLinkKind::Contradicts
                 )
-            }))?,
+            }))?),
         });
     }
     let support = combine(
@@ -200,7 +217,7 @@ pub(crate) fn aggregate_components(
             .iter()
             .filter_map(|c| c.refutation.as_ref().map(|w| w.contribution)),
     );
-    let known_supporting_clusters = structure
+    let effective_supporting_clusters = structure
         .clusters()
         .iter()
         .filter(|cluster| {
@@ -216,7 +233,8 @@ pub(crate) fn aggregate_components(
                         == ClaimLinkKind::Supports
                 })
         })
-        .count();
+        .map(risk_multiplier)
+        .sum::<f64>();
     let mut has_temporal = false;
     let mut has_active_temporal = false;
     for link in claims
@@ -243,8 +261,8 @@ pub(crate) fn aggregate_components(
     let dimensions = ConfidenceDimensions {
         evidence_sufficiency: support,
         source_authority: authority.and_then(SourceAuthorityResolution::dimension),
-        source_independence: (known_supporting_clusters > 0).then(|| {
-            bounded(known_supporting_clusters as f64 / (known_supporting_clusters as f64 + 1.0))
+        source_independence: (effective_supporting_clusters > 0.0).then(|| {
+            bounded(effective_supporting_clusters / (effective_supporting_clusters + 1.0))
         }),
         temporal_validity: has_temporal
             .then(|| bounded(if has_active_temporal { 1.0 } else { 0.0 })),
@@ -266,4 +284,14 @@ pub(crate) fn aggregate_components(
         },
         dimensions,
     ))
+}
+
+// Weighting policy stays in aggregation; the independence structure reports
+// observed dependencies without assigning authority or a probability of attack.
+fn risk_multiplier(cluster: &crate::IndependenceCluster) -> f64 {
+    if cluster.has_evidence_risk() {
+        0.5
+    } else {
+        1.0
+    }
 }

@@ -487,3 +487,9 @@ mod evidence_access_metrics;
 pub use evidence_access_metrics::{
     EvidenceAccessError, EvidenceAccessProposal, EvidenceAccessReport, measure_evidence_access,
 };
+
+mod evidence_risk;
+pub use evidence_risk::{
+    EvidenceRiskAnnotation, EvidenceRiskFeatures, EvidenceRiskFinding, EvidenceRiskSignal,
+    EvidenceRiskWitness, StoredEvidenceRiskAssessment, detect_evidence_risks,
+};
