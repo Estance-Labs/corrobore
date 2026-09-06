@@ -1023,6 +1023,22 @@ pub fn build_router(state: AppState) -> Router {
     // 2.3: import routes accept larger multipart/JSON bundles.
     let import_routes = Router::new()
         .route(
+            "/v1/reconciliations",
+            post(crate::handlers::reconciliations::submit),
+        )
+        .route(
+            "/v1/reconciliations/{id}",
+            get(crate::handlers::reconciliations::inspect),
+        )
+        .route(
+            "/v1/reconciliations/{id}/merge",
+            post(crate::handlers::reconciliations::apply),
+        )
+        .route(
+            "/v1/reconciliations/{id}/undo",
+            post(crate::handlers::reconciliations::undo),
+        )
+        .route(
             "/v1/import/candidates",
             post(crate::handlers::candidates::submit),
         )

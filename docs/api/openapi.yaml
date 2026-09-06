@@ -225,6 +225,131 @@ components:
               observed: {description: Unmodified JSON value or null for an absent field}
               present: {type: boolean}
               repeated: {type: boolean, description: Same constraint failed on the immediate predecessor}
+    ReconciliationNativeId:
+      type: object
+      required: [value]
+      properties:
+        value: {type: string, minLength: 1}
+    ReconciliationContext:
+      type: object
+      additionalProperties: false
+      properties:
+        workspace_id: {type: string}
+        session_id: {type: string}
+        budget_ref: {type: string}
+    MentionReconciliationInput:
+      type: object
+      required: [id, left, right, outcome, decider, decided_at, rationale, evidence, similarity_hints]
+      properties:
+        id: {$ref: '#/components/schemas/ReconciliationNativeId'}
+        left: {$ref: '#/components/schemas/ReconciliationNativeId'}
+        right: {$ref: '#/components/schemas/ReconciliationNativeId'}
+        outcome: {type: string, enum: [Merge, Distinct, Abstain]}
+        decider:
+          oneOf:
+            - type: object
+              required: [Actor]
+              properties:
+                Actor: {$ref: '#/components/schemas/ReconciliationNativeId'}
+            - type: object
+              required: [Verifier]
+              properties:
+                Verifier:
+                  type: object
+                  required: [id, version]
+                  properties:
+                    id: {type: string, minLength: 1}
+                    version: {type: string, minLength: 1}
+        decided_at: {type: string, format: date-time}
+        rationale: {type: string, minLength: 1}
+        evidence:
+          type: array
+          minItems: 2
+          description: Both mentions must contribute; at least one citation must be contextual. Citation values and source versions are resolved by the server.
+          items:
+            oneOf:
+              - type: object
+                required: [Mention]
+                properties:
+                  Mention:
+                    type: object
+                    required: [mention_id, feature]
+                    properties:
+                      mention_id: {$ref: '#/components/schemas/ReconciliationNativeId'}
+                      feature: {type: string, enum: [SurfaceForm, SourceContext, Role, Time, Location, Affiliations, RelationNeighbourhood]}
+              - type: object
+                required: [Observation]
+                properties:
+                  Observation:
+                    type: object
+                    required: [observation_id]
+                    properties:
+                      observation_id: {$ref: '#/components/schemas/ReconciliationNativeId'}
+        similarity_hints:
+          type: array
+          items:
+            type: object
+            required: [kind, score]
+            properties:
+              kind: {type: string, enum: [Name, Embedding]}
+              score: {type: number, minimum: 0, maximum: 1}
+    ReconciliationUndoRequest:
+      type: object
+      additionalProperties: false
+      required: [id, actor, undone_at, rationale]
+      properties:
+        id: {type: string, minLength: 1}
+        actor: {type: string, minLength: 1}
+        undone_at: {type: string, format: date-time}
+        rationale: {type: string, minLength: 1}
+        context: {$ref: '#/components/schemas/ReconciliationContext'}
+    MentionReconciliationResponse:
+      type: object
+      required: [ok, record, active, dependent_record, resolved_left, resolved_right, members, undos]
+      properties:
+        ok: {const: true}
+        record:
+          allOf:
+            - {$ref: '#/components/schemas/MentionReconciliationInput'}
+            - type: object
+              required: [citations]
+              properties:
+                citations:
+                  type: array
+                  description: Immutable resolved evidence, observation, source and pinned source-version references.
+                  items: {type: object}
+        active: {type: boolean}
+        dependent_record: {type: [string, 'null']}
+        resolved_left: {type: string}
+        resolved_right: {type: string}
+        members:
+          type: array
+          description: Original mention records in the two current identity groups, including observation bindings, offsets, hints and relation features.
+          items: {type: object}
+        undos:
+          type: array
+          items:
+            type: object
+            required: [id, reconciliation_id, actor, undone_at, rationale]
+            properties:
+              id: {type: string}
+              reconciliation_id: {$ref: '#/components/schemas/ReconciliationNativeId'}
+              actor: {$ref: '#/components/schemas/ReconciliationNativeId'}
+              undone_at: {type: string, format: date-time}
+              rationale: {type: string}
+    DependentReconciliationError:
+      type: object
+      required: [ok, error]
+      properties:
+        ok: {const: false}
+        error:
+          type: object
+          required: [code, message, merge_record, dependent_record]
+          properties:
+            code: {const: DEPENDENT_RECONCILIATION}
+            message: {type: string}
+            merge_record: {type: string}
+            dependent_record: {type: string}
     CandidateRepairLink:
       type: object
       required: [predecessor, caused_by]
@@ -1544,6 +1669,103 @@ paths:
                             ready: {type: boolean}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/BadRequest'}
+
+  /v1/reconciliations:
+    post:
+      operationId: recordMentionReconciliation
+      summary: Record an evidence-cited judgment without applying a merge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [record]
+              properties:
+                record: {$ref: '#/components/schemas/MentionReconciliationInput'}
+                context: {$ref: '#/components/schemas/ReconciliationContext'}
+      responses:
+        '200':
+          description: Original judgment, current identity view and immutable undo history; exact retries are idempotent
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MentionReconciliationResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '422': {description: Malformed JSON body or unknown request fields}
+
+  /v1/reconciliations/{id}:
+    get:
+      operationId: inspectMentionReconciliation
+      summary: Inspect a judgment, identity members and reversal history
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Original judgment, current identity view and immutable undo history; exact retries are idempotent
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MentionReconciliationResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {description: Unknown reconciliation}
+
+  /v1/reconciliations/{id}/merge:
+    post:
+      operationId: applyMentionReconciliation
+      summary: Apply a Merge judgment as a reversible mention identity group
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ReconciliationContext'}
+      responses:
+        '200':
+          description: Original judgment, current identity view and immutable undo history; exact retries are idempotent
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MentionReconciliationResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '422': {description: Malformed JSON body or unknown request fields}
+
+  /v1/reconciliations/{id}/undo:
+    post:
+      operationId: undoMentionReconciliation
+      summary: Reverse an independent merge without rewriting evidence or history
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ReconciliationUndoRequest'}
+      responses:
+        '200':
+          description: Original judgment, current identity view and immutable undo history; exact retries are idempotent
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MentionReconciliationResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '422': {description: Malformed JSON body or unknown request fields}
+        '409':
+          description: A later unreversed reconciliation used this merge; no state is changed
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DependentReconciliationError'}
 
   /v1/import/candidates:
     post:

@@ -458,3 +458,6 @@ pub use cluster_aggregation::{
 };
 
 pub use verdict::resolve_current_claim_verdict;
+
+mod reconciliation_merge;
+pub use reconciliation_merge::{MergeStore, MergeUndo};

@@ -131,6 +131,10 @@ impl Graph {
             &snapshot.epistemic.observations,
             &snapshot.epistemic.sources,
         )?;
+        snapshot
+            .epistemic
+            .merges
+            .validate_bindings(&snapshot.epistemic.reconciliations)?;
         let mut graph = Graph {
             next_node_sequence: snapshot.next_node_sequence,
             next_node_version_sequence: snapshot.next_node_version_sequence,
@@ -356,6 +360,7 @@ impl Graph {
             &stores.observations,
             &stores.sources,
         )?;
+        stores.merges.validate_bindings(&stores.reconciliations)?;
         let mut projection = Graph::new();
         let with_properties = |labels: &[&str], properties: PropertyMap| {
             let mut input = NodeInput::new(labels.iter().copied());
@@ -410,28 +415,88 @@ impl Graph {
             }
         }
 
-        // Mentions are observation-bound records, not entity nodes. Candidate
-        // references stay properties; only reconciliation may justify identity.
+        // Quotient view: group identity without rewriting evidence. Every
+        // observation edge retains its original mention ID; full member records
+        // preserve offsets, candidate hints and relation neighbourhood features.
         let mut mention_nodes: HashMap<String, NodeId> = HashMap::new();
+        let mut groups: std::collections::BTreeMap<String, Vec<&crate::EntityMention>> =
+            std::collections::BTreeMap::new();
+        let representatives = self.resolved_mentions()?;
         for mention in stores.mentions.mentions() {
+            groups
+                .entry(representatives[mention.id()].as_str().to_owned())
+                .or_default()
+                .push(mention);
+        }
+        for (representative, members) in groups {
+            let mention = stores
+                .mentions
+                .mention_by_id(&crate::EntityMentionId::new(&representative)?)
+                .ok_or_else(|| GraphError::InvalidPropertyValue("missing representative".into()))?;
+            let mut properties = mention.to_property_map()?;
+            if members.len() > 1 {
+                properties.insert(
+                    "mention_members".into(),
+                    PropertyValue::Json(
+                        serde_json::to_value(&members)
+                            .map_err(|e| GraphError::InvalidPropertyValue(e.to_string()))?,
+                    ),
+                );
+            }
             let node_id = projection.create_node(with_properties(
                 &[EpistemicNodeKind::EntityMention.canonical_label()],
-                mention.to_property_map()?,
+                properties,
             ))?;
-            mention_nodes.insert(mention.id().as_str().into(), node_id.clone());
-            let observation_node = observation_nodes
-                .get(mention.observation_id().as_str())
-                .ok_or_else(|| GraphError::ObservationNotFound(mention.observation_id().clone()))?;
-            projection.create_relationship(RelationshipInput::new(
-                observation_node.clone(),
-                EpistemicRelationKind::HasMention
-                    .canonical_relationship_type()
-                    .as_str(),
-                node_id,
-            )?)?;
+            for member in members {
+                mention_nodes.insert(member.id().as_str().into(), node_id.clone());
+                let observation_node = observation_nodes
+                    .get(member.observation_id().as_str())
+                    .ok_or_else(|| {
+                        GraphError::ObservationNotFound(member.observation_id().clone())
+                    })?;
+                projection.create_relationship(
+                    RelationshipInput::new(
+                        observation_node.clone(),
+                        EpistemicRelationKind::HasMention
+                            .canonical_relationship_type()
+                            .as_str(),
+                        node_id.clone(),
+                    )?
+                    .with_property(
+                        "mention_id",
+                        PropertyValue::String(member.id().as_str().to_owned()),
+                    ),
+                )?;
+            }
         }
 
         // Reconciliation judgments retain all outcomes, including abstention.
+        for undo in stores.merges.undos() {
+            let decision = projection.create_node(with_properties(
+                &[
+                    "ReconciliationUndo",
+                    EpistemicNodeKind::Decision.canonical_label(),
+                ],
+                undo.to_property_map(),
+            ))?;
+            let record = stores
+                .reconciliations
+                .record_by_id(undo.reconciliation_id())
+                .ok_or_else(|| GraphError::InvalidPropertyValue("undo judgment missing".into()))?;
+            for mention in [record.left(), record.right()] {
+                let target = mention_nodes.get(mention.as_str()).ok_or_else(|| {
+                    GraphError::InvalidPropertyValue("undo mention missing".into())
+                })?;
+                projection.create_relationship(RelationshipInput::new(
+                    decision.clone(),
+                    EpistemicRelationKind::Decides
+                        .canonical_relationship_type()
+                        .as_str(),
+                    target.clone(),
+                )?)?;
+            }
+        }
+
         // These edges explain a decision about mentions; they do not merge entities.
         for record in stores.reconciliations.records() {
             let decision = projection.create_node(with_properties(
