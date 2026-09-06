@@ -367,8 +367,8 @@ pub use validation::{
     ValidationRuleContext, ValidationRuleRegistry, ValidationTarget,
 };
 pub use verdict::{
-    CLAIM_UNREACHABLE_EVIDENCE_CODE, DimensionMigrationFinding, ReachabilityGap, ResolutionInputs,
-    ResolutionOutcome, StateTransition, TransitionTrigger,
+    CLAIM_UNREACHABLE_EVIDENCE_CODE, DimensionMigrationFinding, HypothesisSet, RankedHypothesis,
+    ReachabilityGap, ResolutionInputs, ResolutionOutcome, StateTransition, TransitionTrigger,
     VERIFICATION_AUTHORITY_DISAGREEMENT_CODE, Verdict, VerdictAsOf, VerdictState, VerdictStore,
     VerificationCoverage, VerificationCoverageClass, VerificationCoverageEntry,
     VerificationCoverageTarget, VerificationDisagreement, VerificationInputs, VerificationRecord,

@@ -747,6 +747,59 @@ impl VerificationRecordStore {
     }
 }
 
+/// Ranked alternatives captured at resolution time, including losing hypotheses.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct HypothesisSet {
+    hypotheses: Vec<RankedHypothesis>,
+}
+impl HypothesisSet {
+    /// Ordered alternatives; ties use ascending claim identifiers.
+    pub fn hypotheses(&self) -> &[RankedHypothesis] {
+        &self.hypotheses
+    }
+}
+/// One alternative with its retained dimensions and dependency explanation.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RankedHypothesis {
+    claim_id: ClaimId,
+    state: VerdictState,
+    score: Option<Confidence>,
+    confidence_dimensions: ConfidenceDimensions,
+    source_independence: Option<crate::SourceIndependence>,
+    cluster_aggregation: Option<crate::ClusterAggregation>,
+    authority_resolution: Option<crate::SourceAuthorityResolution>,
+}
+impl RankedHypothesis {
+    /// Claim evaluated.
+    pub fn claim_id(&self) -> &ClaimId {
+        &self.claim_id
+    }
+    /// State after deterministic and reachability gates.
+    pub fn state(&self) -> VerdictState {
+        self.state
+    }
+    /// Cluster support discounted by contradiction load; absent without support inputs.
+    pub fn score(&self) -> Option<Confidence> {
+        self.score
+    }
+    /// Complete dimension vector, preserving absent inputs.
+    pub fn confidence_dimensions(&self) -> &ConfidenceDimensions {
+        &self.confidence_dimensions
+    }
+    /// Dependency groups used to aggregate evidence.
+    pub fn source_independence(&self) -> Option<&crate::SourceIndependence> {
+        self.source_independence.as_ref()
+    }
+    /// Directional cluster contributions.
+    pub fn cluster_aggregation(&self) -> Option<&crate::ClusterAggregation> {
+        self.cluster_aggregation.as_ref()
+    }
+    /// Authority policy provenance used by this alternative.
+    pub fn authority_resolution(&self) -> Option<&crate::SourceAuthorityResolution> {
+        self.authority_resolution.as_ref()
+    }
+}
+
 /// Computed verdict of a claim at one point in bitemporal space.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "StoredVerdict")]
@@ -766,6 +819,8 @@ pub struct Verdict {
     authority_resolution: Option<crate::SourceAuthorityResolution>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cluster_aggregation: Option<crate::ClusterAggregation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hypothesis_set: Option<HypothesisSet>,
     policy_version: String,
     stamp: BitemporalStamp,
 }
@@ -818,6 +873,8 @@ struct StoredVerdict {
     authority_resolution: Option<crate::SourceAuthorityResolution>,
     #[serde(default)]
     cluster_aggregation: Option<crate::ClusterAggregation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hypothesis_set: Option<HypothesisSet>,
     policy_version: String,
     stamp: BitemporalStamp,
 }
@@ -845,6 +902,7 @@ impl TryFrom<StoredVerdict> for Verdict {
             source_independence: stored.source_independence,
             authority_resolution: stored.authority_resolution,
             cluster_aggregation: stored.cluster_aggregation,
+            hypothesis_set: stored.hypothesis_set,
             policy_version: stored.policy_version,
             stamp: stored.stamp,
         })
@@ -852,6 +910,10 @@ impl TryFrom<StoredVerdict> for Verdict {
 }
 
 impl Verdict {
+    /// Retained ranked alternatives for this resolution snapshot.
+    pub fn hypothesis_set(&self) -> Option<&HypothesisSet> {
+        self.hypothesis_set.as_ref()
+    }
     /// Identifier.
     pub fn id(&self) -> &VerdictId {
         &self.id
@@ -905,6 +967,16 @@ impl Verdict {
     /// Project the verdict into additive, namespaced `verdict_*` properties.
     pub fn to_property_map(&self) -> PropertyMap {
         let mut properties = PropertyMap::new();
+        if let Some(set) = &self.hypothesis_set {
+            properties.insert(
+                "verdict_hypothesis_set".to_owned(),
+                PropertyValue::String(
+                    serde_json::to_string(set)
+                        .expect("hypothesis snapshots contain only serializable finite scores"),
+                ),
+            );
+        }
+
         properties.insert(
             "verdict_id".to_owned(),
             PropertyValue::String(self.id.as_str().to_owned()),
@@ -1220,6 +1292,7 @@ impl VerdictStore {
             source_independence: None,
             authority_resolution: None,
             cluster_aggregation: None,
+            hypothesis_set: None,
             policy_version,
             stamp,
         });
@@ -1332,8 +1405,10 @@ impl VerdictStore {
 }
 
 /// Result of one resolution call.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ResolutionOutcome {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hypothesis_set: Option<HypothesisSet>,
     claim_id: ClaimId,
     state: VerdictState,
     changed: bool,
@@ -1345,6 +1420,10 @@ pub struct ResolutionOutcome {
 }
 
 impl ResolutionOutcome {
+    /// Retained ranked alternatives, also returned for unchanged resolutions.
+    pub fn hypothesis_set(&self) -> Option<&HypothesisSet> {
+        self.hypothesis_set.as_ref()
+    }
     /// Gap recorded when the gate downgraded the verdict to
     /// `InsufficientEvidence`.
     pub fn reachability_gap(&self) -> Option<&ReachabilityGap> {
@@ -1548,6 +1627,9 @@ impl ReachabilityGap {
 /// # Errors
 ///
 /// [`GraphError::ClaimNotFound`] for an unknown claim; store errors otherwise.
+// Evaluate direct active contradiction/supersession neighbors without recursive
+// expansion. Retain all scores, sort deterministically, and persist the snapshot
+// atomically with the anchor verdict. Competitor changes must refresh the snapshot.
 pub fn resolve_claim_verdict(
     claims: &mut ClaimStore,
     verdicts: &mut VerdictStore,
@@ -1556,8 +1638,114 @@ pub fn resolve_claim_verdict(
     stamp: BitemporalStamp,
     policy_version: impl Into<String>,
 ) -> Result<ResolutionOutcome, GraphError> {
-    claims.claim_by_id(claim_id)?;
     let policy_version = policy_version.into();
+    let hypothesis_set = if policy_version == crate::CLUSTER_AGGREGATION_POLICY_VERSION {
+        let as_of = VerdictAsOf::new(stamp.valid_from.clone(), stamp.transaction_time.clone());
+        let mut ids = BTreeMap::from([(claim_id.as_str().to_owned(), claim_id.clone())]);
+        for link in claims.claim_links().iter().filter(|link| {
+            link.is_active_at(&as_of)
+                && matches!(
+                    link.kind(),
+                    ClaimLinkKind::Contradicts | ClaimLinkKind::Supersedes
+                )
+        }) {
+            if let ClaimLinkSource::Claim(source) = link.source() {
+                let neighbor = if link.target_claim_id() == claim_id {
+                    Some(source)
+                } else if source == claim_id {
+                    Some(link.target_claim_id())
+                } else {
+                    None
+                };
+                if let Some(id) = neighbor {
+                    ids.insert(id.as_str().to_owned(), id.clone());
+                }
+            }
+        }
+        // Evaluate a single consistent snapshot. Scratch verdicts never update a
+        // competitor's lifecycle or history in the caller's stores, and failures
+        // leave the caller untouched. No nested sets or recursive traversal.
+        let mut scratch_claims = claims.clone();
+        let mut scratch_verdicts = verdicts.clone();
+        let mut hypotheses = Vec::with_capacity(ids.len());
+        for id in ids.into_values() {
+            let outcome = resolve_single_claim_verdict(
+                &mut scratch_claims,
+                &mut scratch_verdicts,
+                inputs,
+                &id,
+                stamp.clone(),
+                policy_version.clone(),
+                None,
+            )?;
+            let verdict = if let Some(ref verdict_id) = outcome.verdict_id {
+                scratch_verdicts
+                    .verdicts
+                    .iter()
+                    .find(|v| &v.id == verdict_id)
+            } else {
+                scratch_verdicts.current_verdict(&id)
+            }
+            .expect("evaluated verdict");
+            let dimensions = verdict.confidence_dimensions.clone();
+            let score = dimensions.evidence_sufficiency.map(|support| {
+                Confidence::new(
+                    support.value()
+                        * (1.0 - dimensions.contradiction_load.map_or(0.0, |v| v.value())),
+                )
+                .expect("product of bounded scores")
+            });
+            hypotheses.push(RankedHypothesis {
+                claim_id: id,
+                state: verdict.state,
+                score,
+                confidence_dimensions: dimensions,
+                source_independence: verdict.source_independence.clone(),
+                cluster_aggregation: verdict.cluster_aggregation.clone(),
+                authority_resolution: verdict.authority_resolution.clone(),
+            });
+        }
+        // Gate-passing hypotheses precede rejected/unresolved ones. Within each
+        // group, known support ranks descending, absence last, then claim ID.
+        hypotheses.sort_by(|a, b| {
+            let eligible = |h: &RankedHypothesis| {
+                matches!(h.state, VerdictState::Supported | VerdictState::Mixed)
+            };
+            eligible(b)
+                .cmp(&eligible(a))
+                .then_with(|| {
+                    b.score
+                        .map(|s| s.value())
+                        .partial_cmp(&a.score.map(|s| s.value()))
+                        .expect("finite scores")
+                })
+                .then_with(|| a.claim_id.as_str().cmp(b.claim_id.as_str()))
+        });
+        Some(HypothesisSet { hypotheses })
+    } else {
+        None
+    };
+    resolve_single_claim_verdict(
+        claims,
+        verdicts,
+        inputs,
+        claim_id,
+        stamp,
+        policy_version,
+        hypothesis_set,
+    )
+}
+
+fn resolve_single_claim_verdict(
+    claims: &mut ClaimStore,
+    verdicts: &mut VerdictStore,
+    inputs: &ResolutionInputs<'_>,
+    claim_id: &ClaimId,
+    stamp: BitemporalStamp,
+    policy_version: String,
+    hypothesis_set: Option<HypothesisSet>,
+) -> Result<ResolutionOutcome, GraphError> {
+    claims.claim_by_id(claim_id)?;
     if policy_version.trim().is_empty() {
         return Err(GraphError::InvalidPropertyValue(
             "verdict policy_version must not be empty".to_owned(),
@@ -1790,6 +1978,7 @@ pub fn resolve_claim_verdict(
     if previous == Some(state)
         && verdicts.current_verdict(claim_id).is_some_and(|v| {
             v.policy_version() == policy_version
+                && v.hypothesis_set() == hypothesis_set.as_ref()
                 && v.confidence_dimensions() == &dimensions
                 && v.cluster_aggregation() == cluster_aggregation.as_ref()
         })
@@ -1803,6 +1992,7 @@ pub fn resolve_claim_verdict(
             == authority_resolution.as_ref()
     {
         return Ok(ResolutionOutcome {
+            hypothesis_set,
             claim_id: claim_id.clone(),
             state,
             changed: false,
@@ -1853,6 +2043,11 @@ pub fn resolve_claim_verdict(
         .last_mut()
         .expect("just appended verdict")
         .cluster_aggregation = cluster_aggregation;
+    verdicts
+        .verdicts
+        .last_mut()
+        .expect("just appended verdict")
+        .hypothesis_set = hypothesis_set.clone();
     if previous != Some(state) {
         verdicts.append_transition(StateTransition {
             id: transition_id,
@@ -1873,6 +2068,7 @@ pub fn resolve_claim_verdict(
         claims.apply_verdict_projection(claim_id, project_verdict_state(state, false))?;
 
     Ok(ResolutionOutcome {
+        hypothesis_set,
         claim_id: claim_id.clone(),
         state,
         changed: true,
