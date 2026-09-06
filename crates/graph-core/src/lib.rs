@@ -111,6 +111,7 @@ mod branch_resolution;
 mod calibrated_assessment;
 mod claim;
 mod confidence;
+mod confidence_dimensions;
 mod cross_branch_scoring;
 mod deterministic_verifiers;
 mod epistemic_stores;
@@ -215,6 +216,7 @@ pub use claim::{
     StanceKind, TrustInput, TrustInputInput, TrustInputKind,
 };
 pub use confidence::Confidence;
+pub use confidence_dimensions::{ConfidenceDimension, ConfidenceDimensions};
 pub use cross_branch_scoring::{
     CrossBranchRanking, CrossBranchScoreBreakdown, CrossBranchScoreInput, CrossBranchScoreTerm,
     RankedBranchScore, rank_cross_branch_scores,
@@ -358,12 +360,13 @@ pub use validation::{
     ValidationRuleContext, ValidationRuleRegistry, ValidationTarget,
 };
 pub use verdict::{
-    CLAIM_UNREACHABLE_EVIDENCE_CODE, ReachabilityGap, ResolutionInputs, ResolutionOutcome,
-    StateTransition, TransitionTrigger, VERIFICATION_AUTHORITY_DISAGREEMENT_CODE, Verdict,
-    VerdictAsOf, VerdictState, VerdictStore, VerificationCoverage, VerificationCoverageClass,
-    VerificationCoverageEntry, VerificationCoverageTarget, VerificationDisagreement,
-    VerificationInputs, VerificationRecord, VerificationRecordStore, VerificationResult,
-    lifecycle_token, project_verdict_state, resolve_claim_verdict,
+    CLAIM_UNREACHABLE_EVIDENCE_CODE, DimensionMigrationFinding, ReachabilityGap, ResolutionInputs,
+    ResolutionOutcome, StateTransition, TransitionTrigger,
+    VERIFICATION_AUTHORITY_DISAGREEMENT_CODE, Verdict, VerdictAsOf, VerdictState, VerdictStore,
+    VerificationCoverage, VerificationCoverageClass, VerificationCoverageEntry,
+    VerificationCoverageTarget, VerificationDisagreement, VerificationInputs, VerificationRecord,
+    VerificationRecordStore, VerificationResult, lifecycle_token, project_verdict_state,
+    resolve_claim_verdict,
 };
 pub use verification_probes::{
     ProbeAnswer, ProbeKind, ProbeRegistry, ProbeStatus, ProbeTransition, VerificationProbe,

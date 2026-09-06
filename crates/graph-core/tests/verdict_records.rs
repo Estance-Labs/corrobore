@@ -679,13 +679,9 @@ fn spike_e_replays_supported_refuted_superseded_at_any_system_time() {
 fn as_of_selection_is_deterministic_with_id_tie_break() {
     let mut store = VerdictStore::new();
     let claim = claim_id("claim--tie");
-    let dimension = |value: f64| {
-        let mut dimensions = std::collections::BTreeMap::new();
-        dimensions.insert(
-            "evidence_sufficiency".to_owned(),
-            Confidence::new(value).expect("confidence"),
-        );
-        dimensions
+    let dimension = |value: f64| graph_core::ConfidenceDimensions {
+        evidence_sufficiency: Some(Confidence::new(value).expect("confidence")),
+        ..Default::default()
     };
 
     store
@@ -721,8 +717,8 @@ fn as_of_selection_is_deterministic_with_id_tie_break() {
         "greater id wins an exact tie"
     );
     assert_eq!(
-        picked.confidence_dimensions().get("evidence_sufficiency"),
-        Some(&Confidence::new(0.7).expect("confidence"))
+        picked.confidence_dimensions().evidence_sufficiency,
+        Some(Confidence::new(0.7).expect("confidence"))
     );
 
     let duplicate = store.append_verdict(

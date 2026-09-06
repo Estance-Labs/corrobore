@@ -46,8 +46,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     BitemporalStamp, ClaimId, ClaimLink, ClaimLinkKind, ClaimLinkSource, ClaimStatus, ClaimStore,
-    Confidence, EvidenceRecordStore, GraphError, ImmutableRecordKind, ObservationId,
-    ObservationStore, PropertyMap, PropertyValue, SourceStore, StateTransitionId,
+    Confidence, ConfidenceDimensions, EvidenceRecordStore, GraphError, ImmutableRecordKind,
+    ObservationId, ObservationStore, PropertyMap, PropertyValue, SourceStore, StateTransitionId,
     TemporalTimestamp, ValidationErrorRecord, ValidationErrorSeverity, ValidationTarget, VerdictId,
     VerificationRecordId,
 };
@@ -749,15 +749,91 @@ impl VerificationRecordStore {
 
 /// Computed verdict of a claim at one point in bitemporal space.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "StoredVerdict")]
 pub struct Verdict {
     id: VerdictId,
     claim_id: ClaimId,
     state: VerdictState,
-    /// Extensible string-keyed dimensions; WS-D names them normatively.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    confidence_dimensions: BTreeMap<String, Confidence>,
+    /// Migration reads the legacy map, retains named dimensions and persists one
+    /// finding per discarded key. Re-reading the typed record preserves findings.
+    #[serde(default, skip_serializing_if = "ConfidenceDimensions::is_empty")]
+    confidence_dimensions: ConfidenceDimensions,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    dimension_migration_findings: Vec<DimensionMigrationFinding>,
     policy_version: String,
     stamp: BitemporalStamp,
+}
+
+/// Persistent audit of an unknown legacy confidence dimension.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DimensionMigrationFinding {
+    verdict_id: VerdictId,
+    claim_id: ClaimId,
+    key: String,
+}
+impl DimensionMigrationFinding {
+    /// Verdict whose legacy key was discarded.
+    pub fn verdict_id(&self) -> &VerdictId {
+        &self.verdict_id
+    }
+    /// Discarded key, retained verbatim for diagnosis.
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+    /// Non-blocking validation finding naming both the verdict and the key.
+    pub fn to_validation_record(&self) -> ValidationErrorRecord {
+        ValidationErrorRecord::new(
+            "verdict.dimension.unknown_legacy_key",
+            ValidationErrorSeverity::Warning,
+            format!(
+                "verdict {}: dropped unknown confidence dimension {}",
+                self.verdict_id.as_str(),
+                self.key
+            ),
+            ValidationTarget::claim(self.claim_id.as_str()),
+        )
+    }
+}
+
+// Both WS-A maps and typed records share their wire representation. Load through
+// this boundary so every persistence consumer gets the same audited migration.
+#[derive(Deserialize)]
+struct StoredVerdict {
+    id: VerdictId,
+    claim_id: ClaimId,
+    state: VerdictState,
+    #[serde(default)]
+    confidence_dimensions: BTreeMap<String, Option<Confidence>>,
+    #[serde(default)]
+    dimension_migration_findings: Vec<DimensionMigrationFinding>,
+    policy_version: String,
+    stamp: BitemporalStamp,
+}
+impl TryFrom<StoredVerdict> for Verdict {
+    type Error = GraphError;
+    fn try_from(mut stored: StoredVerdict) -> Result<Self, Self::Error> {
+        let confidence_dimensions =
+            ConfidenceDimensions::take_legacy(&mut stored.confidence_dimensions)?;
+        for key in stored.confidence_dimensions.into_keys() {
+            let finding = DimensionMigrationFinding {
+                verdict_id: stored.id.clone(),
+                claim_id: stored.claim_id.clone(),
+                key,
+            };
+            if !stored.dimension_migration_findings.contains(&finding) {
+                stored.dimension_migration_findings.push(finding);
+            }
+        }
+        Ok(Self {
+            id: stored.id,
+            claim_id: stored.claim_id,
+            state: stored.state,
+            confidence_dimensions,
+            dimension_migration_findings: stored.dimension_migration_findings,
+            policy_version: stored.policy_version,
+            stamp: stored.stamp,
+        })
+    }
 }
 
 impl Verdict {
@@ -777,8 +853,13 @@ impl Verdict {
     }
 
     /// Confidence dimensions.
-    pub fn confidence_dimensions(&self) -> &BTreeMap<String, Confidence> {
+    pub fn confidence_dimensions(&self) -> &ConfidenceDimensions {
         &self.confidence_dimensions
+    }
+
+    /// Persistent findings for legacy dimension keys discarded during loading.
+    pub fn dimension_migration_findings(&self) -> &[DimensionMigrationFinding] {
+        &self.dimension_migration_findings
     }
 
     /// Version of the policy that computed the verdict.
@@ -822,7 +903,7 @@ impl Verdict {
             "verdict_transaction_time".to_owned(),
             PropertyValue::String(self.stamp.transaction_time.as_str().to_owned()),
         );
-        for (name, value) in &self.confidence_dimensions {
+        for (name, value) in self.confidence_dimensions.present_values() {
             properties.insert(
                 format!("verdict_dimension_{name}"),
                 PropertyValue::Float(value.value()),
@@ -1028,7 +1109,7 @@ impl VerdictStore {
         id: VerdictId,
         claim_id: ClaimId,
         state: VerdictState,
-        confidence_dimensions: BTreeMap<String, Confidence>,
+        confidence_dimensions: ConfidenceDimensions,
         policy_version: impl Into<String>,
         stamp: BitemporalStamp,
     ) -> Result<VerdictId, GraphError> {
@@ -1050,6 +1131,7 @@ impl VerdictStore {
             claim_id,
             state,
             confidence_dimensions,
+            dimension_migration_findings: Vec::new(),
             policy_version,
             stamp,
         });
@@ -1532,7 +1614,7 @@ pub fn resolve_claim_verdict(
         verdict_id.clone(),
         claim_id.clone(),
         state,
-        BTreeMap::new(),
+        ConfidenceDimensions::default(),
         policy_version,
         stamp.clone(),
     )?;
