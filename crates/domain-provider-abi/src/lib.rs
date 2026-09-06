@@ -12,10 +12,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const CORROBORE_DOMAIN_PROVIDER_ABI_MAJOR_V1: u16 = 1;
-// Minor 1 adds the `medical` and `research` domain names. The change is purely
-// additive: every field layout, function pointer, and status code is unchanged,
-// so a host built against minor 0 keeps loading existing providers.
-pub const CORROBORE_DOMAIN_PROVIDER_ABI_MINOR_V1: u16 = 1;
+// Minor 2 adds the optional `claim.verify/1` capability, its JSON payloads,
+// and the optional determinism declaration. The C function table is unchanged;
+// hosts at minor 2 keep accepting providers built against supported minor 1.
+pub const CORROBORE_DOMAIN_PROVIDER_ABI_MINOR_V1: u16 = 2;
+/// Oldest ABI v1 minor still accepted by this host.
+pub const CORROBORE_DOMAIN_PROVIDER_ABI_MIN_SUPPORTED_MINOR_V1: u16 = 1;
 pub const CORROBORE_DOMAIN_PROVIDER_ENTRYPOINT_V1: &[u8] =
     b"corrobore_domain_provider_get_api_v1\0";
 pub const SCHEMA_V1: &str = "1";
@@ -102,6 +104,54 @@ impl DomainName {
 pub struct CapabilityDeclaration {
     pub name: String,
     pub version: String,
+    /// Whether this capability is mechanically decidable. Omission preserves
+    /// compatibility with pre-1.2 providers and defaults host adapters to an
+    /// advisory, non-deterministic verifier.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deterministic: Option<bool>,
+}
+
+/// Bitemporal point at which a provider evaluates a claim.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimVerifyAsOf {
+    pub valid_time: String,
+    pub system_time: String,
+}
+
+/// Governed records supplied to the additive `claim.verify/1` capability.
+///
+/// Records remain JSON values at the cross-repository boundary so domain packs
+/// can consume additive graph fields without changing the binary function
+/// table or depending on Rust-owned core types.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimVerifyRequestPayload {
+    pub claim: Value,
+    pub links: Vec<Value>,
+    pub observations: Vec<Value>,
+    pub sources: Vec<Value>,
+    pub evidence_records: Vec<Value>,
+    pub as_of: ClaimVerifyAsOf,
+}
+
+/// Result vocabulary returned by `claim.verify/1`.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ClaimVerifyResult {
+    Pass,
+    Fail,
+    Inconclusive,
+}
+
+/// Capability payload mapped by the host to a governed verification outcome.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimVerifyResponsePayload {
+    pub result: ClaimVerifyResult,
+    pub rationale: Option<String>,
+    pub limits: Vec<String>,
+    pub evidence_consumed: Vec<String>,
 }
 
 /// Provider identity and operational limits returned before instance creation.
@@ -166,4 +216,7 @@ pub struct InvokeResponse {
     pub status: ProviderResponseStatus,
     pub issues: Vec<ProviderIssue>,
     pub diagnostics: Option<BTreeMap<String, Value>>,
+    /// Capability-specific response. Absent on ABI 1.0 and 1.1 providers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<Value>,
 }

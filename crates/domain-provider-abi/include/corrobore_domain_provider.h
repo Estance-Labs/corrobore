@@ -15,10 +15,14 @@ extern "C" {
 #endif
 
 #define CORROBORE_DOMAIN_PROVIDER_ABI_MAJOR_V1 UINT16_C(1)
-/* Minor 1 adds the additive "medical" and "research" JSON domain names. Domain
- * names cross the boundary as JSON, not as a C enum, so the binary layout is
- * unchanged and a host built against minor 0 keeps loading existing providers. */
-#define CORROBORE_DOMAIN_PROVIDER_ABI_MINOR_V1 UINT16_C(1)
+/* Minor 2 adds the optional "claim.verify" JSON capability, request/response
+ * payloads, and its optional metadata-level "deterministic" boolean. The
+ * function table remains unchanged and hosts at minor 2 accept supported
+ * providers built against minor 1. claim.verify/1 request payload:
+ * {claim,links,observations,sources,evidence_records,as_of:{valid_time,system_time}}
+ * response payload:
+ * {result:"pass"|"fail"|"inconclusive",rationale,limits,evidence_consumed}. */
+#define CORROBORE_DOMAIN_PROVIDER_ABI_MINOR_V1 UINT16_C(2)
 
 enum corrobore_domain_provider_status_v1 {
     CORROBORE_DOMAIN_PROVIDER_STATUS_OK = 0,

@@ -83,6 +83,7 @@ unsafe extern "C" fn provider_metadata(
         capabilities: vec![CapabilityDeclaration {
             name: OPERATION_NODE_VALIDATE.to_owned(),
             version: SCHEMA_V1.to_owned(),
+            deterministic: None,
         }],
     };
 
@@ -322,6 +323,7 @@ unsafe extern "C" fn provider_invoke(
         status,
         issues,
         diagnostics: None,
+        payload: None,
     };
 
     write_json(&response, response_json)

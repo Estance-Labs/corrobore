@@ -14,7 +14,9 @@ This guide targets the current `0.3.x` runtime baseline.
 
 ## Provider contract and deployment
 
-The normative cross-repository C contract is `crates/domain-provider-abi/include/corrobore_domain_provider.h`. ABI v1 has one exported entrypoint returning a prefix-versioned table for metadata, create, invoke, health, destroy, and provider-owned buffer release. JSON request and response envelopes carry evolvable capability data without changing the binary table.
+The normative cross-repository C contract is `crates/domain-provider-abi/include/corrobore_domain_provider.h`. ABI v1 has one exported entrypoint returning a prefix-versioned table for metadata, create, invoke, health, destroy, and provider-owned buffer release. JSON request and response envelopes carry evolvable capability data without changing the binary table. ABI minor 2 adds optional `claim.verify/1`; hosts at minor 2 continue to accept providers built against supported minor 1.
+
+A provider declaring `claim.verify/1` is registered as a host-side `Verifier`. Its declaration may include `"deterministic": true` or `false`; omission defaults to `false`, so older metadata remains advisory and compatible. The request payload contains the governed claim, active links, resolved observations and sources, evidence records, and the bitemporal `as_of` point. The response payload reports `pass`, `fail`, or `inconclusive`, plus rationale, limits, and consumed evidence. The provider only reports the result: the host owns record provenance and the deterministic-first precedence policy.
 
 Set both `CORROBORE_DOMAIN_PROVIDER_DIR` and `CORROBORE_DOMAIN_PROVIDER_MANIFEST_FILE` to enable providers. The manifest uses relative library paths, lowercase SHA-256 digests, required/optional policy, and required capabilities; see [the production manifest shape](../examples/domain-providers.json). At startup the host confines canonical paths to the trusted root, verifies each digest, negotiates ABI v1, validates provider identity and limits, creates one instance, and requires a ready health response. Any failure for a required provider prevents the server from accepting traffic.
 

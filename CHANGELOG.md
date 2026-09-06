@@ -108,6 +108,12 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   reachability gate; a deterministic failure can demote a previously
   `Validated` claim to `Contradicted` or `Disputed` instead of leaving a trusted
   lifecycle status behind (Epic 0029 WS-B, #166).
+- `domain-provider-abi` and `corrobore-http-server`: additive ABI v1.2
+  `claim.verify/1` capability with governed request/result payloads and an
+  optional provider determinism declaration that defaults to advisory. The
+  host registers capability adapters in `VerifierRegistry`, keeps provenance
+  and precedence in the core, accepts existing ABI v1.1 providers unchanged,
+  and rejects dispatch of unknown capabilities (Epic 0029 WS-B, #167).
 
 ## Releases
 

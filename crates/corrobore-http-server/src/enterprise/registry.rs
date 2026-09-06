@@ -2,18 +2,21 @@
 // SPDX-License-Identifier: MIT
 
 use std::{
+    collections::HashSet,
     ffi::c_void,
     fs,
     path::{Path, PathBuf},
     ptr,
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
 use domain_provider_abi::{
-    CORROBORE_DOMAIN_PROVIDER_ABI_MAJOR_V1, CORROBORE_DOMAIN_PROVIDER_ABI_MINOR_V1,
-    CORROBORE_DOMAIN_PROVIDER_ENTRYPOINT_V1, CapabilityDeclaration, DomainName,
-    DomainProviderApiV1, DomainProviderBuffer, DomainProviderSlice, GetDomainProviderApiV1Fn,
-    InvokeRequest, InvokeResponse, ProviderMetadata, SCHEMA_V1, STATUS_OK,
+    CORROBORE_DOMAIN_PROVIDER_ABI_MAJOR_V1, CORROBORE_DOMAIN_PROVIDER_ABI_MIN_SUPPORTED_MINOR_V1,
+    CORROBORE_DOMAIN_PROVIDER_ABI_MINOR_V1, CORROBORE_DOMAIN_PROVIDER_ENTRYPOINT_V1,
+    CapabilityDeclaration, ClaimVerifyAsOf, ClaimVerifyRequestPayload, ClaimVerifyResponsePayload,
+    ClaimVerifyResult, DomainName, DomainProviderApiV1, DomainProviderBuffer, DomainProviderSlice,
+    GetDomainProviderApiV1Fn, InvokeRequest, InvokeResponse, ProviderMetadata,
+    ProviderResponseStatus, SCHEMA_V1, STATUS_OK,
 };
 use libloading::Library;
 use serde::{Deserialize, Serialize};
@@ -21,6 +24,13 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use super::manifest::DomainProviderManifest;
+use graph_core::{
+    GraphError, VerificationOutcome, VerificationRequest, Verifier, VerifierCostClass,
+    VerifierRegistry, VerifierSpec,
+};
+
+const CLAIM_VERIFY_CAPABILITY: &str = "claim.verify";
+const CLAIM_VERIFY_CAPABILITY_VERSION: &str = "1";
 
 #[derive(Debug, Error)]
 pub(crate) enum DomainProviderRegistryError {
@@ -188,6 +198,12 @@ impl DomainProviderRegistry {
         if request.schema_version != SCHEMA_V1 {
             return Err(invocation_error("unsupported invocation schema"));
         }
+        if !is_supported_capability(&request.operation, SCHEMA_V1) {
+            return Err(invocation_error(format!(
+                "host does not support provider capability {}/{}",
+                request.operation, SCHEMA_V1
+            )));
+        }
         let provider = self
             .providers
             .iter()
@@ -254,6 +270,157 @@ impl DomainProviderRegistry {
             ));
         }
         Ok(response)
+    }
+
+    /// Register one host-owned verifier adapter for every provider declaring
+    /// `claim.verify/1`. Providers without the capability are intentionally
+    /// skipped so ABI 1.1 packs continue to load unchanged.
+    pub(crate) fn register_claim_verifiers(
+        self: &Arc<Self>,
+        registry: &mut VerifierRegistry,
+    ) -> Result<usize, GraphError> {
+        let mut registered = 0;
+        for provider in &self.providers {
+            let Some(capability) = provider.status.capabilities.iter().find(|capability| {
+                capability.name == CLAIM_VERIFY_CAPABILITY
+                    && capability.version == CLAIM_VERIFY_CAPABILITY_VERSION
+            }) else {
+                continue;
+            };
+            registry.register(VerifierSpec::new(Box::new(DomainProviderVerifier {
+                providers: Arc::clone(self),
+                domain: provider.status.domain,
+                id: format!("{}.claim.verify", provider.status.provider_id),
+                version: provider.status.provider_version.clone(),
+                deterministic: capability.deterministic.unwrap_or(false),
+            })))?;
+            registered += 1;
+        }
+        Ok(registered)
+    }
+}
+
+/// Host-side adapter that preserves registry-owned provenance and delegates
+/// only the outcome calculation to a native domain provider.
+struct DomainProviderVerifier {
+    providers: Arc<DomainProviderRegistry>,
+    domain: DomainName,
+    id: String,
+    version: String,
+    deterministic: bool,
+}
+
+impl Verifier for DomainProviderVerifier {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn version(&self) -> &str {
+        &self.version
+    }
+
+    fn deterministic(&self) -> bool {
+        self.deterministic
+    }
+
+    fn cost_class(&self) -> VerifierCostClass {
+        VerifierCostClass::High
+    }
+
+    fn verify(&self, request: &VerificationRequest<'_>) -> Result<VerificationOutcome, GraphError> {
+        let payload = ClaimVerifyRequestPayload {
+            claim: self.to_value(request.claim(), "claim")?,
+            links: self.to_values(request.links(), "links")?,
+            observations: self.to_values(request.observations(), "observations")?,
+            sources: self.to_values(request.sources(), "sources")?,
+            evidence_records: self.to_values(request.evidence_records(), "evidence_records")?,
+            as_of: ClaimVerifyAsOf {
+                valid_time: request.as_of().valid_time().as_str().to_owned(),
+                system_time: request.as_of().system_time().as_str().to_owned(),
+            },
+        };
+        let request_id = format!(
+            "claim-verify--{}--{}",
+            request.claim().id().as_str(),
+            request.as_of().system_time().as_str()
+        );
+        let response = self
+            .providers
+            .invoke(InvokeRequest {
+                schema_version: SCHEMA_V1.to_owned(),
+                request_id,
+                domain: self.domain,
+                operation: CLAIM_VERIFY_CAPABILITY.to_owned(),
+                workspace_id: request
+                    .claim()
+                    .workspace_id()
+                    .map(|workspace| workspace.as_str().to_owned()),
+                snapshot_id: None,
+                payload: serde_json::to_value(payload).map_err(|error| {
+                    self.execution_error(format!("cannot encode request payload: {error}"))
+                })?,
+            })
+            .map_err(|error| self.execution_error(error.to_string()))?;
+        if response.status != ProviderResponseStatus::Accepted {
+            return Err(self.execution_error(format!(
+                "provider returned invocation status {:?}",
+                response.status
+            )));
+        }
+        let payload = response
+            .payload
+            .ok_or_else(|| self.execution_error("provider response payload is missing"))?;
+        let response: ClaimVerifyResponsePayload =
+            serde_json::from_value(payload).map_err(|error| {
+                self.execution_error(format!("invalid claim.verify response payload: {error}"))
+            })?;
+
+        let result = match response.result {
+            ClaimVerifyResult::Pass => graph_core::VerificationResult::Pass,
+            ClaimVerifyResult::Fail => graph_core::VerificationResult::Fail,
+            ClaimVerifyResult::Inconclusive => graph_core::VerificationResult::Inconclusive,
+        };
+        let mut outcome = VerificationOutcome::new(result);
+        if let Some(rationale) = response.rationale {
+            outcome = outcome.with_rationale(rationale);
+        }
+        for limit in response.limits {
+            outcome = outcome.with_limit(limit);
+        }
+        for evidence in response.evidence_consumed {
+            outcome = outcome.with_evidence_consumed(evidence);
+        }
+        Ok(outcome)
+    }
+}
+
+impl DomainProviderVerifier {
+    fn to_value<T: Serialize + ?Sized>(
+        &self,
+        value: &T,
+        field: &str,
+    ) -> Result<serde_json::Value, GraphError> {
+        serde_json::to_value(value)
+            .map_err(|error| self.execution_error(format!("cannot encode {field}: {error}")))
+    }
+
+    fn to_values<T: Serialize>(
+        &self,
+        values: &[&T],
+        field: &str,
+    ) -> Result<Vec<serde_json::Value>, GraphError> {
+        values
+            .iter()
+            .map(|value| self.to_value(*value, field))
+            .collect()
+    }
+
+    fn execution_error(&self, reason: impl Into<String>) -> GraphError {
+        GraphError::VerifierExecutionFailed {
+            id: self.id.clone(),
+            version: self.version.clone(),
+            reason: reason.into(),
+        }
     }
 }
 
@@ -422,7 +589,15 @@ fn load_provider(
 }
 
 fn abi_minor_is_compatible(provider_minor: u16, required_minor: u16) -> bool {
-    provider_minor >= required_minor
+    (CORROBORE_DOMAIN_PROVIDER_ABI_MIN_SUPPORTED_MINOR_V1..=required_minor)
+        .contains(&provider_minor)
+}
+
+fn is_supported_capability(name: &str, version: &str) -> bool {
+    matches!(
+        (name, version),
+        ("node.validate", SCHEMA_V1) | (CLAIM_VERIFY_CAPABILITY, CLAIM_VERIFY_CAPABILITY_VERSION)
+    )
 }
 
 fn validate_metadata(
@@ -451,6 +626,15 @@ fn validate_metadata(
         return Err(initialization_error(format!(
             "invalid operational metadata from {domain} provider"
         )));
+    }
+    let mut capabilities = HashSet::new();
+    for capability in &metadata.capabilities {
+        if !capabilities.insert((capability.name.as_str(), capability.version.as_str())) {
+            return Err(initialization_error(format!(
+                "{domain} provider declares duplicate capability {}/{}",
+                capability.name, capability.version
+            )));
+        }
     }
     for required in required_capabilities {
         if !metadata.capabilities.iter().any(|available| {
@@ -588,8 +772,16 @@ fn copy_and_release_invocation_output(
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, process::Command};
+    use std::{fs, process::Command, sync::Arc};
 
+    use graph_core::{
+        BitemporalStamp, ClaimAnalyticalTarget, ClaimId, ClaimInput, ClaimLink, ClaimLinkKind,
+        ClaimLinkSource, ClaimStatement, ClaimStatus, ClaimStore, ClaimTarget, Confidence,
+        EvidenceRecordStore, EvidenceSourceType, ObservationId, ObservationInput,
+        ObservationModality, ObservationStore, ResolutionInputs, SourceId, SourceInput,
+        SourceStore, TemporalTimestamp, VerdictState, VerdictStore, VerificationContext,
+        VerificationRecordStore, VerificationResult, VerifierRegistry, resolve_claim_verdict,
+    };
     use sha2::{Digest, Sha256};
     use uuid::Uuid;
 
@@ -709,9 +901,10 @@ mod tests {
 
     #[test]
     fn registry_contract_accepts_equal_or_newer_abi_minor_only() {
-        assert!(abi_minor_is_compatible(0, 0));
-        assert!(abi_minor_is_compatible(2, 1));
-        assert!(!abi_minor_is_compatible(1, 2));
+        assert!(abi_minor_is_compatible(1, 2));
+        assert!(abi_minor_is_compatible(2, 2));
+        assert!(!abi_minor_is_compatible(0, 2));
+        assert!(!abi_minor_is_compatible(3, 2));
     }
 
     #[test]
@@ -751,6 +944,7 @@ mod tests {
         let required = [CapabilityDeclaration {
             name: "node.validate".to_owned(),
             version: SCHEMA_V1.to_owned(),
+            deterministic: None,
         }];
 
         let wrong_domain = validate_metadata(&metadata, DomainName::Cti, &required)
@@ -770,6 +964,265 @@ mod tests {
         );
     }
 
+    #[test]
+    fn registry_contract_rejects_unknown_provider_capabilities() {
+        let fixture = compile_provider_fixture_with(1, |source| {
+            source.replace("node.validate", "claim.unknown")
+        });
+        let manifest = fs::read_to_string(&fixture.manifest).expect("manifest should be readable");
+        fs::write(
+            &fixture.manifest,
+            manifest.replace("node.validate", "claim.unknown"),
+        )
+        .expect("unknown capability manifest should be written");
+        let registry = DomainProviderRegistry::initialize(&fixture.root, &fixture.manifest)
+            .expect("unknown declarations may load for forward-compatible status reporting");
+
+        let error = registry
+            .invoke(InvokeRequest {
+                schema_version: SCHEMA_V1.to_owned(),
+                request_id: "unknown-capability".to_owned(),
+                domain: DomainName::Cti,
+                operation: "claim.unknown".to_owned(),
+                workspace_id: None,
+                snapshot_id: None,
+                payload: json!({}),
+            })
+            .expect_err("unknown capability dispatch must fail closed");
+        assert!(error.to_string().contains("host does not support"));
+    }
+
+    #[test]
+    fn provider_without_claim_verify_loads_and_registers_no_verifier() {
+        let fixture = compile_provider_fixture_with_abi_minor(1, 1, |source| source);
+        let providers = Arc::new(
+            DomainProviderRegistry::initialize(&fixture.root, &fixture.manifest)
+                .expect("legacy provider should load unchanged"),
+        );
+        let mut verifiers = VerifierRegistry::new();
+
+        let registered = providers
+            .register_claim_verifiers(&mut verifiers)
+            .expect("absence of claim.verify must not be an error");
+
+        assert_eq!(registered, 0);
+        assert!(verifiers.is_empty());
+    }
+
+    #[test]
+    fn claim_verify_defaults_to_advisory_when_determinism_is_absent() {
+        let fixture = compile_claim_verifier_fixture(None, "pass");
+        let providers = Arc::new(
+            DomainProviderRegistry::initialize(&fixture.root, &fixture.manifest)
+                .expect("claim verifier provider should load"),
+        );
+        let mut verifiers = VerifierRegistry::new();
+        assert_eq!(
+            providers
+                .register_claim_verifiers(&mut verifiers)
+                .expect("claim verifier should register"),
+            1
+        );
+
+        let mut fixture = ClaimFixture::new();
+        let record_id = fixture
+            .run(&verifiers)
+            .expect("provider verifier should run");
+        let record = fixture
+            .verifications
+            .record_by_id(&record_id)
+            .expect("verification record should persist");
+        assert!(!record.deterministic());
+        assert_eq!(record.result(), VerificationResult::Pass);
+        assert_eq!(
+            record.rationale(),
+            Some("fixture domain rule accepted the claim")
+        );
+    }
+
+    #[test]
+    fn deterministic_provider_failure_blocks_a_trusted_verdict() {
+        let fixture = compile_claim_verifier_fixture(Some(true), "fail");
+        let providers = Arc::new(
+            DomainProviderRegistry::initialize(&fixture.root, &fixture.manifest)
+                .expect("deterministic claim verifier provider should load"),
+        );
+        let mut verifiers = VerifierRegistry::new();
+        providers
+            .register_claim_verifiers(&mut verifiers)
+            .expect("claim verifier should register");
+
+        let mut fixture = ClaimFixture::new();
+        fixture
+            .run(&verifiers)
+            .expect("provider verifier should produce a failure record");
+        let outcome = resolve_claim_verdict(
+            &mut fixture.claims,
+            &mut fixture.verdicts,
+            &ResolutionInputs::new(
+                &fixture.verifications,
+                &fixture.evidence,
+                &fixture.observations,
+                &fixture.sources,
+            ),
+            &fixture.claim,
+            stamp("2026-09-06T00:02:00Z"),
+            "deterministic-first-v1",
+        )
+        .expect("verdict should resolve");
+
+        assert_eq!(
+            outcome.state(),
+            VerdictState::Mixed,
+            "the reachable supporting observation remains visible beside the authoritative failure"
+        );
+        assert_ne!(outcome.state(), VerdictState::Supported);
+        assert_ne!(
+            fixture
+                .claims
+                .claim_by_id(&fixture.claim)
+                .expect("claim should remain available")
+                .status(),
+            ClaimStatus::Validated
+        );
+    }
+
+    struct ClaimFixture {
+        claim: ClaimId,
+        claims: ClaimStore,
+        observations: ObservationStore,
+        sources: SourceStore,
+        evidence: EvidenceRecordStore,
+        verifications: VerificationRecordStore,
+        verdicts: VerdictStore,
+    }
+
+    impl ClaimFixture {
+        fn new() -> Self {
+            let source = SourceId::new("source--provider-fixture").expect("source id");
+            let observation =
+                ObservationId::new("observation--provider-fixture").expect("observation id");
+            let claim = ClaimId::new("claim--provider-fixture").expect("claim id");
+            let mut sources = SourceStore::new();
+            sources
+                .register_source(SourceInput::new(
+                    source.clone(),
+                    "https://example.test/provider-fixture",
+                    EvidenceSourceType::Document,
+                ))
+                .expect("source should register");
+            let mut observations = ObservationStore::new();
+            observations
+                .create_observation(
+                    ObservationInput::new(
+                        observation.clone(),
+                        source,
+                        "A domain-specific assertion.",
+                        ObservationModality::Text,
+                    ),
+                    &sources,
+                )
+                .expect("observation should register");
+            let mut claims = ClaimStore::new();
+            claims.register_observation(observation.clone());
+            claims
+                .create_asserted_claim(
+                    ClaimInput::new(
+                        claim.clone(),
+                        ClaimStatement::new("A domain-specific assertion.")
+                            .expect("claim statement"),
+                        ClaimTarget::AnalyticalAssertion(ClaimAnalyticalTarget::new(
+                            "provider-fixture",
+                            None,
+                        )),
+                    )
+                    .with_confidence(Confidence::new(0.99).expect("confidence")),
+                )
+                .expect("claim should register");
+            claims
+                .attach_link(ClaimLink::new(
+                    ClaimLinkSource::Observation(observation),
+                    claim.clone(),
+                    ClaimLinkKind::Supports,
+                ))
+                .expect("link should attach");
+            Self {
+                claim,
+                claims,
+                observations,
+                sources,
+                evidence: EvidenceRecordStore::new(),
+                verifications: VerificationRecordStore::new(),
+                verdicts: VerdictStore::new(),
+            }
+        }
+
+        fn run(
+            &mut self,
+            registry: &VerifierRegistry,
+        ) -> Result<graph_core::VerificationRecordId, graph_core::GraphError> {
+            let context = VerificationContext::new(
+                &self.claims,
+                &self.observations,
+                &self.sources,
+                &self.evidence,
+            );
+            registry.run(
+                "fr.estance.corrobore.domain.cti.claim.verify",
+                "0.1.0-test",
+                &self.claim,
+                &context,
+                &mut self.verifications,
+                stamp("2026-09-06T00:01:00Z"),
+            )
+        }
+    }
+
+    fn stamp(transaction: &str) -> BitemporalStamp {
+        BitemporalStamp::new(
+            TemporalTimestamp::new("2026-09-06T00:00:00Z").expect("valid time"),
+            TemporalTimestamp::new(transaction).expect("transaction time"),
+        )
+        .expect("stamp")
+    }
+
+    fn compile_claim_verifier_fixture(
+        deterministic: Option<bool>,
+        result: &str,
+    ) -> ProviderFixture {
+        let declaration = deterministic.map_or_else(
+            || r#"{"name":"claim.verify","version":"1"}"#.to_owned(),
+            |value| format!(r#"{{"name":"claim.verify","version":"1","deterministic":{value}}}"#),
+        );
+        let rationale = if result == "fail" {
+            "fixture domain rule rejected the claim"
+        } else {
+            "fixture domain rule accepted the claim"
+        };
+        let payload = format!(
+            r#""payload":{{"result":"{result}","rationale":"{rationale}","limits":["fixture domain rule"],"evidence_consumed":["observation:observation--provider-fixture"]}}"#
+        );
+        let fixture = compile_provider_fixture_with(1, |source| {
+            source
+                .replace(r#"{"name":"node.validate","version":"1"}"#, &declaration)
+                .replace(
+                    r#""request_id":"fixture""#,
+                    r#""request_id":"claim-verify--claim--provider-fixture--2026-09-06T00:01:00Z""#,
+                )
+                .replace(
+                    r#""diagnostics":null"#,
+                    &format!(r#""diagnostics":null,{payload}"#),
+                )
+        });
+        let manifest = fs::read_to_string(&fixture.manifest).expect("manifest should be readable");
+        fs::write(
+            &fixture.manifest,
+            manifest.replace(r#"{"name":"node.validate","version":"1"}"#, &declaration),
+        )
+        .expect("claim verifier manifest should be written");
+        fixture
+    }
+
     struct ProviderFixture {
         root: std::path::PathBuf,
         manifest: std::path::PathBuf,
@@ -783,6 +1236,18 @@ mod tests {
         abi_major: u16,
         transform: impl FnOnce(String) -> String,
     ) -> ProviderFixture {
+        compile_provider_fixture_with_abi_minor(
+            abi_major,
+            CORROBORE_DOMAIN_PROVIDER_ABI_MINOR_V1,
+            transform,
+        )
+    }
+
+    fn compile_provider_fixture_with_abi_minor(
+        abi_major: u16,
+        abi_minor: u16,
+        transform: impl FnOnce(String) -> String,
+    ) -> ProviderFixture {
         let root = std::env::temp_dir().join(format!("corrobore-provider-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).expect("fixture root should be created");
         let source = root.join("provider.rs");
@@ -794,7 +1259,7 @@ mod tests {
             "libdomain_cti.so"
         };
         let library = root.join(library_name);
-        fs::write(&source, transform(provider_source(abi_major)))
+        fs::write(&source, transform(provider_source(abi_major, abi_minor)))
             .expect("fixture source should be written");
         let output = Command::new("rustc")
             .args(["--edition=2021", "--crate-type", "cdylib"])
@@ -839,8 +1304,7 @@ mod tests {
     ///
     /// `abi_minor` tracks the host constant rather than a literal, so bumping
     /// the ABI minor does not silently invalidate every fixture built here.
-    fn provider_source(abi_major: u16) -> String {
-        let abi_minor = CORROBORE_DOMAIN_PROVIDER_ABI_MINOR_V1;
+    fn provider_source(abi_major: u16, abi_minor: u16) -> String {
         format!(
             r###"
 use std::ffi::c_void;
