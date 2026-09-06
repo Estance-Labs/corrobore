@@ -243,6 +243,10 @@ fn expected_endpoints(
     ];
 
     match kind {
+        EpistemicRelationKind::HasMention => (
+            &[EpistemicNodeKind::Observation],
+            &[EpistemicNodeKind::EntityMention],
+        ),
         EpistemicRelationKind::Reports => (
             &[EpistemicNodeKind::Source],
             &[EpistemicNodeKind::Observation],

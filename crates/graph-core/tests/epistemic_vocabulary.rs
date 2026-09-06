@@ -35,7 +35,7 @@ fn create_node(graph: &mut Graph, labels: &[&str]) -> NodeId {
 }
 
 //
-// Verify that the epistemic node vocabulary is exactly the epic's eleven kinds
+// Verify that the epistemic node vocabulary is exactly the epic's kinds plus EntityMention
 // with stable canonical labels, so classification never depends on free text.
 //
 // Given the exported node-kind set,
@@ -43,8 +43,9 @@ fn create_node(graph: &mut Graph, labels: &[&str]) -> NodeId {
 // then every kind should map to itself and unknown labels to none.
 #[test]
 fn node_vocabulary_is_complete_with_stable_labels() {
-    assert_eq!(EpistemicNodeKind::ALL.len(), 11);
+    assert_eq!(EpistemicNodeKind::ALL.len(), 12);
     for kind in [
+        EpistemicNodeKind::EntityMention,
         EpistemicNodeKind::Entity,
         EpistemicNodeKind::Event,
         EpistemicNodeKind::Observation,
@@ -75,9 +76,10 @@ fn node_vocabulary_is_complete_with_stable_labels() {
 // then every kind should map to itself and unknown types to none.
 #[test]
 fn relation_vocabulary_is_complete_with_stable_types() {
-    // Eight Epic 0018 kinds plus the four Epic 0029 evidence-link kinds.
-    assert_eq!(EpistemicRelationKind::ALL.len(), 12);
+    // Eight Epic 0018 kinds, four evidence-link kinds, and mention containment.
+    assert_eq!(EpistemicRelationKind::ALL.len(), 13);
     for kind in [
+        EpistemicRelationKind::HasMention,
         EpistemicRelationKind::Reports,
         EpistemicRelationKind::Supports,
         EpistemicRelationKind::Refutes,

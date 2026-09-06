@@ -79,7 +79,7 @@ not inherit either field from its source or target node.
 ## Epistemic projection (Epic 0029)
 
 Governed evidence records live beside the graph in the epistemic stores:
-sources, observations, claims with their evidence links, verification records,
+sources, observations, entity mentions, claims with their evidence links, verification records,
 verdicts, and state transitions. They are not graph nodes, so ordinary
 `MATCH` does not see them. `Graph::epistemic_projection()` renders them as a
 read-only graph in the epistemic vocabulary that any read query can traverse:
@@ -88,13 +88,15 @@ read-only graph in the epistemic vocabulary that any read query can traverse:
 | :--- | :--- | :--- |
 | `Source` | `Source` version | `source_id`, `source_version`, `source_uri`, `source_type`, `source_artifact_sha256`, `source_derived_from_legacy` |
 | `Observation` | `Observation` | `observation_id`, `observation_source`, `observation_selector`, `observation_payload`, `observation_modality` |
+| `EntityMention` | `EntityMention` | `mention_id`, `mention_observation`, `mention_surface_form`, `mention_offset_start`, `mention_offset_end`, `mention_candidate_entities`, `mention_*` evidence features |
 | `Evidence` | `EvidenceRecord` | `evidence_id`, `evidence_source_ref`, `evidence_source`, `evidence_observation` |
 | `Claim` | `Claim` | `claim_id`, `claim_status`, `claim_statement`, `proposition_*`, `verdict_state`, `verdict_lifecycle_projection`, `verdict_id`, `verification_coverage*` |
 | `Verdict`, `Assessment` | `Verdict` | `verdict_id`, `verdict_claim`, `verdict_state`, `verdict_policy_version`, `verdict_valid_from`, `verdict_transaction_time`, `verdict_dimension_*`, `verdict_explanation`, `verdict_uncertainty_kind` |
 | `VerificationRecord`, `Assessment` | `VerificationRecord` | `verification_id`, `verification_claim`, `verification_verifier_id`, `verification_verifier_version`, `verification_deterministic`, `verification_result`, `verification_coverage_class`, `verification_coverage_current` |
 | `StateTransition`, `Decision` | `StateTransition` | `transition_id`, `transition_claim`, `transition_from_state`, `transition_to_state`, `transition_trigger` |
 
-Relationships follow the vocabulary: `REPORTS` (source to observation), the
+Relationships follow the vocabulary: `REPORTS` (source to observation),
+`HAS_MENTION` (observation to entity mention), the
 evidence-link kinds `SUPPORTS`, `REFUTES`, `CONTRADICTS`, `SUPERSEDES`,
 `CONTEXT_FOR`, `DUPLICATES`, `DERIVED_FROM`, `DEPENDS_ON` (link source to
 claim, carrying `evidence_link_*` properties), `ASSESSES` (verdict and
@@ -106,6 +108,51 @@ MATCH (c:Claim) RETURN c.claim_id, c.verification_coverage, c.verification_cover
 MATCH (o:Observation)-[:SUPPORTS]->(c:Claim) RETURN c.claim_id, o.observation_payload
 MATCH (t:StateTransition) RETURN t.transition_claim, t.transition_from_state, t.transition_to_state
 ```
+
+### Observation-bound entity mentions (WS-C)
+
+`Graph::create_entity_mention` appends an `EntityMentionInput` to the governed
+`EpistemicStores.mentions` store. It requires an existing observation, an exact
+surface form, and half-open UTF-8 **byte** offsets relative to that observation's
+payload. Offsets must lie on character boundaries and select precisely the
+surface form; they are not offsets into the original source document. The
+observation retains its own source locator.
+
+A mention is distinct from an `Entity`. Matching surface forms never populate
+candidate references or create identity links. Explicit `candidate_entities`
+are unresolved `NodeId` hints, retained in order; they neither prove the entity
+exists nor justify reconciliation. No canonical nodes or relationships are
+created when a mention is stored. Linking identity requires a later
+reconciliation record (WS-C item 4).
+
+Mention features retain source context, role, time, location, affiliations and
+a relation neighbourhood. The neighbourhood records a predicate, incoming or
+outgoing direction, and a descriptive counterpart; it does not materialize
+relationships. `mention_time` is the supplied mention/event time, distinct from
+the observation's capture time. Features remain attached to the immutable
+record and are exposed under `mention_*` properties, including JSON-valued
+`mention_relation_neighbourhood` and list-valued `mention_affiliations`.
+
+Creation is idempotent for an identical record. Changing a record under the
+same ID produces an `ImmutableRecordConflict`; corrections use a new mention ID.
+All mentions remain queryable by ID or observation, including those bound to
+superseded observations. Serialization and graph snapshots retain every field;
+snapshot restoration rejects duplicate mention IDs and broken observation spans.
+
+Run these reads against `Graph::epistemic_projection()`:
+
+```cypher
+MATCH (o:Observation)-[:HAS_MENTION]->(m:EntityMention) RETURN o.observation_id, m.mention_surface_form, m.mention_offset_start, m.mention_offset_end
+MATCH (m:EntityMention) RETURN m.mention_id, m.mention_candidate_entities, m.mention_role, m.mention_location
+```
+
+The projection creates mention nodes with the `EntityMention` label only and
+observation-to-mention edges. Candidate entity hints stay properties; projection
+never turns them into an identity relationship. The source graph remains
+unchanged. This is a graph-core creation API; no new HTTP ingestion route is
+introduced by WS-C item 3.
+
+### Verdict dimensions
 
 Dimension properties such as `verdict_dimension_evidence_sufficiency`,
 `verdict_dimension_source_independence`, `verdict_dimension_contradiction_load` and

@@ -113,6 +113,12 @@ mod calibrated_assessment;
 mod claim;
 mod cluster_aggregation;
 pub use actionability::{ActionabilityAssessment, ActionabilityBlocker, ActionabilityPolicy};
+mod entity_mention;
+pub use entity_mention::{
+    EntityMention, EntityMentionInput, EntityMentionStore, MentionFeatures, MentionOffsets,
+    MentionRelationDirection, MentionRelationFeature,
+};
+pub use ids::EntityMentionId;
 mod candidate_constraints;
 pub use candidate_constraints::{
     CandidateConstraint, CandidateFailure, CandidateRepair, CandidateRule, CandidateValidation,

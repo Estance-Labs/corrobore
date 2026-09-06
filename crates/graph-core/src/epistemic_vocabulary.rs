@@ -55,7 +55,7 @@ use crate::{
 /// One kind of the closed epistemic node vocabulary.
 ///
 ///
-/// name the eleven epistemic kinds of the epic explicitly so intelligence
+/// name the epistemic kinds of the epic explicitly so intelligence
 /// reasoning can distinguish what is known, observed, claimed, hypothesized,
 /// and decided.
 ///
@@ -64,6 +64,8 @@ use crate::{
 /// order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EpistemicNodeKind {
+    /// A surface mention, distinct from any canonical entity.
+    EntityMention,
     /// A real-world entity (actor, infrastructure, account).
     Entity,
 
@@ -104,7 +106,7 @@ impl EpistemicNodeKind {
     ///
     /// fix classification precedence: the first matching kind in this order
     /// wins when a node carries several canonical labels.
-    pub const ALL: [EpistemicNodeKind; 11] = [
+    pub const ALL: [EpistemicNodeKind; 12] = [
         EpistemicNodeKind::Entity,
         EpistemicNodeKind::Event,
         EpistemicNodeKind::Observation,
@@ -116,6 +118,7 @@ impl EpistemicNodeKind {
         EpistemicNodeKind::Contradiction,
         EpistemicNodeKind::Inference,
         EpistemicNodeKind::Decision,
+        EpistemicNodeKind::EntityMention,
     ];
 
     /// Return the canonical node label of this kind.
@@ -132,6 +135,7 @@ impl EpistemicNodeKind {
     /// none expected because the mapping is total.
     pub fn canonical_label(self) -> &'static str {
         match self {
+            EpistemicNodeKind::EntityMention => "EntityMention",
             EpistemicNodeKind::Entity => "Entity",
             EpistemicNodeKind::Event => "Event",
             EpistemicNodeKind::Observation => "Observation",
@@ -177,6 +181,8 @@ impl EpistemicNodeKind {
 /// enumerate the kinds; `ALL` fixes the report order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EpistemicRelationKind {
+    /// An observation contains a surface mention.
+    HasMention,
     /// A source reports an observation.
     Reports,
 
@@ -220,7 +226,7 @@ impl EpistemicRelationKind {
     ///
     ///
     /// fix the report order so vocabularies diff cleanly across runs.
-    pub const ALL: [EpistemicRelationKind; 12] = [
+    pub const ALL: [EpistemicRelationKind; 13] = [
         EpistemicRelationKind::Reports,
         EpistemicRelationKind::Supports,
         EpistemicRelationKind::Refutes,
@@ -233,6 +239,7 @@ impl EpistemicRelationKind {
         EpistemicRelationKind::Duplicates,
         EpistemicRelationKind::DerivedFrom,
         EpistemicRelationKind::DependsOn,
+        EpistemicRelationKind::HasMention,
     ];
 
     /// Return the canonical relationship type of this kind.
@@ -249,6 +256,7 @@ impl EpistemicRelationKind {
     /// none expected because the canonical names are statically valid.
     pub fn canonical_relationship_type(self) -> RelationshipType {
         let name = match self {
+            EpistemicRelationKind::HasMention => "HAS_MENTION",
             EpistemicRelationKind::Reports => "REPORTS",
             EpistemicRelationKind::Supports => "SUPPORTS",
             EpistemicRelationKind::Refutes => "REFUTES",
@@ -308,7 +316,8 @@ impl EpistemicRelationKind {
             EpistemicRelationKind::Duplicates => Some(ClaimLinkKind::Duplicates),
             EpistemicRelationKind::DerivedFrom => Some(ClaimLinkKind::DerivedFrom),
             EpistemicRelationKind::DependsOn => Some(ClaimLinkKind::DependsOn),
-            EpistemicRelationKind::Reports
+            EpistemicRelationKind::HasMention
+            | EpistemicRelationKind::Reports
             | EpistemicRelationKind::Assesses
             | EpistemicRelationKind::Infers
             | EpistemicRelationKind::Decides => None,
