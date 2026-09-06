@@ -170,6 +170,80 @@ components:
           type: array
           description: Retained native evidence records referenced by exported objects.
           items: {type: object}
+    CandidateConstraint:
+      type: object
+      additionalProperties: false
+      required: [id, field, rule]
+      properties:
+        id: {type: string, minLength: 1}
+        field: {type: string, description: RFC 6901 JSON pointer into the raw document}
+        rule:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [kind]
+              properties:
+                kind: {type: string, enum: [required, json_document]}
+            - type: object
+              additionalProperties: false
+              required: [kind, expected]
+              properties:
+                kind: {type: string, const: type}
+                expected: {type: string, enum: [string, number, integer, boolean, array, object]}
+            - type: object
+              additionalProperties: false
+              required: [kind, min]
+              properties:
+                kind: {type: string, const: cardinality}
+                min: {type: integer, minimum: 0}
+                max: {type: [integer, 'null'], minimum: 0}
+            - type: object
+              additionalProperties: false
+              required: [kind, after]
+              properties:
+                kind: {type: string, const: temporal_order}
+                after: {type: string, description: RFC 6901 pointer to the earlier RFC 3339 timestamp}
+            - type: object
+              additionalProperties: false
+              required: [kind, allowed]
+              properties:
+                kind: {type: string, const: allowed_predicates}
+                allowed: {type: array, minItems: 1, items: {type: string, minLength: 1}}
+    CandidateValidation:
+      type: object
+      required: [valid, failures]
+      properties:
+        valid: {type: boolean}
+        failures:
+          type: array
+          items:
+            type: object
+            required: [constraint, field, observed, present, repeated]
+            properties:
+              constraint: {$ref: '#/components/schemas/CandidateConstraint'}
+              field: {type: string, description: Exact offending JSON pointer; may address the temporal counterpart}
+              observed: {description: Unmodified JSON value or null for an absent field}
+              present: {type: boolean}
+              repeated: {type: boolean, description: Same constraint failed on the immediate predecessor}
+    CandidateRepairLink:
+      type: object
+      required: [predecessor, caused_by]
+      properties:
+        predecessor: {type: object, required: [value], properties: {value: {type: string}}}
+        caused_by: {type: array, minItems: 1, uniqueItems: true, items: {type: string}}
+    CandidateRepairRequest:
+      type: object
+      additionalProperties: false
+      required: [id, extraction_run_id, raw_payload, actor, caused_by]
+      properties:
+        id: {type: string, minLength: 1}
+        extraction_run_id: {type: string, minLength: 1}
+        raw_payload: {type: string}
+        actor: {type: string, minLength: 1}
+        caused_by: {type: array, minItems: 1, uniqueItems: true, items: {type: string}}
+        workspace_id: {type: string}
+        session_id: {type: string}
+        budget_ref: {type: string}
     CandidateSubmission:
       type: object
       additionalProperties: false
@@ -179,9 +253,12 @@ components:
         extraction_run_id: {type: string, minLength: 1}
         raw_payload:
           type: string
-          description: Verbatim extractor output; no parsing or normalization is applied to the decoded string.
+          description: Verbatim extractor output; validation parses a separate view without normalizing stored text.
         actor: {type: string, minLength: 1}
         tier: {type: string, enum: [Shadow, Hypothesis], default: Shadow}
+        constraints:
+          type: array
+          items: {$ref: '#/components/schemas/CandidateConstraint'}
         workspace_id: {type: string}
         session_id: {type: string}
         budget_ref: {type: string}
@@ -219,10 +296,11 @@ components:
                   description: Native PropertyValue map.
     CandidateResponse:
       type: object
-      required: [ok, candidate, tier, promotions]
+      required: [ok, candidate, tier, promotions, validation]
       properties:
         ok: {type: boolean, const: true}
         tier: {type: string, enum: [Shadow, Hypothesis, Canonical]}
+        validation: {$ref: '#/components/schemas/CandidateValidation'}
         candidate:
           type: object
           description: Immutable CandidateInput; landing_tier retains the original destination.
@@ -233,6 +311,10 @@ components:
             raw_payload: {type: string}
             actor: {type: object, required: [value], properties: {value: {type: string}}}
             landing_tier: {type: string, enum: [Shadow, Hypothesis]}
+            constraints:
+              type: array
+              items: {$ref: '#/components/schemas/CandidateConstraint'}
+            repair: {$ref: '#/components/schemas/CandidateRepairLink'}
         promotions:
           type: array
           items: {$ref: '#/components/schemas/CandidatePromotionReceipt'}
@@ -1498,6 +1580,29 @@ paths:
               schema: {$ref: '#/components/schemas/CandidateResponse'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+  /v1/import/candidates/{id}/repairs:
+    post:
+      operationId: repairCandidate
+      summary: Append a repaired candidate with inherited constraints and lineage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CandidateRepairRequest'}
+      responses:
+        '200':
+          description: Retained repair with precise validation feedback; never an automatic promotion
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CandidateResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '422': {description: Malformed repair request or unknown fields}
   /v1/import/candidates/{id}/promote:
     post:
       operationId: promoteCandidate
@@ -1526,7 +1631,21 @@ paths:
                   promotion: {$ref: '#/components/schemas/CandidatePromotionReceipt'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
-        '422': {description: Malformed promotion or unknown fields}
+        '422':
+          description: Malformed promotion or CANDIDATE_CONSTRAINTS_FAILED with structured validation feedback
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: false}
+                  tier: {type: string, enum: [Shadow, Hypothesis]}
+                  error:
+                    type: object
+                    properties:
+                      code: {type: string, const: CANDIDATE_CONSTRAINTS_FAILED}
+                      message: {type: string}
+                  validation: {$ref: '#/components/schemas/CandidateValidation'}
 
   /v1/import/stix:
     post:
