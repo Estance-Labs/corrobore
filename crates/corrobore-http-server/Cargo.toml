@@ -48,7 +48,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }
 rustls = { workspace = true }
-sha2 = "0.10"
+sha2 = { workspace = true }
 shared-runtime = { path = "../shared-runtime" }
 subtle = { workspace = true }
 thiserror = { workspace = true }

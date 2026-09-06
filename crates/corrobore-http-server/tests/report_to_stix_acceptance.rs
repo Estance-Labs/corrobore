@@ -98,10 +98,11 @@ fn report_to_stix_checksums_match_committed_artifacts() {
         let (expected, name) = line
             .split_once("  ")
             .expect("checksum rows use sha256sum format");
-        let actual = format!(
-            "{:x}",
+        let actual =
             Sha256::digest(fs::read(fixture_path(name)).expect("checksummed fixture must load"))
-        );
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
         assert_eq!(actual, expected, "checksum mismatch for {name}");
     }
 }
@@ -386,10 +387,10 @@ mod e2e {
             "provider compilation: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let digest = format!(
-            "{:x}",
-            Sha256::digest(fs::read(&library).expect("provider library must load"))
-        );
+        let digest = Sha256::digest(fs::read(&library).expect("provider library must load"))
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
         let manifest = root.join("providers.json");
         fs::write(
             &manifest,

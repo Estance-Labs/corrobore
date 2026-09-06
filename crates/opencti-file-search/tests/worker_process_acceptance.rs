@@ -44,7 +44,10 @@ fn dedicated_worker_process_fetches_extracts_and_publishes_one_job() {
                 blob_key: "sample.txt".to_owned(),
                 name: "sample.txt".to_owned(),
                 mime_type: "text/plain".to_owned(),
-                content_hash: format!("{:x}", Sha256::digest(content)),
+                content_hash: Sha256::digest(content)
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect(),
                 version: 1,
                 access: AccessMetadata::default(),
             },

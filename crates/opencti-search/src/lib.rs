@@ -17,7 +17,7 @@ use std::{
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use graph_core::{Graph, Node, PropertyValue, RecordStatus, Relationship};
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use opencti_access::{AccessContext, AccessMetadata};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

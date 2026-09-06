@@ -15,7 +15,6 @@ use std::{
 };
 
 use calamine::{Reader as _, open_workbook_auto_from_rs};
-use fs4::fs_std::FileExt as _;
 use opencti_access::{AccessContext, AccessMetadata};
 use opencti_search::{
     FullTextDocument, FullTextFieldFilter, FullTextIndex, FullTextIndexSettings, FullTextMatchMode,
@@ -681,7 +680,7 @@ impl FileJobStore {
             .write(true)
             .open(self.root.join("file-jobs.lock"))
             .map_err(persistence_error)?;
-        lock.lock_exclusive().map_err(persistence_error)?;
+        fs4::FileExt::lock(&lock).map_err(persistence_error)?;
         self.state = self.read_state()?;
         Ok(lock)
     }
@@ -1140,7 +1139,10 @@ fn validate_extraction_request(
             "source file exceeds max_input_bytes",
         ));
     }
-    let actual_hash = format!("{:x}", Sha256::digest(&request.content));
+    let actual_hash = Sha256::digest(&request.content)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
     if actual_hash != request.descriptor.content_hash.to_ascii_lowercase() {
         return Err(failure(
             ExtractionErrorCode::ContentHashMismatch,
@@ -1490,7 +1492,14 @@ fn job_id(descriptor: &FileDescriptor) -> String {
     digest.update(descriptor.content_hash.as_bytes());
     digest.update([0]);
     digest.update(descriptor.version.to_be_bytes());
-    format!("file-job--{:x}", digest.finalize())
+    let digest = digest.finalize();
+    format!(
+        "file-job--{}",
+        digest
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    )
 }
 
 fn random_token() -> Result<String, FileContentError> {

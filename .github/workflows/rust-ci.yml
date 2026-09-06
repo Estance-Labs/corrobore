@@ -49,6 +49,7 @@ jobs:
             ci:
               - '.github/workflows/rust-ci.yml'
               - 'scripts/rust-ci-cache-contract.test.mjs'
+              - 'scripts/crypto-dependency-contract.test.mjs'
               - 'scripts/docs-contract-guard.mjs'
               - 'scripts/docs-contract-guard.test.mjs'
               - 'scripts/agent-plugin-contract.test.mjs'
@@ -117,6 +118,7 @@ jobs:
 
       - name: Validate docs contracts against runtime code
         run: |
+          node --test scripts/crypto-dependency-contract.test.mjs
           node --test scripts/agent-plugin-contract.test.mjs
           node --test scripts/agent-plugin-mcp.test.mjs
           node --test scripts/docs-contract-guard.test.mjs

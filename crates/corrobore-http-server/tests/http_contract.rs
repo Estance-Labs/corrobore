@@ -388,10 +388,10 @@ fn compile_c_provider_fixture_with_capability(capability: &str) -> (PathBuf, Pat
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let hash = format!(
-        "{:x}",
-        Sha256::digest(fs::read(&library).expect("provider library should be readable"))
-    );
+    let hash = Sha256::digest(fs::read(&library).expect("provider library should be readable"))
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
     let manifest = root.join("providers.json");
     fs::write(
         &manifest,

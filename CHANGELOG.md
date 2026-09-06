@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
+### Fixed
+
+- Workspace compatibility after the `hmac` 0.13 and `fs4` 1.1 upgrades:
+  direct SHA-2 consumers now share `digest` 0.11 with HMAC, hexadecimal digest
+  rendering and key initialization use the current APIs, and file-worker
+  locking uses the renamed `fs4` operation. CI now rejects future direct
+  HMAC/SHA-2 digest-release drift (#175).
+
 ### Added
 
 - `graph-core`: optional structured `ClaimProposition` beside the claim text

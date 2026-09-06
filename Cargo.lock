@@ -635,7 +635,7 @@ dependencies = [
  "opencti-search",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "shared-runtime",
  "subtle",
  "thiserror 2.0.20",
@@ -667,7 +667,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "shared-runtime",
  "subtle",
  "thiserror 2.0.20",
@@ -1510,7 +1510,7 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "thiserror 2.0.20",
  "url",
  "uuid",
@@ -1529,7 +1529,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "thiserror 2.0.20",
  "tracing",
 ]
@@ -2365,7 +2365,7 @@ version = "0.3.3"
 dependencies = [
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "thiserror 2.0.20",
 ]
 
@@ -2378,7 +2378,7 @@ dependencies = [
  "opencti-access",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "thiserror 2.0.20",
 ]
 
@@ -2395,7 +2395,7 @@ dependencies = [
  "opencti-search",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "thiserror 2.0.20",
  "zip",
 ]
@@ -2410,7 +2410,7 @@ dependencies = [
  "opencti-access",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "tantivy",
  "thiserror 2.0.20",
 ]
