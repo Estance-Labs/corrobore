@@ -482,3 +482,8 @@ pub use pipeline_metrics::{
     PipelineStage, PipelineStageReport, StageMeasurement, StageMetric, StageMetricError,
     StageMetricsRegistry,
 };
+
+mod evidence_access_metrics;
+pub use evidence_access_metrics::{
+    EvidenceAccessError, EvidenceAccessProposal, EvidenceAccessReport, measure_evidence_access,
+};
