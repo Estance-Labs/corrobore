@@ -15,6 +15,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const serverPath = path.join(root, 'plugins', 'corrobore', 'mcp-server', 'server.mjs');
 const protocolVersion = '2025-06-18';
 const expectedTools = [
+  'corrobore_claim_audit',
   'corrobore_consolidate',
   'corrobore_forget',
   'corrobore_ready',
@@ -378,4 +379,27 @@ test('timeouts, network failures, oversized messages, and unsafe configuration f
   assert.equal(exitCode, 1);
   assert.equal(unsafe.getStdoutRemainder(), '');
   assert.match(unsafe.getStderr(), /http or https/i);
+});
+
+test('claim audit tool reads direct provenance without sending mutation fields', async () => {
+  const audit = { claim: { id: { value: 'claim/a?b' } }, current_verdict: null, coverage: [{ entries: [{ class: 'semantically_judged', deterministic: false }] }] };
+  const upstream = await listen(async (_request, response) => {
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(audit));
+  });
+  const client = startMcp({ CORROBORE_MCP_BASE_URL: upstream.baseUrl, CORROBORE_MCP_AUTH_TOKEN: 'audit-token' });
+  try {
+    await initialize(client);
+    const result = await callTool(client, 80, 'corrobore_claim_audit', { claim_id: 'claim/a?b' });
+    assert.deepEqual(result.result?.structuredContent, audit);
+    assert.deepEqual(upstream.requests, [{ method: 'GET', url: '/v1/claims/claim%2Fa%3Fb/audit', authorization: 'Bearer audit-token', body: undefined }]);
+    for (const args of [{}, {claim_id: ''}, {claim_id: '   '}, {claim_id: 7}, {claim_id:'claim', verdict:'Supported'}]) {
+      const rejected = await callTool(client, 81, 'corrobore_claim_audit', args);
+      assert.equal(rejected.error?.code, -32602);
+    }
+    assert.equal(upstream.requests.length, 1);
+  } finally {
+    await client.stop();
+    await upstream.close();
+  }
 });

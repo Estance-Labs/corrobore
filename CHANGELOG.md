@@ -21,6 +21,14 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
 ### Added
 
+- WS-F claim audit: deterministic retained provenance, explicit verification
+  coverage, stored dimensions/clusters and history; separate attributed,
+  reversible human decisions; scoped offline audit archives in STIX/FIMI and
+  native memory restoration. Agent skills require an audit before asserting a
+  verdict, with a read-only `corrobore_claim_audit` MCP tool in the source plugin.
+  The acceptance matrix links HTTP, export and UI evidence
+  (#194, #204–#208).
+
 - WS-C candidate-first ingestion: immutable raw versions, targeted constraint
   feedback and repair lineage, evidence-cited mention reconciliation with
   reversible merges, and independently evaluated repair/reconciliation metrics.

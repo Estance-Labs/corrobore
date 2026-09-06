@@ -83,6 +83,7 @@ forget, consolidate, STIX, or enterprise-domain permissions.
 
 | Tool | HTTP route | Effect |
 | :--- | :--- | :--- |
+| `corrobore_claim_audit` | `GET /v1/claims/{id}/audit` | Required stored read before asserting a verdict; no recomputation. |
 | `corrobore_ready` | `GET /health/ready` | Readiness check. |
 | `corrobore_remember` | `POST /v1/memory/operations` | Authorized memory create or identity-upsert. |
 | `corrobore_relate` | `POST /v1/memory/operations` | Authorized relationship create or version. |
@@ -126,3 +127,12 @@ The contracts check the closed Agent Plugins manifests, Agent Skills discovery,
 package-local paths, documentation and release wiring, MCP lifecycle, complete
 tool discovery, HTTP mapping, bearer isolation, timeouts, bounded failures, and
 stdout purity.
+
+## Claim audit before verdicts
+
+The current source package adds `corrobore_claim_audit` with a required `claim_id`.
+Read the [claim audit playbook](skills/corrobore/references/claim-audit.md) before
+reporting a verdict. The tool preserves the direct API response and shares the
+existing authentication, timeout and response-size limits. Human decisions use
+the authorized HTTP decision API; this MCP tool is read-only. This addition is
+not included in the historical `agent-plugin-v0.2.0` release archive.

@@ -85,6 +85,25 @@ Agent recipes use the candidate loop rather than direct graph writes.
 The [ingestion contract and acceptance matrix](user-guide/ingestion.md#candidate-ingestion-ws-c)
 link Spikes B/D, HTTP undo, metric coverage and unchanged WS-A/WS-B/WS-D gates.
 
+## Claim audit and analyst decisions (WS-F)
+
+`Graph::claim_audit_path` assembles a deterministic view of retained epistemic
+records and exact provenance bindings. The authenticated HTTP GET delegates
+through the engine; it does not execute resolution, verification or ingestion.
+Coverage is a read projection of the current retained verifier records; stored
+verdict dimensions and cluster explanations are returned without recomputation.
+
+Analyst annotations, overrides and reversals use a separate append-only ledger.
+The HTTP POST persists an atomic engine mutation with idempotent decision IDs.
+The actor is caller-attributed. Neither an override nor its reversal modifies an
+observation, verification or machine verdict. Scoped export archives preserve
+selected provenance closure and stable link indices; native memory exports carry
+the full snapshot. Restoration validates consistency before exposing the audit.
+
+The UI and agent playbooks consume these same read/write boundaries. See the
+[audit guide and WS-F acceptance matrix](user-guide/claim-audit.md) for executable
+evidence, known gaps and the offline import contract.
+
 ## Request path
 
 Every embedded or HTTP Cypher request follows the same boundary:

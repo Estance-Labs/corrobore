@@ -58,6 +58,28 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorEnvelope'
   schemas:
+    VerificationCoverageEntry:
+      type: object
+      required: [class, deterministic]
+      properties:
+        class:
+          type: string
+          enum: [mechanically_checked, semantically_judged, unchecked, failing]
+        deterministic: {type: boolean}
+        record_id: {type: string}
+        verifier_id: {type: string}
+        verifier_version: {type: string}
+        result: {type: string, enum: [pass, fail, inconclusive]}
+      description: Unchecked entries omit verifier fields. Other entries retain the verifier and result; mechanically checked does not imply a passing result.
+    VerificationCoverage:
+      type: object
+      required: [claim_id, target, entries]
+      properties:
+        claim_id: {type: string}
+        target: {type: string, enum: [statement, proposition]}
+        entries:
+          type: array
+          items: {$ref: '#/components/schemas/VerificationCoverageEntry'}
     ClaimAuditPath:
       type: object
       description: Stored provenance only; no resolver or verifier execution. Arrays of records are deterministic; histories retain ledger order.
@@ -105,7 +127,7 @@ components:
           items: {type: object, additionalProperties: true}
         coverage:
           type: array
-          items: {type: object, additionalProperties: true}
+          items: {$ref: '#/components/schemas/VerificationCoverage'}
         verdict_history:
           type: array
           items: {type: object, additionalProperties: true}
