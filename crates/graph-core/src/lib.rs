@@ -129,6 +129,7 @@ mod graph_tiers;
 mod hyperrelation;
 mod ids;
 mod immune_response;
+mod independence;
 mod information_gain;
 mod loading_profile;
 mod mixed_traversal;
@@ -278,6 +279,10 @@ pub use ids::{
     ValidationErrorId, VerdictId, VerificationRecordId, WorkspaceId,
 };
 pub use immune_response::{ImmuneResponder, ImmuneResponse, ImmuneResponseAction};
+pub use independence::{
+    DependencyReason, DependencySignal, IndependenceCluster, NearDuplicateArtifact,
+    SourceDependencySignals, SourceIndependence,
+};
 pub use information_gain::{
     CandidateEvidenceOutcome, InformationGainEstimate, InformationGainInput, OutcomeProbability,
     estimate_information_gain,
