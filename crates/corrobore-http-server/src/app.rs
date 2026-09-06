@@ -140,6 +140,8 @@ pub enum AppStateInitError {
     PersistentStorageRecoveryFailed { path: String, reason: String },
     #[error("failed to initialize enterprise domain providers: {reason}")]
     DomainProviderInitFailed { reason: String },
+    #[error("failed to register domain provider verifiers: {reason}")]
+    DomainVerifierRegistrationFailed { reason: String },
     #[error("failed to restore OpenCTI synchronization state: {reason}")]
     OpenCtiSyncStateFailed { reason: String },
     #[error("failed to restore OpenCTI shadow-read state: {reason}")]
@@ -170,6 +172,9 @@ pub struct AppState {
     pub stix_import_metrics: Arc<Mutex<crate::handlers::import::ImportRuntimeMetrics>>,
     pub opencti_write_semaphore: Arc<tokio::sync::Semaphore>,
     pub(crate) domain_providers: Option<Arc<crate::enterprise::registry::DomainProviderRegistry>>,
+    /// Verifiers available to governance workflows, including adapters
+    /// registered by loaded domain providers.
+    pub verifier_registry: Arc<graph_core::VerifierRegistry>,
     pub started_at: Instant,
 }
 
@@ -320,6 +325,7 @@ impl AppState {
         )
         .map_err(|reason| AppStateInitError::OpenCtiRoutingStateFailed { reason })?;
         let domain_providers = initialize_domain_providers(&config)?;
+        let verifier_registry = initialize_verifier_registry(domain_providers.as_ref())?;
         let timeline = ExplorerTimelineStore::new(&config.session_store_dir);
         let lifecycle = Arc::new(ServerLifecycle::initializing());
         let opencti_write_semaphore = Arc::new(tokio::sync::Semaphore::new(
@@ -344,11 +350,28 @@ impl AppState {
             stix_import_metrics: Arc::new(Mutex::new(Default::default())),
             opencti_write_semaphore,
             domain_providers,
+            verifier_registry,
             started_at: Instant::now(),
         };
         lifecycle.mark_ready();
         Ok(state)
     }
+}
+
+fn initialize_verifier_registry(
+    domain_providers: Option<&Arc<crate::enterprise::registry::DomainProviderRegistry>>,
+) -> Result<Arc<graph_core::VerifierRegistry>, AppStateInitError> {
+    let mut registry = graph_core::VerifierRegistry::new();
+    if let Some(providers) = domain_providers {
+        providers
+            .register_claim_verifiers(&mut registry)
+            .map_err(
+                |error| AppStateInitError::DomainVerifierRegistrationFailed {
+                    reason: error.to_string(),
+                },
+            )?;
+    }
+    Ok(Arc::new(registry))
 }
 
 fn default_read_routing_policy() -> ReadRoutingPolicy {

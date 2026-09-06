@@ -102,6 +102,18 @@ pub enum GraphError {
         version: String,
     },
 
+    /// A registered verifier could not complete its external or internal
+    /// evaluation and therefore produced no verification record.
+    #[error("verifier execution failed for {id} version {version}: {reason}")]
+    VerifierExecutionFailed {
+        /// Verifier identifier.
+        id: String,
+        /// Verifier implementation version.
+        version: String,
+        /// Stable human-readable failure reason.
+        reason: String,
+    },
+
     /// A governed record (source, observation, verdict, state transition,
     /// verification record) was re-submitted with different content under an
     /// existing identifier. Governed records are append-only; correction goes
