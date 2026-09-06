@@ -21,6 +21,10 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
 ### Added
 
+- WS-E evidence access metrics separate graph presence, recorded verifier-path
+  reachability and unexplained retrieved evidence, with reproducible fixtures
+  and policy/budget-aware retrieval proposals (#211).
+
 - WS-E v1 stage instrumentation with explicit input/output units, failed-input
   counts, producer attribution, idempotent measurements and bounded per-engine
   reports. The authenticated stage API emits all seven stages, preserving null

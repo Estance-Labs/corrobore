@@ -1,0 +1,21 @@
+{
+  "expected": ["linked", "unreachable"],
+  "retrieved": ["linked", "residual"],
+  "report": {
+    "schema_version": "corrobore-evidence-access-v1",
+    "expected_count": 2,
+    "retrieved_count": 2,
+    "presence_rate": 1.0,
+    "reachability_rate": 0.5,
+    "residual_evidence_rate": 0.5,
+    "present": [{"value":"linked"}, {"value":"unreachable"}],
+    "reachable": [{"value":"linked"}],
+    "absent": [],
+    "present_but_unreachable": [{"value":"unreachable"}],
+    "residual_evidence": [{"value":"residual"}],
+    "proposals": [
+      {"action":"ExpandRelation", "reason":"present_but_unreachable", "evidence_ids":[{"value":"unreachable"}]},
+      {"action":"SearchCorpus", "reason":"retrieved_evidence_unexplained", "evidence_ids":[{"value":"residual"}]}
+    ]
+  }
+}
