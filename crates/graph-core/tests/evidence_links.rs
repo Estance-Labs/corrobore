@@ -158,7 +158,9 @@ fn link_kinds_are_closed_and_aligned_with_the_relation_vocabulary() {
             .as_str(),
         "DEPENDS_ON"
     );
-    assert_eq!(EpistemicRelationKind::ALL.len(), 12);
+    assert_eq!(EpistemicRelationKind::ALL.len(), 13);
+    // Observation-to-mention containment is not an evidence link to a claim.
+    assert_eq!(EpistemicRelationKind::HasMention.claim_link_kind(), None);
 }
 
 //

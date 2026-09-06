@@ -213,3 +213,72 @@ fn claim_and_verification_nodes_expose_queryable_coverage() {
     );
     assert_eq!(verifications[2]["v.verification_coverage_class"], "failing");
 }
+
+#[test]
+fn observation_mentions_are_queryable_without_resolving_candidate_entities() {
+    use graph_core::{
+        EntityMentionId, EntityMentionInput, MentionOffsets, NodeInput, PropertyValue,
+    };
+    let mut graph = Graph::new();
+    let source = SourceId::new("source--mentions").expect("source");
+    let observation = ObservationId::new("observation--mentions").expect("observation");
+    let stores = graph.epistemic_stores_mut();
+    stores
+        .sources
+        .register_source(SourceInput::new(
+            source.clone(),
+            "https://example.org/report",
+            EvidenceSourceType::Document,
+        ))
+        .expect("source");
+    stores
+        .observations
+        .create_observation(
+            ObservationInput::new(
+                observation.clone(),
+                source,
+                "Atlas",
+                ObservationModality::Text,
+            ),
+            &stores.sources,
+        )
+        .expect("observation");
+    let entity = graph
+        .create_node(
+            NodeInput::new(["Entity"]).with_property("name", PropertyValue::String("Atlas".into())),
+        )
+        .expect("entity");
+    graph
+        .create_entity_mention(
+            EntityMentionInput::new(
+                EntityMentionId::new("mention--1").expect("mention"),
+                observation,
+                MentionOffsets { start: 0, end: 5 },
+                "Atlas",
+            )
+            .with_candidate_entities(vec![entity]),
+        )
+        .expect("mention");
+    let mut executor = CypherPipelineExecutor::with_graph(
+        ExecutionPolicy::strict_default(),
+        graph.epistemic_projection().expect("projection"),
+    );
+    let result=executor.execute("MATCH (o:Observation)-[:HAS_MENTION]->(m:EntityMention) RETURN m.mention_surface_form, m.mention_observation").expect("query");
+    let ExecutionResultData::Records(rows) = result.data else {
+        panic!("expected records")
+    };
+    assert_eq!(rows.len(), 1);
+    let fields = &rows[0].fields;
+    assert_eq!(
+        serde_json::to_value(fields.get("m.mention_surface_form").expect("surface"))
+            .expect("encode"),
+        serde_json::json!("Atlas")
+    );
+    let result = executor
+        .execute("MATCH (m:EntityMention)-[r]->(e:Entity) RETURN e")
+        .expect("query");
+    let ExecutionResultData::Records(rows) = result.data else {
+        panic!("expected records")
+    };
+    assert!(rows.is_empty());
+}

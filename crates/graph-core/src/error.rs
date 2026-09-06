@@ -595,6 +595,8 @@ mod tests {
 /// [`GraphError::ImmutableRecordConflict`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ImmutableRecordKind {
+    /// An observation-bound entity mention.
+    EntityMention,
     /// `Source` version.
     Source,
     /// `Observation`.
@@ -611,6 +613,7 @@ impl ImmutableRecordKind {
     /// Canonical lowercase token.
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::EntityMention => "entity_mention",
             Self::Source => "source",
             Self::Observation => "observation",
             Self::Verdict => "verdict",

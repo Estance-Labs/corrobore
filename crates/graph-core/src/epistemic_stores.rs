@@ -22,7 +22,7 @@
 //!
 //! Module boundary:
 //! this module owns the `EpistemicStores` bundle that moves sources,
-//! observations, claims, verification records, and verdicts together through
+//! observations, entity mentions, claims, verification records, and verdicts together through
 //! the graph, its persistence snapshot, and the durable store. It does not
 //! define any of the records themselves.
 //!
@@ -38,6 +38,9 @@ use crate::{ClaimStore, ObservationStore, SourceStore, VerdictStore, Verificatio
 /// The governed evidence stores of one graph.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct EpistemicStores {
+    /// Immutable observation-bound surface mentions.
+    #[serde(default, skip_serializing_if = "crate::EntityMentionStore::is_empty")]
+    pub mentions: crate::EntityMentionStore,
     /// Raw extraction proposals and audited canonical promotions.
     #[serde(default, skip_serializing_if = "crate::CandidateStore::is_empty")]
     pub candidates: crate::CandidateStore,
@@ -62,7 +65,8 @@ pub struct EpistemicStores {
 impl EpistemicStores {
     /// Whether every store is empty.
     pub fn is_empty(&self) -> bool {
-        self.candidates.is_empty()
+        self.mentions.is_empty()
+            && self.candidates.is_empty()
             && self.sources.is_empty()
             && self.observations.is_empty()
             && self.claims.is_empty()
