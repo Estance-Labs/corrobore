@@ -165,6 +165,73 @@ impl CypherGateway {
         }
     }
 
+    /// Execute a request on behalf of an agent run.
+    ///
+    /// Authorization is decided before the query is parsed, from policy and
+    /// trusted context only. A refused request never reaches the executor, so a
+    /// denied write cannot leave a partial effect, and a run that has spent its
+    /// budget is refused for the same reason.
+    ///
+    /// A request that merely *declares* itself read-only is not taken at its
+    /// word: when the policy grants no write, any write-shaped query is refused
+    /// too. That is what makes an injected instruction inert — the instruction
+    /// can say anything, and the decision never reads it.
+    ///
+    /// # Errors
+    /// Propagates executor and validation failures. A policy refusal is a
+    /// rejected response, not an error, so a caller records it like any other
+    /// governed outcome.
+    pub fn execute_for_agent_run(
+        &mut self,
+        policy: &AgentWritePolicy,
+        context: &AgentRunContext,
+        usage: &RunUsage,
+        audit: &mut MutationAuditChain,
+        request: &CypherRequest,
+    ) -> Result<CypherResponse, RuntimeError> {
+        let decision = authorize_agent_write(policy, context, usage);
+        let writes = request.mode == CypherRequestMode::Mutation
+            || contains_mutation_keywords(&request.query_text);
+        if writes && !decision.is_allowed() {
+            // Reuse the existing unsafe-write vocabulary: a refused agent
+            // write is the same governed outcome as any other refused write,
+            // and a caller already knows how to report it.
+            return Ok(runtime_error_to_rejected_response(
+                RuntimeError::UnsafeMutationAttempt {
+                    reason: format!(
+                        "agent write refused under policy {}: {:?}",
+                        decision.policy_version(),
+                        decision.denials()
+                    ),
+                    fix_hint:
+                        "Grant the write in the agent policy, or run the request without write intent."
+                            .to_owned(),
+                },
+            ));
+        }
+        let response = self.execute(request)?;
+        // Only an applied mutation is audited, and only under a decision that
+        // allowed it: a refused write is never recorded as one.
+        if writes && decision.is_allowed() && response.status == CypherResponseStatus::Success {
+            let mutations = match &response.data {
+                CypherResponseData::MutationSummary(summary) => {
+                    (summary.created_nodes
+                        + summary.updated_nodes
+                        + summary.deleted_nodes
+                        + summary.created_relationships
+                        + summary.updated_relationships
+                        + summary.deleted_relationships
+                        + summary.properties_set) as usize
+                }
+                CypherResponseData::Records(_) | CypherResponseData::Empty => 0,
+            };
+            if mutations > 0 {
+                audit.append(context, &decision, mutations)?;
+            }
+        }
+        Ok(response)
+    }
+
     /// Strict default.
     pub fn strict_default() -> Self {
         Self::with_policies(
