@@ -358,6 +358,41 @@ Exporter tests additionally cover additive explanation payloads and unchanged
 ungoverned exports (`export-stix/tests/epistemic_lineage.rs` and the FIMI unit
 contracts). The full workspace gate runs these alongside WS-D acceptance.
 
+## FIMI misleadingness and campaign provenance
+
+Corrobore answers whether a claim is supported. For an influence operation that
+is the wrong question asked alone: a piece can be accurate sentence by sentence
+and still mislead through framing, omission, and an inference the records do not
+warrant. WS-G adds that second question without letting either answer move the
+other, and it splits along the ADR-0017 line: the core carries structure, the
+pack carries meaning.
+
+- The core holds domain-neutral `Narrative` and `Campaign` collections
+  (below), collection-scoped coordination signals with their dependency
+  effects, and the FIMI exporter's additive assessment and lineage fields.
+- `Estance-Labs/corrobore-domain-fimi` holds the meaning: six misleadingness
+  mechanisms, the reader-versus-evidence interpretation gap, the band rule, and
+  the validators, exposed through `node.validate/1` and a `claim.verify/1`
+  implementation that reports `inconclusive` only. The core keeps inconclusive
+  records advisory with no verdict weight, so the pack cannot move a factual
+  verdict in either direction.
+- `Estance-Labs/corrobore-benchmarks` holds the measurement: a synthetic
+  misleadingness corpus with mechanism classification accuracy,
+  evidence-grounded explanation quality, and a factual-drift metric that
+  answers every piece twice so the separation invariant is measured rather than
+  assumed.
+
+Three boundaries hold across the three repositories. A misleadingness
+assessment is never a factual determination. A coordination signal says content
+shares a production pattern and never says who produced it; attribution needs a
+claim the engine holds supported. And a signal that reflects curation rather
+than production never collapses independence, or grouping content would deflate
+the support of the claims it collects.
+
+The workstream gates are `graph-core/tests/epic_0029_ws_g_acceptance.rs` for the
+core side, `export-fimi/tests/epic_0029_ws_g_acceptance.rs` for the exporter
+side, and `scripts/ws-g-neutrality.test.mjs` for vocabulary neutrality.
+
 ## Neutral narrative and campaign records
 
 `Graph::create_narrative` and `Graph::create_campaign` append immutable governed

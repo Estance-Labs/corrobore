@@ -21,6 +21,18 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
 ### Added
 
+- WS-G FIMI misleadingness and campaign provenance: domain-neutral `Narrative`
+  and `Campaign` collections, collection-scoped coordination signals stored as
+  evidence with explainable independence-cluster effects, an attribution gate
+  that refuses coordination signals as their only support, and additive FIMI
+  export fields carrying campaign lineage and pack assessments. A misleadingness
+  band and a factual verdict travel in separate fields and neither can move the
+  other; a curation signal never collapses independence; exports stay
+  byte-identical for graphs without these records. Vocabulary and validators
+  live in `corrobore-domain-fimi`, and the measured mechanism, grounding and
+  factual-drift metrics live in `corrobore-benchmarks` (#217, #218, #219, #220,
+  #221).
+
 - WS-E evidence-risk diagnostics cover seven attributed signals, preserve
   quarantine and dependency provenance on evidence, and reduce component
   contribution and source-independence weights without changing deterministic
