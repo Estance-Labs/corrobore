@@ -1,0 +1,109 @@
+{
+  "catalogue_version": "capabilities-v1",
+  "capabilities": [
+    {
+      "id": "claim.audit",
+      "summary": "Read the retained claim audit path without recomputing a verdict.",
+      "effect": "read",
+      "authorization": "session",
+      "runtime_operation": "graph.claim_audit_path"
+    },
+    {
+      "id": "cypher.read",
+      "summary": "Execute a bounded read-only query.",
+      "effect": "read",
+      "authorization": "session",
+      "runtime_operation": "gateway.execute",
+      "restricted_to": [
+        "http"
+      ]
+    },
+    {
+      "id": "cypher.write",
+      "summary": "Execute an authorized mutation query.",
+      "effect": "mutation",
+      "authorization": "mutation_permission",
+      "runtime_operation": "gateway.execute",
+      "restricted_to": [
+        "http"
+      ]
+    },
+    {
+      "id": "memory.consolidate",
+      "summary": "Propose a consolidation, or apply an approved proposal.",
+      "effect": "mutation",
+      "authorization": "operator_approval",
+      "runtime_operation": "memory.consolidate"
+    },
+    {
+      "id": "memory.forget",
+      "summary": "Expire, tombstone or delete a memory under application semantics.",
+      "effect": "mutation",
+      "authorization": "mutation_permission",
+      "runtime_operation": "memory.forget"
+    },
+    {
+      "id": "memory.recall",
+      "summary": "Read a bounded explained working set.",
+      "effect": "read",
+      "authorization": "session",
+      "runtime_operation": "memory.recall"
+    },
+    {
+      "id": "memory.relate",
+      "summary": "Create or version an evidence-bearing relationship.",
+      "effect": "mutation",
+      "authorization": "mutation_permission",
+      "runtime_operation": "memory.relate"
+    },
+    {
+      "id": "memory.remember",
+      "summary": "Create or identity-upsert an evidence-bearing memory.",
+      "effect": "mutation",
+      "authorization": "mutation_permission",
+      "runtime_operation": "memory.remember"
+    },
+    {
+      "id": "memory.trace",
+      "summary": "Read the retained provenance and decision trace of a target.",
+      "effect": "read",
+      "authorization": "session",
+      "runtime_operation": "memory.trace"
+    },
+    {
+      "id": "memory.update",
+      "summary": "Apply an optimistic auditable patch.",
+      "effect": "mutation",
+      "authorization": "mutation_permission",
+      "runtime_operation": "memory.update"
+    },
+    {
+      "id": "runtime.ready",
+      "summary": "Report whether the runtime is ready before a protected call.",
+      "effect": "read",
+      "authorization": "session",
+      "runtime_operation": "runtime.readiness"
+    },
+    {
+      "id": "stix.export",
+      "summary": "Read the deterministic CTI-scoped STIX projection.",
+      "effect": "read",
+      "authorization": "session",
+      "runtime_operation": "export.stix"
+    },
+    {
+      "id": "stix.import",
+      "summary": "Import one STIX bundle and its optional evidence envelope.",
+      "effect": "mutation",
+      "authorization": "mutation_permission",
+      "runtime_operation": "import.stix"
+    },
+    {
+      "id": "stix.validate",
+      "summary": "Validate a STIX bundle or the current graph; a supported playbook may persist corrections.",
+      "effect": "mutation",
+      "authorization": "mutation_permission",
+      "runtime_operation": "validate.stix"
+    }
+  ]
+}
