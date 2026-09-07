@@ -26,7 +26,11 @@
 //! graph, enforcing execution policies (read-only, mutation, mixed) and
 //! collecting execution records for auditability.
 
-use std::{cmp::Ordering, collections::HashMap, time::Instant};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, HashMap},
+    time::Instant,
+};
 
 use cypher_parser::{
     ComparisonOperator, LiteralValue, ParameterBindings, ParseErrorCode, ParsedQuery,
@@ -99,9 +103,117 @@ pub struct ExecutionFixHint {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Execution record.
+///
+/// `fields` is the historical string rendering every HTTP client relies on.
+/// `values` is its typed twin, keyed identically, for adapters that encode a
+/// record onto a wire format and cannot guess a type from text.
 pub struct ExecutionRecord {
     /// Fields.
     pub fields: HashMap<String, String>,
+    /// Typed values, one per field.
+    pub values: HashMap<String, RecordValue>,
+}
+
+/// A typed projected value.
+///
+/// Floats travel as their lossless decimal text, as they do in every other
+/// Corrobore contract, so the type stays `Eq` and no adapter rounds twice.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RecordValue {
+    /// Null.
+    Null,
+    /// Boolean.
+    Boolean(bool),
+    /// Integer.
+    Integer(i64),
+    /// Finite decimal as source text.
+    Float(String),
+    /// String.
+    String(String),
+    /// List of typed values.
+    List(Vec<RecordValue>),
+    /// Map of typed values, ordered by key.
+    Map(BTreeMap<String, RecordValue>),
+    /// A whole node.
+    Node(RecordNode),
+    /// A whole relationship.
+    Relationship(RecordRelationship),
+}
+
+/// A node as a projected value.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecordNode {
+    /// Corrobore node identifier.
+    pub id: String,
+    /// Labels in graph order.
+    pub labels: Vec<String>,
+    /// Properties, plus the native metadata Cypher property access exposes
+    /// (`status`, `confidence`, `evidence_refs`) under those same keys.
+    pub properties: BTreeMap<String, RecordValue>,
+}
+
+/// A relationship as a projected value.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecordRelationship {
+    /// Corrobore relationship identifier.
+    pub id: String,
+    /// Relationship type.
+    pub rel_type: String,
+    /// Source node identifier.
+    pub source_id: String,
+    /// Target node identifier.
+    pub target_id: String,
+    /// Properties, plus native metadata as for nodes.
+    pub properties: BTreeMap<String, RecordValue>,
+}
+
+impl From<&PropertyValue> for RecordValue {
+    fn from(value: &PropertyValue) -> Self {
+        match value {
+            PropertyValue::Null => Self::Null,
+            PropertyValue::Bool(value) => Self::Boolean(*value),
+            PropertyValue::Integer(value) => Self::Integer(*value),
+            PropertyValue::Float(value) => Self::Float(value.to_string()),
+            PropertyValue::String(value) => Self::String(value.clone()),
+            PropertyValue::StringList(values) => {
+                Self::List(values.iter().cloned().map(Self::String).collect())
+            }
+            PropertyValue::IntegerList(values) => {
+                Self::List(values.iter().copied().map(Self::Integer).collect())
+            }
+            PropertyValue::FloatList(values) => Self::List(
+                values
+                    .iter()
+                    .map(|value| Self::Float(value.to_string()))
+                    .collect(),
+            ),
+            PropertyValue::BoolList(values) => {
+                Self::List(values.iter().copied().map(Self::Boolean).collect())
+            }
+            PropertyValue::Json(value) => Self::from(value),
+        }
+    }
+}
+
+impl From<&serde_json::Value> for RecordValue {
+    fn from(value: &serde_json::Value) -> Self {
+        match value {
+            serde_json::Value::Null => Self::Null,
+            serde_json::Value::Bool(value) => Self::Boolean(*value),
+            serde_json::Value::Number(number) => match number.as_i64() {
+                Some(integer) => Self::Integer(integer),
+                None => Self::Float(number.to_string()),
+            },
+            serde_json::Value::String(value) => Self::String(value.clone()),
+            serde_json::Value::Array(values) => Self::List(values.iter().map(Self::from).collect()),
+            serde_json::Value::Object(entries) => Self::Map(
+                entries
+                    .iter()
+                    .map(|(key, value)| (key.clone(), Self::from(value)))
+                    .collect(),
+            ),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -152,6 +264,9 @@ pub struct ExecutionResult {
     /// What the answer was computed from, and what supports it. Absent for a
     /// result that returned no records to explain.
     pub why_provenance: Option<WhyProvenance>,
+    /// Projected column names in RETURN order. Empty when the result carries
+    /// no records (validation, rejection, a mutation summary).
+    pub columns: Vec<String>,
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -342,6 +457,7 @@ impl CypherPipelineExecutor {
             fix_hints: vec![],
             // Validation reads no substructure, so there is nothing to explain.
             why_provenance: None,
+            columns: vec![],
         })
     }
 
@@ -405,6 +521,7 @@ impl CypherPipelineExecutor {
                             .to_owned(),
                 }],
                 why_provenance: None,
+                columns: vec![],
             });
         }
 
@@ -420,6 +537,12 @@ impl CypherPipelineExecutor {
                     "query execution succeeded with read result"
                 );
                 let support = why_provenance::semantic_support(&self.graph, &rows);
+                let columns = ast
+                    .query
+                    .as_ref()
+                    .and_then(|query| query.return_clause.as_ref())
+                    .map(|return_clause| column_names(&return_clause.items))
+                    .unwrap_or_default();
                 Ok(ExecutionResult {
                     status: ExecutionStatus::Success,
                     data: ExecutionResultData::Records(records),
@@ -431,6 +554,7 @@ impl CypherPipelineExecutor {
                         rows,
                         support,
                     )),
+                    columns,
                 })
             }
             QueryKind::Mutation | QueryKind::Mixed => {
@@ -476,6 +600,7 @@ impl CypherPipelineExecutor {
                     validation_errors: vec![],
                     fix_hints: vec![],
                     why_provenance: None,
+                    columns: vec![],
                 });
             }
         };
@@ -708,6 +833,7 @@ impl CypherPipelineExecutor {
                 // A mutation's answer is its own effect: its provenance is the
                 // mutation record, not a read set.
                 why_provenance: None,
+                columns: column_names(&return_clause.items),
             })
         } else {
             Ok(ExecutionResult {
@@ -728,6 +854,7 @@ impl CypherPipelineExecutor {
                 validation_errors: vec![],
                 fix_hints: vec![],
                 why_provenance: None,
+                columns: vec![],
             })
         }
     }
@@ -1626,46 +1753,77 @@ fn aggregate_record(
         ));
     }
     let mut fields = HashMap::new();
+    let mut values = HashMap::new();
     for item in items {
+        let column = column_name(item);
         match item {
             ProjectionItem::Count(variable) => {
                 let count = rows
                     .iter()
                     .filter(|row| variable == "*" || row.bindings.contains_key(variable))
                     .count();
-                fields.insert("count".to_owned(), count.to_string());
+                fields.insert(column.clone(), count.to_string());
+                values.insert(
+                    column,
+                    RecordValue::Integer(i64::try_from(count).unwrap_or(i64::MAX)),
+                );
             }
             ProjectionItem::Sum(property) => {
-                fields.insert(
-                    format!("sum({}.{})", property.variable, property.property),
-                    numeric_projection(rows, property, NumericProjection::Sum)?,
-                );
+                let (text, typed) = numeric_projection(rows, property, NumericProjection::Sum)?;
+                fields.insert(column.clone(), text);
+                values.insert(column, typed);
             }
             ProjectionItem::Average(property) => {
-                fields.insert(
-                    format!("avg({}.{})", property.variable, property.property),
-                    numeric_projection(rows, property, NumericProjection::Average)?,
-                );
+                let (text, typed) = numeric_projection(rows, property, NumericProjection::Average)?;
+                fields.insert(column.clone(), text);
+                values.insert(column, typed);
             }
             ProjectionItem::Minimum(property) => {
-                fields.insert(
-                    format!("min({}.{})", property.variable, property.property),
-                    numeric_projection(rows, property, NumericProjection::Minimum)?,
-                );
+                let (text, typed) = numeric_projection(rows, property, NumericProjection::Minimum)?;
+                fields.insert(column.clone(), text);
+                values.insert(column, typed);
             }
             ProjectionItem::Maximum(property) => {
-                fields.insert(
-                    format!("max({}.{})", property.variable, property.property),
-                    numeric_projection(rows, property, NumericProjection::Maximum)?,
-                );
+                let (text, typed) = numeric_projection(rows, property, NumericProjection::Maximum)?;
+                fields.insert(column.clone(), text);
+                values.insert(column, typed);
             }
             ProjectionItem::Variable(_) | ProjectionItem::Property(_) => {}
         }
     }
-    Ok(ExecutionRecord { fields })
+    Ok(ExecutionRecord { fields, values })
 }
 
-#[derive(Clone, Copy)]
+/// The column name a projection item produces, shared by every record builder
+/// and by the ordered column list, so the two can never disagree.
+fn column_name(item: &ProjectionItem) -> String {
+    match item {
+        ProjectionItem::Variable(variable) => variable.clone(),
+        ProjectionItem::Property(property) => {
+            format!("{}.{}", property.variable, property.property)
+        }
+        ProjectionItem::Count(_) => "count".to_owned(),
+        ProjectionItem::Sum(property) => {
+            format!("sum({}.{})", property.variable, property.property)
+        }
+        ProjectionItem::Average(property) => {
+            format!("avg({}.{})", property.variable, property.property)
+        }
+        ProjectionItem::Minimum(property) => {
+            format!("min({}.{})", property.variable, property.property)
+        }
+        ProjectionItem::Maximum(property) => {
+            format!("max({}.{})", property.variable, property.property)
+        }
+    }
+}
+
+/// Column names in RETURN order.
+fn column_names(items: &[ProjectionItem]) -> Vec<String> {
+    items.iter().map(column_name).collect()
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum NumericProjection {
     Sum,
     Average,
@@ -1677,7 +1835,7 @@ fn numeric_projection(
     rows: &[ExecutionRow],
     property: &PropertyRef,
     operation: NumericProjection,
-) -> Result<String, ExecutionError> {
+) -> Result<(String, RecordValue), ExecutionError> {
     let values = rows
         .iter()
         .filter_map(|row| property_ref_value(row, property))
@@ -1688,7 +1846,7 @@ fn numeric_projection(
         })
         .collect::<Vec<_>>();
     if values.is_empty() {
-        return Ok("null".to_owned());
+        return Ok(("null".to_owned(), RecordValue::Null));
     }
     let value = match operation {
         NumericProjection::Sum => values.iter().sum::<f64>(),
@@ -1701,34 +1859,47 @@ fn numeric_projection(
             "numeric aggregation overflowed a finite result".to_owned(),
         ));
     }
-    if value.fract() == 0.0 {
-        Ok(format!("{value:.0}"))
+    let text = if value.fract() == 0.0 {
+        format!("{value:.0}")
     } else {
-        Ok(value.to_string())
-    }
+        value.to_string()
+    };
+    // An average is a float whatever it happens to equal, as every graph
+    // driver expects; a sum, minimum or maximum of integers stays an integer.
+    let integral = value.fract() == 0.0
+        && value.abs() < 9_007_199_254_740_992.0
+        && operation != NumericProjection::Average;
+    let typed = if integral {
+        RecordValue::Integer(value as i64)
+    } else {
+        RecordValue::Float(text.clone())
+    };
+    Ok((text, typed))
 }
 
 fn project_record(row: &ExecutionRow, items: &[ProjectionItem]) -> ExecutionRecord {
     let mut fields = HashMap::new();
+    let mut values = HashMap::new();
 
     for item in items {
+        let column = column_name(item);
         match item {
             ProjectionItem::Variable(variable) => {
                 if let Some(value) = row.bindings.get(variable) {
-                    fields.insert(variable.clone(), binding_to_string(value));
+                    fields.insert(column.clone(), binding_to_string(value));
+                    values.insert(column, binding_to_record_value(value));
                 }
             }
             ProjectionItem::Property(property_ref) => {
                 if let Some(value) = property_ref_value(row, property_ref) {
-                    fields.insert(
-                        format!("{}.{}", property_ref.variable, property_ref.property),
-                        property_value_to_string(&value),
-                    );
+                    fields.insert(column.clone(), property_value_to_string(&value));
+                    values.insert(column, RecordValue::from(&value));
                 }
             }
             ProjectionItem::Count(variable) => {
                 if row.bindings.contains_key(variable) {
-                    fields.insert("count".to_owned(), "1".to_owned());
+                    fields.insert(column.clone(), "1".to_owned());
+                    values.insert(column, RecordValue::Integer(1));
                 }
             }
             ProjectionItem::Sum(_)
@@ -1738,7 +1909,81 @@ fn project_record(row: &ExecutionRow, items: &[ProjectionItem]) -> ExecutionReco
         }
     }
 
-    ExecutionRecord { fields }
+    ExecutionRecord { fields, values }
+}
+
+fn binding_to_record_value(value: &BindingValue) -> RecordValue {
+    match value {
+        BindingValue::Node(node) => {
+            let mut properties: BTreeMap<String, RecordValue> = node
+                .properties()
+                .iter()
+                .map(|(key, value)| (key.clone(), RecordValue::from(value)))
+                .collect();
+            properties.insert(
+                "status".to_owned(),
+                RecordValue::String(status_name(node.status()).to_owned()),
+            );
+            if let Some(confidence) = node.confidence() {
+                properties.insert(
+                    "confidence".to_owned(),
+                    RecordValue::Float(confidence.value().to_string()),
+                );
+            }
+            if !node.evidence_refs().is_empty() {
+                properties.insert(
+                    "evidence_refs".to_owned(),
+                    RecordValue::List(
+                        node.evidence_refs()
+                            .iter()
+                            .map(|reference| RecordValue::String(reference.as_str().to_owned()))
+                            .collect(),
+                    ),
+                );
+            }
+            RecordValue::Node(RecordNode {
+                id: node.id().as_str().to_owned(),
+                labels: node.labels().to_vec(),
+                properties,
+            })
+        }
+        BindingValue::Relationship(relationship) => {
+            let mut properties: BTreeMap<String, RecordValue> = relationship
+                .properties()
+                .iter()
+                .map(|(key, value)| (key.clone(), RecordValue::from(value)))
+                .collect();
+            properties.insert(
+                "status".to_owned(),
+                RecordValue::String(status_name(relationship.status()).to_owned()),
+            );
+            if let Some(confidence) = relationship.confidence() {
+                properties.insert(
+                    "confidence".to_owned(),
+                    RecordValue::Float(confidence.value().to_string()),
+                );
+            }
+            if !relationship.evidence_refs().is_empty() {
+                properties.insert(
+                    "evidence_refs".to_owned(),
+                    RecordValue::List(
+                        relationship
+                            .evidence_refs()
+                            .iter()
+                            .map(|reference| RecordValue::String(reference.as_str().to_owned()))
+                            .collect(),
+                    ),
+                );
+            }
+            RecordValue::Relationship(RecordRelationship {
+                id: relationship.id().as_str().to_owned(),
+                rel_type: relationship.rel_type().as_str().to_owned(),
+                source_id: relationship.source().as_str().to_owned(),
+                target_id: relationship.target().as_str().to_owned(),
+                properties,
+            })
+        }
+    }
 }
 
 fn binding_to_string(value: &BindingValue) -> String {

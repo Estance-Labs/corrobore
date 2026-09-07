@@ -135,6 +135,7 @@ impl RuntimeHarness {
             .push(payload.to_owned());
 
         Ok(CypherResponse {
+            columns: vec![],
             status: CypherResponseStatus::Success,
             data: CypherResponseData::MutationSummary(CypherMutationSummary {
                 matched_rows: 0,
@@ -181,6 +182,7 @@ impl RuntimeHarness {
 
         match error {
             RuntimeError::UnsafeMutationAttempt { reason, fix_hint } => CypherResponse {
+                columns: vec![],
                 status: CypherResponseStatus::Rejected,
                 data: CypherResponseData::Empty,
                 warnings: vec![reason],

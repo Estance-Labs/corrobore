@@ -38,6 +38,21 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
 ### Added
 
+- Opt-in Bolt listener for the standalone server (epic #12, item #258):
+  Bolt 4.4 and 5.0 to 5.8 negotiation, PackStream v1, `HELLO`/`LOGON`
+  authentication against the Corrobore bearer token, `RUN`/`PULL`/`DISCARD`
+  with bounded server-side buffering and `has_more` streaming, statement-group
+  transactions over the per-request atomic mutation model, `ROUTE` for
+  `neo4j://` clients, stable failure codes, and TLS through the shared `[tls]`
+  material. Enabled with `interfaces.enabled = ["http", "bolt"]` and a `[bolt]`
+  section (`port`, `max_connections`) or the matching environment variables and
+  CLI flags. Off by default; HTTP and embedded behaviour are unchanged.
+- Typed record values: `ExecutionRecord` and `CypherRecord` carry a `values`
+  twin of the string `fields`, and `ExecutionResult` and `CypherResponse`
+  carry the ordered `columns`, so protocol adapters encode integers, floats,
+  booleans, lists, nodes and relationships without guessing from text. Neither
+  is serialized: the HTTP JSON contract is byte-identical.
+
 - WS-H agentic platform foundations: corrective routes and falsifier records
   with a high-impact publish gate composed onto the WS-D actionability
   decision; memory fusion back-pointers with an authority cap where repetition

@@ -74,6 +74,9 @@ subtle = "2"
 tantivy = "0.26.1"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
+# The Bolt listener terminates TLS on a raw socket; axum-server already resolves
+# this release, so the workspace gains no new TLS stack.
+tokio-rustls = { version = "0.26", default-features = false }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.7", features = ["trace", "limit"] }
 tower_governor = "0.8"

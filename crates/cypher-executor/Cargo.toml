@@ -18,6 +18,8 @@ cypher-planner = { path = "../cypher-planner" }
 function-registry = { path = "../function-registry" }
 graph-core = { path = "../graph-core" }
 serde = { workspace = true }
+# Typed record values mirror JSON properties; graph-core already pulls serde_json.
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 

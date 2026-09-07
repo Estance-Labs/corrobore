@@ -77,8 +77,10 @@ same overrides.
 | `--opencti-rate-limit-per-second` | Override the sustained rate for OpenCTI compatibility routes. |
 | `--opencti-rate-limit-burst` | Override the burst allowance for OpenCTI compatibility routes. |
 | `--probe-host` | `corrobore server status` only: override just the hostname used by the readiness probe, keeping the configured port, scheme, and authentication. |
-| `--interfaces` | Supply a comma-separated set containing `http` and optionally `web`. |
+| `--interfaces` | Supply a comma-separated set containing `http` and optionally `web` and `bolt`. |
 | `--web-dir` | Override the production explorer asset directory. |
+| `--bolt-port` | Override the Bolt listener port used when the `bolt` interface is enabled. |
+| `--bolt-max-connections` | Override the maximum number of concurrent Bolt connections. |
 | `--maintenance-enabled` | Enable or disable lifecycle maintenance policy. |
 | `--maintenance-interval-ms` | Override the maintenance interval. |
 | `--tls-enabled` | Enable or disable HTTPS. |
@@ -159,8 +161,10 @@ rejected.
 | `limits.rate_limit_burst` | `CORROBORE_HTTP_RATE_LIMIT_BURST` | `--rate-limit-burst` | `200` |
 | `limits.opencti_rate_limit_per_second` | `CORROBORE_OPENCTI_RATE_LIMIT_PER_SECOND` | `--opencti-rate-limit-per-second` | `50` |
 | `limits.opencti_rate_limit_burst` | `CORROBORE_OPENCTI_RATE_LIMIT_BURST` | `--opencti-rate-limit-burst` | `200` |
-| `interfaces.enabled` | `CORROBORE_SERVER_INTERFACES` | `--interfaces` | `["http"]` |
+| `interfaces.enabled` | `CORROBORE_SERVER_INTERFACES` | `--interfaces` | `["http"]`; add `web` and `bolt` to enable those interfaces |
 | `interfaces.web_directory` | `CORROBORE_HTTP_WEB_DIR` | `--web-dir` | unset |
+| `bolt.port` | `CORROBORE_BOLT_PORT` | `--bolt-port` | `7687`; must differ from `server.port`; used only when `bolt` is enabled. See [Bolt Protocol](bolt-protocol.md) |
+| `bolt.max_connections` | `CORROBORE_BOLT_MAX_CONNECTIONS` | `--bolt-max-connections` | `64`; further connections wait for a slot |
 | `maintenance.enabled` | `CORROBORE_MAINTENANCE_ENABLED` | `--maintenance-enabled` | `false` |
 | `maintenance.interval_ms` | `CORROBORE_MAINTENANCE_INTERVAL_MS` | `--maintenance-interval-ms` | `60000` |
 | `operations.endpoint_policy` | `CORROBORE_OPERATIONAL_ENDPOINT_POLICY` | `--operational-endpoint-policy` | `public` |

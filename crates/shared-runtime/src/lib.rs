@@ -31,6 +31,7 @@ pub(crate) use cypher_executor::{
     CypherPipelineExecutor, ExecutionError, ExecutionLimits, ExecutionRecord, ExecutionResult,
     ExecutionResultData, ExecutionStatus,
 };
+pub use cypher_executor::{RecordNode, RecordRelationship, RecordValue};
 pub(crate) use graph_core::{ActorId, Graph, SessionId, TransactionId, WorkspaceId};
 pub(crate) use serde::{Deserialize, Serialize};
 pub(crate) use std::collections::{HashMap, HashSet};
@@ -360,6 +361,7 @@ mod tests {
         fields.insert("name".to_owned(), "alpha".to_owned());
         let data = map_execution_data(ExecutionResultData::Records(vec![ExecutionRecord {
             fields,
+            values: HashMap::new(),
         }]));
 
         assert!(matches!(
@@ -527,6 +529,7 @@ mod tests {
             validation_errors: vec![],
             fix_hints: vec![],
             why_provenance: None,
+            columns: vec![],
         });
         assert_eq!(rejected.status, CypherResponseStatus::Rejected);
         assert_eq!(rejected.warnings, vec!["w".to_owned()]);
@@ -544,6 +547,7 @@ mod tests {
                 message: "fix".to_owned(),
             }],
             why_provenance: None,
+            columns: vec![],
         });
         assert_eq!(
             validation_failed.status,
