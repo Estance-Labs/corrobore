@@ -394,6 +394,46 @@ The acceptance contracts are `graph-core/tests/narrative_campaign_records.rs`,
 `graph-storage/tests/epistemic_sidecar.rs`. They include reopening a durable store
 and projecting memberships when their referenced canonical nodes are not loaded.
 
+## Campaign coordination signals
+
+`detect_campaign_signals` observes production-side patterns across the claims of
+one `Narrative` or `Campaign`, and `Graph::record_campaign_signals` retains each
+finding as one content-addressed annotation in the evidence store. Five signals
+are detected, each needing at least two records from two distinct sources so a
+single source repeating itself is never coordination: repeated prompt artifact,
+generation-style fingerprint, cross-content redundancy, shared infrastructure,
+and collection co-membership. Every finding carries its exact records, their
+resolved sources, and a reason holding the measurement, the threshold, and the
+attribution of each instrument that reported it.
+
+The scope is the point. `detect_evidence_risks` requires every assessed record
+to be linked to one claim, so a pattern spread across the claims of a campaign
+is invisible to it. Campaign detection reads the collection's whole claim set,
+including the claims of every narrative a campaign collects.
+
+Retained signals reach `SourceIndependence` through `DependencySignal::CampaignSignal`:
+links whose records share a signal group join one dependency component, with the
+signal, its group identity, and its measurement kept as the reason. Two rules
+bound the effect. Co-membership declares itself out through
+`CampaignSignal::affects_independence`, because thematic grouping is curation and
+letting it collapse independence would mean an analyst grouping content could
+deflate the support of the claims it collects. And recording changes nothing
+factual: no claim, verdict, tier, immune response, or canonical node is touched,
+and replay is idempotent because a receipt is the hash of its annotation.
+
+Attribution is assessed separately by `Graph::assess_campaign_attribution` and is
+never derived. Citing coordination signals alone is refused as
+`CoordinationSignalsOnly`; a cited claim the engine does not hold `Supported` at
+the assessment point is refused as `CorroborationNotSupported`. An admissible
+request reports the supported claims an attribution may rest on, and the core
+records nothing: the caller asserts the attribution as an ordinary governed
+claim. A fingerprint says content shares a production pattern; it never says who
+produced it.
+
+Stores holding no coordination receipt omit the field, so existing snapshot bytes
+are unchanged. The acceptance contract is `graph-core/tests/campaign_signals.rs`,
+with the neutrality guard in `scripts/ws-g-neutrality.test.mjs`.
+
 ## Durability and transport boundaries
 
 The current HTTP runtime keeps its graph in process. Session metadata and JSONL logs are durable on disk, while `graph-storage` provides the append-only storage and pager building blocks used by lower-level integrations. `corrobore-ingest` deliberately imports through HTTP instead of depending on graph internals.

@@ -8,3 +8,10 @@ test('neutral collection primitives contain structure without pack-specific asse
  const manifest=await read('crates/graph-core/Cargo.toml');
  assert.doesNotMatch(manifest,/fimi/i);
 });
+test('coordination signals carry provenance vocabulary without pack-specific assessment vocabulary',async()=>{
+ const source=await read('crates/graph-core/src/campaign_signals.rs');
+ assert.doesNotMatch(source,/\bfimi\b|misleadingness|unsupported_inference|emotional_arousal|communicative_intent|reader_interpretation/i);
+ // A coordination signal is provenance, never authorship: the refusal must stay.
+ assert.match(source,/CoordinationSignalsOnly/);
+ assert.match(source,/fn affects_independence/);
+});

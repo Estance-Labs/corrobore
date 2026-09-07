@@ -632,6 +632,10 @@ impl EvidenceAttachment {
 pub struct EvidenceRecordStore {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     risk_assessments: Vec<crate::StoredEvidenceRiskAssessment>,
+    /// Collection-scoped coordination receipts. Absent from stores that hold
+    /// none, which keeps existing snapshot bytes unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    campaign_signals: Vec<crate::StoredCampaignSignal>,
     records: Vec<EvidenceRecord>,
     attachments: Vec<EvidenceAttachment>,
     known_node_targets: HashSet<NodeId>,
@@ -916,6 +920,50 @@ impl EvidenceRecordStore {
             .map(|r| &r.assessment)
             .collect()
     }
+    /// Every retained coordination receipt, in identity order.
+    pub fn campaign_signals(&self) -> &[crate::StoredCampaignSignal] {
+        self.campaign_signals.as_slice()
+    }
+
+    /// Coordination annotations naming this record, in receipt identity order.
+    ///
+    /// A coordination signal is retained once for its whole group and read back
+    /// through its membership, so an immutable record never carries a reference
+    /// list that would have to be rewritten.
+    pub fn campaign_signals_for(&self, id: &EvidenceId) -> Vec<&crate::CampaignSignalAnnotation> {
+        self.campaign_signals
+            .iter()
+            .filter(|stored| stored.annotation.finding.evidence_ids().contains(id))
+            .map(|stored| &stored.annotation)
+            .collect()
+    }
+
+    /// One retained coordination annotation by its finding identity.
+    pub fn campaign_signal_by_group(
+        &self,
+        group_id: &str,
+    ) -> Option<&crate::CampaignSignalAnnotation> {
+        self.campaign_signals
+            .iter()
+            .map(|stored| &stored.annotation)
+            .find(|annotation| annotation.finding.group_id() == group_id)
+    }
+
+    pub(crate) fn retain_campaign_signal(
+        &mut self,
+        annotation: crate::CampaignSignalAnnotation,
+    ) -> String {
+        let id = campaign_signal_receipt_id(&annotation);
+        if !self.campaign_signals.iter().any(|stored| stored.id == id) {
+            self.campaign_signals.push(crate::StoredCampaignSignal {
+                id: id.clone(),
+                annotation,
+            });
+            self.campaign_signals.sort_by(|a, b| a.id.cmp(&b.id));
+        }
+        id
+    }
+
     pub(crate) fn retain_risk_assessment(
         &mut self,
         assessment: crate::EvidenceRiskAnnotation,
@@ -947,6 +995,8 @@ impl EvidenceRecordStore {
         }
         Ok(())
     }
+    // Validate every attributed annotation receipt this store holds: evidence
+    // risk assessments and collection-scoped coordination signals.
     pub(crate) fn validate_risk_references(&self) -> Result<(), GraphError> {
         let invalid = || {
             GraphError::InvalidPropertyValue(
@@ -996,9 +1046,38 @@ impl EvidenceRecordStore {
                 }
             }
         }
+        // Coordination receipts are content-addressed like risk receipts and
+        // name only records this store holds.
+        let mut coordination_ids = HashSet::new();
+        for stored in &self.campaign_signals {
+            if !coordination_ids.insert(stored.id.as_str())
+                || campaign_signal_receipt_id(&stored.annotation) != stored.id
+                || stored.annotation.finding.evidence_ids().is_empty()
+            {
+                return Err(invalid());
+            }
+            for id in stored.annotation.finding.evidence_ids() {
+                if !record_ids.contains(id) {
+                    return Err(invalid());
+                }
+            }
+        }
         Ok(())
     }
 }
+fn campaign_signal_receipt_id(annotation: &crate::CampaignSignalAnnotation) -> String {
+    use sha2::{Digest, Sha256};
+    let bytes = serde_json::to_vec(annotation)
+        .expect("coordination annotation contains serializable values");
+    format!(
+        "campaign-signal-receipt--{}",
+        Sha256::digest(bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    )
+}
+
 fn risk_receipt_id(assessment: &crate::EvidenceRiskAnnotation) -> String {
     use sha2::{Digest, Sha256};
     let bytes =
