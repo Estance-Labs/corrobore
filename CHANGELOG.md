@@ -21,6 +21,17 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
 ### Added
 
+- `corrobore-nlq` (epic #82, item #260): the versioned `nlq/v1` action
+  envelope with a validator that refuses trusted runtime context at any depth,
+  invented evidence, unbounded or mutating reads and writes the caller did not
+  allow, and canonicalizes actions through the real Cypher, `INVESTIGATE` and
+  `memory/v1` parsers; a compile-only `NlqCompiler` trait with a deterministic
+  bilingual `TemplateCompiler` baseline (French and English); a reproducible
+  paired dataset generator with adversarial families and leakage-safe splits;
+  and a parser-backed evaluation harness reporting per-language metrics. The
+  contract is committed under `compatibility/nlq/v1` with replayable fixtures.
+  No model ships and the runtime gains no machine-learning dependency.
+
 - WS-H agentic platform foundations: corrective routes and falsifier records
   with a high-impact publish gate composed onto the WS-D actionability
   decision; memory fusion back-pointers with an authority cap where repetition

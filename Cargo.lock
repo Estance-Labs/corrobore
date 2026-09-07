@@ -701,6 +701,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "corrobore-nlq"
+version = "0.3.3"
+dependencies = [
+ "corrobore-engine",
+ "cypher-parser",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "cpubits"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

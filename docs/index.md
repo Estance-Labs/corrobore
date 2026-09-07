@@ -64,6 +64,7 @@ Corrobore is not a distributed graph database and does not claim full openCypher
 - [Embedded Engine](user-guide/embedded-engine.md) — in-process Rust integration.
 - [TAXII Ingestion](user-guide/ingestion.md) — connector lifecycle and cursor behavior.
 - [For LLM Agents](for-llms.md) — model operating boundaries.
+- [Natural-Language Queries](user-guide/nlq.md) — the compile-only `nlq/v1` action envelope, its trust boundary, the bilingual template compiler and the evaluation harness.
 - [Cypher Support](user-guide/cypher.md) — exact supported query surface.
 - [Architecture](architecture.md) — crate and runtime boundaries.
 - [Interactive API reference](api/index.html) — browse HTTP API parameters and schemas.
