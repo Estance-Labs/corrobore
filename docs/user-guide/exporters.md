@@ -49,6 +49,20 @@ For governed claims, refusals name the actionability blockers. Legacy scalar
 findings from older CTI providers remain export diagnostics; the separate public
 validation endpoint keeps its existing behavior.
 
+### Governed lineage and PROV-O reading
+
+When an exported record has a governed claim, the bundle carries additive
+`x_corrobore_lineage` entries: source, observation, current verdict state and
+identity, verification coverage, named dimensions, and the retained
+`verdict_explanation`. Each entry also carries a `prov` object with a PROV-O
+reading beside the Corrobore relations, never instead of them: an observation
+is a `prov:Entity` that `prov:wasDerivedFrom` its source, and a claim is a
+`prov:Entity` `prov:wasGeneratedBy` its retained verdict, the `prov:Activity`
+that `prov:used` the linked observations. Every identity is a retained record
+identity; a claim with no stored verdict gets no synthesized activity. Graphs
+without governed records export the same bytes as before. See
+[Agentic Platform Foundations](agentic-platform.md#why-provenance-for-query-results).
+
 ### Agent export choreography
 
 Strict is the default correctness gate. Complete authorized writes first, read
@@ -71,6 +85,28 @@ license, provider readiness, and provider capability have distinct error codes.
 ## FIMI
 
 `export-fimi::export_fimi_json_document` produces a deterministic FIMI document from a `Graph` and `DeterministicExportPlan`. The exporter is a Rust library surface and has no dedicated HTTP route.
+
+FIMI records carry the same governed `lineage` entries as the STIX exporter,
+with the same actionability gate. Two additive fields come from Epic 0029 WS-G
+and are omitted when empty, so graphs without these records keep their previous
+bytes:
+
+- `campaign_lineage` lists every neutral `Narrative` or `Campaign` collection
+  that references the record and the role that matched (`claim`, `content`,
+  `actor`, or `infrastructure`), with the collection's themes, valid-from
+  stamp, collected narratives, and retained coordination signals. Each signal
+  is marked `attribution: "not_asserted"`: coordination evidence is never an
+  author.
+- `misleadingness` carries the assessments the FIMI pack recorded as evidence
+  under the `fimi_misleadingness` payload key, each marked
+  `not_a_factual_determination`. The exporter carries what the pack wrote and
+  derives no band; an unreadable payload is skipped rather than failing the
+  export.
+
+Verdict state, verdict identity, and confidence band stay in the claim's
+`lineage` entry; band, mechanisms, and the reader-versus-evidence gap stay in
+the assessment. Neither appears inside the other. See
+[Narratives, Campaigns, and Misleadingness](narratives-and-campaigns.md#fimi-export-fields).
 
 ## Native STIX validation
 

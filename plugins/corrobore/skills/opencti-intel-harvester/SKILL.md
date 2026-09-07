@@ -83,9 +83,16 @@ If an object cannot be repaired without invention, retain its unresolved candida
 and omit it and unsupported references from the final export. Do not delete raw
 proposals or fabricate a record to satisfy the output shape.
 
+Strict export refuses a record whose governed claim has blocked or missing
+actionability and names the blockers. Do not raise a confidence value to pass
+the gate; the scalar is display metadata. Read the claim audit, report the
+blockers, and leave the record out of the bundle.
+
 ## Claim audit before verdicts
 
 Before asserting a verdict, call `GET /v1/claims/{id}/audit` and follow the
 [claim audit playbook](../corrobore/references/claim-audit.md). Inspect stored coverage, contradictions,
 dimensions and history; report absent checks explicitly. A human judgment appends
-its own record and never edits the machine verdict.
+its own record and never edits the machine verdict. Report the verdict and the
+actionability decision separately, as described in
+[verdicts, dimensions, and corrective routes](../corrobore/references/verdicts-and-actionability.md).

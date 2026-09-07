@@ -47,6 +47,27 @@ test('an adapter cannot disagree with the definition about writing', async () =>
   }
 });
 
+test('the consolidate tool carries the fusion authority cap and source revocation fields', () => {
+  // WS-H item 3: both fields are additive to memory/v1 and must be reachable
+  // through the MCP projection, or an agent could never revoke a source.
+  const consolidate = listTools().find((tool) => tool.name === 'corrobore_consolidate');
+  assert.ok(consolidate, 'the consolidate capability must be projected');
+  const input = consolidate.inputSchema.properties.input;
+  assert.equal(input.additionalProperties, false);
+  assert.deepEqual(
+    input.required,
+    ['mode', 'memory_ids', 'reason', 'preserve_disagreements'],
+    'the fusion fields stay optional so existing callers are unchanged',
+  );
+  assert.deepEqual(
+    input.properties.authority_policy.required,
+    ['version', 'authority_domain', 'predicate_class'],
+  );
+  assert.equal(input.properties.authority_policy.additionalProperties, false);
+  assert.equal(input.properties.revoked_source_ids.type, 'array');
+  assert.equal(input.properties.revoked_source_ids.items.type, 'string');
+});
+
 test('the catalogue carries no protocol shape and no protocol version', async () => {
   const catalogue = await read('compatibility/capabilities/v1/catalogue.json');
   const source = await readFile(new URL('../crates/shared-runtime/src/capabilities.rs', import.meta.url), 'utf8');

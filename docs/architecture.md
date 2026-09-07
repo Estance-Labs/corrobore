@@ -715,4 +715,7 @@ Architecture Decision Records and feature artifacts live in `project-documents/`
 - [HTTP Server](user-guide/http-server.md)
 - [Cypher Support](user-guide/cypher.md)
 - [Embedded Engine](user-guide/embedded-engine.md)
+- [Verdicts and Actionability](user-guide/verdicts-and-actionability.md)
+- [Narratives, Campaigns, and Misleadingness](user-guide/narratives-and-campaigns.md)
+- [Agentic Platform Foundations](user-guide/agentic-platform.md)
 - [OpenAPI specification](api/openapi.yaml)

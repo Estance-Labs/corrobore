@@ -39,6 +39,7 @@ The EE FIMI provider models foreign information manipulation and interference.
 - Nodes: `Actor`, `Narrative`, `Claim`, `Account`, `Outlet`, `Campaign`, `CoordinationCluster`.
 - Relationships: `Amplifies`, `CoordinatesWith`, `OriginatesFrom`, `Targets`, `Repeats`, `Contradicts`.
 - Typical use: connect claims, accounts, narratives, amplification, and coordination while preserving evidence and confidence.
+- Since Epic 0029 WS-G the open-source core also holds domain-neutral, immutable `Narrative` and `Campaign` collections, coordination signals stored as evidence, and an attribution gate that refuses coordination signals as the only support. The pack adds the meaning: six misleadingness mechanisms, the reader-versus-evidence gap, the band rule, and validators reachable through `node.validate/1`, plus an advisory `claim.verify/1` that reports `inconclusive` only and can never move a factual verdict. See [Narratives, Campaigns, and Misleadingness](narratives-and-campaigns.md).
 
 ## Crisis model surface
 
