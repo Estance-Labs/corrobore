@@ -90,11 +90,13 @@ fn falsifier(id: &str, routes: Vec<String>) -> FalsifierInput {
 }
 
 fn actionable() -> ActionabilityAssessment {
-    let mut dimensions = ConfidenceDimensions::default();
-    dimensions.evidence_sufficiency = Some(Confidence::new(1.0).unwrap());
-    dimensions.source_independence = Some(Confidence::new(1.0).unwrap());
-    dimensions.contradiction_load = Some(Confidence::new(0.0).unwrap());
-    dimensions.temporal_validity = Some(Confidence::new(1.0).unwrap());
+    let dimensions = ConfidenceDimensions {
+        evidence_sufficiency: Some(Confidence::new(1.0).unwrap()),
+        source_independence: Some(Confidence::new(1.0).unwrap()),
+        contradiction_load: Some(Confidence::new(0.0).unwrap()),
+        temporal_validity: Some(Confidence::new(1.0).unwrap()),
+        ..Default::default()
+    };
     ActionabilityPolicy::default().evaluate(&dimensions, 2, true, VerdictState::Supported)
 }
 
@@ -244,7 +246,10 @@ fn a_falsifier_records_what_would_change_a_supported_claim() {
     graph.record_falsifier(recorded).unwrap();
 
     let claim = ClaimId::new(CLAIM).unwrap();
-    let records = graph.epistemic_stores().falsifiers.records_for_claim(&claim);
+    let records = graph
+        .epistemic_stores()
+        .falsifiers
+        .records_for_claim(&claim);
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].would_change_to(), VerdictState::Refuted);
     assert_eq!(records[0].route_ids(), ["route--registry"]);
@@ -433,7 +438,10 @@ fn route_availability_reuses_the_next_best_evidence_constraints() {
         reasons("route--risky").as_slice(),
         [NextBestEvidenceIneligibilityReason::SourceRiskExceeded { .. }]
     ));
-    assert!(reasons("route--retired").is_empty(), "liveness is not an eligibility reason");
+    assert!(
+        reasons("route--retired").is_empty(),
+        "liveness is not an eligibility reason"
+    );
     assert!(!RouteLiveness::Retired.is_live());
     assert!(!RouteLiveness::Unavailable.is_live());
 }
@@ -449,8 +457,16 @@ fn a_high_impact_claim_without_a_live_route_cannot_publish() {
         .evaluate_publish_gate(&claim, ClaimImpact::High, CLAIM_TYPE, &actionable())
         .unwrap();
     assert!(!decision.may_publish());
-    assert!(decision.blockers().contains(&PublishBlocker::CorrectiveRouteMissing));
-    assert!(decision.blockers().contains(&PublishBlocker::FalsifierMissing));
+    assert!(
+        decision
+            .blockers()
+            .contains(&PublishBlocker::CorrectiveRouteMissing)
+    );
+    assert!(
+        decision
+            .blockers()
+            .contains(&PublishBlocker::FalsifierMissing)
+    );
 
     graph
         .register_corrective_route(route(
@@ -470,7 +486,10 @@ fn a_high_impact_claim_without_a_live_route_cannot_publish() {
     let decision = graph
         .evaluate_publish_gate(&claim, ClaimImpact::High, CLAIM_TYPE, &actionable())
         .unwrap();
-    assert_eq!(decision.blockers(), [PublishBlocker::CorrectiveRouteNotLive]);
+    assert_eq!(
+        decision.blockers(),
+        [PublishBlocker::CorrectiveRouteNotLive]
+    );
 
     let mut self_consistent = graph.clone();
     self_consistent

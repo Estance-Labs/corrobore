@@ -330,6 +330,23 @@ impl Graph {
         if reconciliation_ids.is_empty() {
             gaps.push(json!({"kind":"unrecorded_reconciliation_lineage","claim_id":id.as_str()}));
         }
+        // What could change the answer: the recorded falsifiers and the routes
+        // they name. A claim nobody could correct is an explicit gap, never a
+        // silent absence.
+        let falsifiers = stores.falsifiers.records_for_claim(id);
+        let route_ids: BTreeSet<&str> = falsifiers
+            .iter()
+            .flat_map(|record| record.route_ids())
+            .map(String::as_str)
+            .collect();
+        let corrective_routes = stores
+            .corrective_routes
+            .routes()
+            .iter()
+            .filter(|route| route_ids.contains(route.id()));
+        if falsifiers.is_empty() {
+            gaps.push(json!({"kind":"no_recorded_falsifier","claim_id":id.as_str()}));
+        }
         let current = stores.verdicts.current_verdict(id);
         if current.is_none() {
             gaps.push(json!({"kind":"no_stored_verdict","claim_id":id.as_str()}));
@@ -375,6 +392,8 @@ impl Graph {
             "verification_disagreements":array(stores.verdicts.verification_disagreements_for_claim(id))?,
             "candidates":array(candidates)?,
             "promotions":array(promotions)?,
+            "falsifiers":array(&falsifiers)?,
+            "corrective_routes":array(corrective_routes)?,
             "unverified_steps":array(gaps)?
         });
         if !risk_ids.is_empty() {
