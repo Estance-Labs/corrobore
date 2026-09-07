@@ -19,7 +19,14 @@ cypher-executor = { path = "../cypher-executor" }
 cypher-parser = { path = "../cypher-parser" }
 graph-core = { path = "../graph-core" }
 serde = { workspace = true }
+# A tamper-evident mutation chain needs a cryptographic digest. The workspace
+# release is shared, so the crypto dependency contract still resolves one sha2.
+sha2 = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+# The audit-chain contract serializes a chain to simulate tampering.
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

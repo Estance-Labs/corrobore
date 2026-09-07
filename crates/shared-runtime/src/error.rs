@@ -138,6 +138,9 @@ pub enum RuntimeError {
         /// Details.
         details: RuntimeBudgetExceeded,
     },
+    #[error("invalid agent runtime input: {0}")]
+    /// Invalid agent policy, context, or audit input.
+    InvalidAgentRuntimeInput(String),
     #[error("audit metadata creation failed for field: {0}")]
     /// Audit metadata creation failed.
     AuditMetadataCreationFailed(&'static str),

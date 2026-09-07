@@ -358,6 +358,38 @@ Exporter tests additionally cover additive explanation payloads and unchanged
 ungoverned exports (`export-stix/tests/epistemic_lineage.rs` and the FIMI unit
 contracts). The full workspace gate runs these alongside WS-D acceptance.
 
+## Agent write policy, run budgets, and the mutation chain
+
+`authorize_agent_write` decides whether an agent run may write, and its
+signature is the contract: the query text is not a parameter. Everything it
+reads — the tool, the data domain, the write permission, the egress targets, the
+approval grant, the run budget — is trusted context the gateway resolved before
+the request arrived, so no instruction inside a prompt, a parameter, or a
+retrieved document can reach the decision. Every unmet condition is retained
+rather than collapsed to the first, so an operator sees the whole list.
+
+`CypherGateway::execute_for_agent_run` applies it before parsing. A request that
+merely *declares* itself read-only is not taken at its word: when the policy
+grants no write, a write-shaped query is refused too, which is what makes an
+injected instruction inert. A refusal is an ordinary rejected response carrying
+`WRITE_PERMISSION_REQUIRED`, and it never reaches the executor, so a denied
+write cannot leave a partial effect. A run that has spent any of its four
+budget dimensions — tokens, cost, tool calls, wall time — is refused the same
+way and on the first exhausted dimension in a fixed order, so the same
+measurement always reports the same cause.
+
+Every accepted mutation is appended to a `MutationAuditChain` naming the run,
+the tool call, the signing `ServiceIdentity`, the actor, the tool, and the data
+domain. Each entry commits to its predecessor's digest, so an edited, removed,
+or reordered entry is detected and named by `verify` rather than merely
+unlikely; `head_digest` is the value an external witness records. A refused
+decision cannot be appended at all.
+
+`RuntimeRef` is an opaque link to a control-plane object, per ADR-0019: the
+runtime carries it on the audit entry and nothing reads structure into it. No
+runtime object becomes a graph record. The acceptance contract is
+`shared-runtime/tests/agent_write_policy.rs`.
+
 ## Why-provenance for query results
 
 Why-provenance is planned and measured, never traced by hand. `build_logical_plan`

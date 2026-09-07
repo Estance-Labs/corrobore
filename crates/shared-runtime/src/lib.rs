@@ -37,6 +37,7 @@ pub(crate) use std::collections::{HashMap, HashSet};
 pub(crate) use thiserror::Error;
 
 mod actor;
+mod agent_policy;
 mod audit;
 mod benchmark;
 mod budget;
@@ -50,6 +51,7 @@ mod validation;
 mod workspace;
 
 pub use actor::*;
+pub use agent_policy::*;
 pub use audit::*;
 pub use benchmark::*;
 pub use budget::*;
