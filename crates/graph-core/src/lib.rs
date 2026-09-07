@@ -120,6 +120,13 @@ pub use reconciliation::{
     ReconciliationInput, ReconciliationOutcome, ReconciliationRecord, ReconciliationSimilarity,
     ReconciliationSimilarityKind, ReconciliationStore,
 };
+mod campaign_signals;
+pub use campaign_signals::{
+    AttributionAdmissibility, AttributionRefusal, AttributionRequest, CAMPAIGN_SIGNAL_REASON_PREFIX,
+    CROSS_CONTENT_REDUNDANCY_JACCARD, CampaignSignal, CampaignSignalAnnotation,
+    CampaignSignalFeatures, CampaignSignalFinding, SignalScope, StoredCampaignSignal,
+    detect_campaign_signals,
+};
 mod narrative_campaign;
 pub use ids::{CampaignId, NarrativeId};
 pub use narrative_campaign::{

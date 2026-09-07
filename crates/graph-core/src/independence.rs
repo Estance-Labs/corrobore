@@ -51,6 +51,9 @@ pub struct SourceDependencySignals {
 pub enum DependencySignal {
     /// Attributed evidence-risk assessment joining a suspected dependency group.
     EvidenceRisk,
+    /// Collection-scoped coordination signal evidencing a shared production
+    /// pipeline. Curation signals are excluded by the signal itself.
+    CampaignSignal,
     /// Same source identity.
     SharedSource,
     /// Shared publisher identity.
@@ -203,6 +206,35 @@ fn evidence_keys(
                 format!(
                     "{:?}: {}: {}",
                     risk.finding.signal, risk.finding.group_id, risk.finding.reason
+                ),
+            ),
+        );
+    }
+
+    // Coordination evidence joins links that share a production pattern across
+    // the claims of one collection. A signal that reflects curation rather than
+    // production declares itself out, so grouping content cannot deflate the
+    // support of the claims it collects.
+    for signal in evidence
+        .campaign_signals_for(record.id())
+        .iter()
+        .filter(|annotation| {
+            as_of.covers(&annotation.stamp) && annotation.finding.affects_independence()
+        })
+    {
+        let finding = &signal.finding;
+        keys.insert(
+            (
+                DependencySignal::CampaignSignal,
+                finding.group_id().to_owned(),
+            ),
+            (
+                DependencySignal::CampaignSignal,
+                format!(
+                    "{}: {}: {}",
+                    finding.signal().as_str(),
+                    finding.group_id(),
+                    finding.reason()
                 ),
             ),
         );
@@ -391,7 +423,9 @@ impl ClaimStore {
                         right_link: index,
                     });
                 } else {
-                    if signal == DependencySignal::EvidenceRisk {
+                    if signal == DependencySignal::EvidenceRisk
+                        || signal == DependencySignal::CampaignSignal
+                    {
                         reasons.push(DependencyReason {
                             signal,
                             value: value.clone(),
