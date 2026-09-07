@@ -258,6 +258,23 @@ const memoryInputSchemas = {
       canonical_id: nullableString('Optional canonical memory identifier.'),
       reason: string('Auditable reason.', { minLength: 1 }),
       preserve_disagreements: { type: 'boolean' },
+      // WS-H fusion back-pointers: the authority cap and source revocation are
+      // additive memory/v1 fields, forwarded verbatim and omitted when unused.
+      authority_policy: {
+        type: ['object', 'null'],
+        description: 'Optional registered source authority policy that caps the fused authority. Absent means back-pointers without justified authority; an unregistered policy fails the operation.',
+        additionalProperties: false,
+        required: ['version', 'authority_domain', 'predicate_class'],
+        properties: {
+          version: string('Registered authority policy version.', { minLength: 1 }),
+          authority_domain: string('Authority domain the cap is scoped to.', { minLength: 1 }),
+          predicate_class: string('Predicate class the cap is scoped to.', { minLength: 1 }),
+        },
+      },
+      revoked_source_ids: stringArray(
+        'Sources withdrawn from the fused interpretation. A revocation recomputes the fusion, deletes no memory, and enters the proposal identity.',
+        { items: { type: 'string', minLength: 1 } },
+      ),
     },
   },
   trace: {
@@ -320,7 +337,7 @@ const TOOLS = Object.freeze([
   memoryTool('forget', 'Expire, tombstone, or apply application deletion semantics to a Corrobore memory.', {
     readOnlyHint: false, destructiveHint: true, idempotentHint: true,
   }),
-  memoryTool('consolidate', 'Propose a non-destructive Corrobore consolidation or apply an explicitly approved proposal.', {
+  memoryTool('consolidate', 'Propose a non-destructive Corrobore consolidation or apply an explicitly approved proposal. Fused authority is capped by the strongest justified source; revoking a source recomputes without deleting.', {
     readOnlyHint: false, destructiveHint: true, idempotentHint: true,
   }),
   memoryTool('trace', 'Read the bounded Corrobore provenance, selection, version, and policy trace for a target.', {

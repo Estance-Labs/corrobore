@@ -25,6 +25,7 @@ than deriving a conclusion from its links. See the
 | Contradictions? | `contradictions`, refuting observations, `verification_disagreements`, failing verification records |
 | Changes? | `verdict_history`, `state_transitions`, claim decisions, candidate repair lineage, reconciliations, promotions, merge undos, human decisions |
 | Unchecked? | `coverage` for each claim and `unverified_steps`; absent provenance remains explicit |
+| What could change it? | `falsifiers` and the `corrective_routes` they name (WS-H); a `no_recorded_falsifier` gap in `unverified_steps` when nothing recorded could move the verdict |
 
 `mechanically_checked` describes a deterministic check, `semantically_judged`
 an advisory assessment, `unchecked` the absence of records, and `failing` a failed
@@ -32,6 +33,15 @@ check. Read `deterministic`, `result`, verifier identity/version, inputs and lim
 with each entry. Inconclusive is not passing; a passing limited check does not
 prove every aspect of a claim. Related claims retain their own coverage. Strong
 support, source authority or repeated evidence does not substitute for a check.
+
+`falsifiers` lists, per claim, the evidence that would change the verdict, the
+state it would move to, and the corrective routes that could produce it;
+`corrective_routes` describes those routes with their kind, channel, and
+liveness. The audit reads them and does not rank routes or evaluate the
+high-impact publish gate; see
+[Agentic Platform Foundations](agentic-platform.md#corrective-routes-falsifiers-and-the-publish-gate).
+`evidence_risk_assessments` is present only when included evidence carries
+retained risk assessments (see [Evidence Risk](evidence-risk.md)).
 
 The stored confidence dimensions and cluster membership explain evidence weight.
 They remain separate from verification coverage. Audit reads select exact

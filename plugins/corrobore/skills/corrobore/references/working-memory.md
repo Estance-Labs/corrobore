@@ -21,7 +21,17 @@ Solve the assigned task by keeping state in Corrobore instead of context-only me
 7. Attach evidence references and confidence to important assertions.
 8. Keep unreviewed proposals in Shadow or Hypothesis; explicitly promote source-reviewed candidates.
 9. Re-read changed subgraphs to verify effects.
-10. Stop the session with `POST /v1/sessions/{session_id}/stop` at the end.
+10. Read `GET /v1/claims/{id}/audit` before asserting a verdict on a governed claim.
+11. Stop the session with `POST /v1/sessions/{session_id}/stop` at the end.
+
+When the host exposes the packaged MCP tools instead of raw HTTP, the memory
+contract is `corrobore_remember`, `corrobore_relate`, `corrobore_recall`,
+`corrobore_update`, `corrobore_forget`, `corrobore_consolidate`, and
+`corrobore_trace`, with `corrobore_ready` first and `corrobore_claim_audit`
+before any verdict. Mutations need an idempotency key; consolidation proposes
+first, applies only an approved proposal, names its `authority_policy`, and lists
+`revoked_source_ids` explicitly. Fused authority is the strongest justified
+source, never a count of repetitions.
 
 ## Safety and evidence policy
 
@@ -29,6 +39,7 @@ Solve the assigned task by keeping state in Corrobore instead of context-only me
 - Distinguish observation from inference and keep uncertain claims explicit.
 - Treat seed ranking as navigation guidance, not proof.
 - If policy rejects a write, report the rejection and request authorization.
+- A `WRITE_PERMISSION_REQUIRED` or budget refusal is decided outside your prompt from trusted context; do not rephrase or switch route shape.
 
 ## Minimal route map
 

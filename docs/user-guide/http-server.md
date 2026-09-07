@@ -320,8 +320,10 @@ serialized embedded `MemoryRequest`; workspace, actor, agent, session,
 permissions, request identity, and correlation identity come from trusted
 server configuration and middleware and are rejected if supplied in the
 payload. Mutations require `idempotency_key` and return a durability-gated
-receipt. See [High-level Memory Operations](memory-operations.md) for complete
-semantics, limits, examples, errors, and compatibility rules.
+receipt. `consolidate` accepts the additive `authority_policy` and
+`revoked_source_ids` fields that cap fused authority and withdraw sources
+without deleting memories. See [High-level Memory Operations](memory-operations.md)
+for complete semantics, limits, examples, errors, and compatibility rules.
 
 ## `POST /v1/domains/{domain}/validate`
 
@@ -1221,7 +1223,11 @@ mentions of the included observations.
 `current_verdict`, `explanation`, `verdict_history`, `state_transitions`, and
 `claim_decisions` answer why the claim has its stored status and what changed.
 `verifications` and `coverage` distinguish mechanical, semantic, failing and
-unchecked steps. Missing records or stages remain explicit in `unverified_steps`;
+unchecked steps. `falsifiers` and `corrective_routes` say what recorded evidence
+could change the verdict and through which channels; when no falsifier is
+recorded, `unverified_steps` carries a `no_recorded_falsifier` gap.
+`evidence_risk_assessments` appears only when included evidence carries retained
+risk assessments. Missing records or stages remain explicit in `unverified_steps`;
 a missing verdict is `null`. Claim-source links are followed transitively, with
 cycles bounded by visited claim IDs. Unknown claims return 404.
 

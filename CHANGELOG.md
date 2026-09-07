@@ -19,6 +19,23 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   locking uses the renamed `fs4` operation. CI now rejects future direct
   HMAC/SHA-2 digest-release drift (#175).
 
+### Documentation
+
+- Public documentation, the packaged agent skills, and the MCP bridge now cover
+  every Epic 0029 workstream. New user guides describe verdicts, confidence
+  dimensions and the actionability gate (WS-D), narratives, campaigns,
+  coordination signals and misleadingness export fields (WS-G), and the agentic
+  platform foundations (WS-H: capability catalogue, agent write policy and
+  budgets, why-provenance, corrective routes and the publish gate, memory
+  fusion authority cap, investigation artifacts). The Cypher, claim audit,
+  HTTP, memory operations, exporter, domain and LLM guides gain the matching
+  sections; the OpenAPI contract documents the audit's `falsifiers`,
+  `corrective_routes` and `evidence_risk_assessments` fields and the
+  consolidate `authority_policy` and `revoked_source_ids` fields. The Corrobore
+  skill gains verdict and campaign-provenance references, and the
+  `corrobore_consolidate` MCP schema exposes the fusion fields, held by the
+  capability-adapter contract.
+
 ### Added
 
 - WS-H agentic platform foundations: corrective routes and falsifier records

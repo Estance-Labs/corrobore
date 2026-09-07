@@ -81,25 +81,35 @@ forget, consolidate, STIX, or enterprise-domain permissions.
 
 ## MCP tools
 
-| Tool | HTTP route | Effect |
-| :--- | :--- | :--- |
-| `corrobore_claim_audit` | `GET /v1/claims/{id}/audit` | Required stored read before asserting a verdict; no recomputation. |
-| `corrobore_ready` | `GET /health/ready` | Readiness check. |
-| `corrobore_remember` | `POST /v1/memory/operations` | Authorized memory create or identity-upsert. |
-| `corrobore_relate` | `POST /v1/memory/operations` | Authorized relationship create or version. |
-| `corrobore_recall` | `POST /v1/memory/operations` | Bounded working-set read. |
-| `corrobore_update` | `POST /v1/memory/operations` | Authorized optimistic update. |
-| `corrobore_forget` | `POST /v1/memory/operations` | Authorized expiry, tombstone, or application deletion semantics. |
-| `corrobore_consolidate` | `POST /v1/memory/operations` | Policy-gated proposal or approved apply. |
-| `corrobore_trace` | `POST /v1/memory/operations` | Bounded provenance and policy trace. |
-| `corrobore_stix_import` | `POST /v1/import/stix` | STIX 2.1 import with optional retained evidence. |
-| `corrobore_stix_validate` | `POST /v1/stix/validate` | Bundle or graph validation; supported playbooks may persist corrections. |
-| `corrobore_stix_export` | `GET /v1/export/stix` | Deterministic CTI-scoped STIX projection; strict by default. |
+The tool set is the `mcp` projection of the runtime's capability catalogue
+(`compatibility/capabilities/v1/catalogue.json`). Each tool renders exactly one
+capability; the catalogue decides its effect and the authorization it needs, so
+the tool annotations cannot disagree with the HTTP surface. Raw Cypher execution
+is restricted to HTTP and is not a tool.
+
+| Tool | Capability | HTTP route | Effect |
+| :--- | :--- | :--- | :--- |
+| `corrobore_claim_audit` | `claim.audit` | `GET /v1/claims/{id}/audit` | Required stored read before asserting a verdict; no recomputation. Includes falsifiers and corrective routes. |
+| `corrobore_ready` | `runtime.ready` | `GET /health/ready` | Readiness check. |
+| `corrobore_remember` | `memory.remember` | `POST /v1/memory/operations` | Authorized memory create or identity-upsert. |
+| `corrobore_relate` | `memory.relate` | `POST /v1/memory/operations` | Authorized relationship create or version. |
+| `corrobore_recall` | `memory.recall` | `POST /v1/memory/operations` | Bounded working-set read. |
+| `corrobore_update` | `memory.update` | `POST /v1/memory/operations` | Authorized optimistic update. |
+| `corrobore_forget` | `memory.forget` | `POST /v1/memory/operations` | Authorized expiry, tombstone, or application deletion semantics. |
+| `corrobore_consolidate` | `memory.consolidate` | `POST /v1/memory/operations` | Operator-approved proposal or approved apply; optional `authority_policy` cap and `revoked_source_ids` revocation. |
+| `corrobore_trace` | `memory.trace` | `POST /v1/memory/operations` | Bounded provenance and policy trace. |
+| `corrobore_stix_import` | `stix.import` | `POST /v1/import/stix` | STIX 2.1 import with optional retained evidence. |
+| `corrobore_stix_validate` | `stix.validate` | `POST /v1/stix/validate` | Bundle or graph validation; supported playbooks may persist corrections. |
+| `corrobore_stix_export` | `stix.export` | `GET /v1/export/stix` | Deterministic CTI-scoped STIX projection; strict by default. |
 
 The seven memory tools always add `contract_version: "v1"` and select the
 operation named by the tool. Callers still own complete operation input,
 explicit recall limits, mutation authority, and mutation idempotency keys. MCP
 annotations are hints only and are never an authorization decision.
+`corrobore_consolidate` accepts the additive `authority_policy`
+(`version`, `authority_domain`, `predicate_class`) and `revoked_source_ids`
+fields: fused authority is capped by the strongest justified source and a
+revocation recomputes without deleting a memory.
 
 ## Runtime behavior
 
@@ -121,12 +131,19 @@ From the Corrobore repository root:
 ```bash
 node --test scripts/agent-plugin-contract.test.mjs
 node --test scripts/agent-plugin-mcp.test.mjs
+node --test scripts/ws-h-capability-adapters.test.mjs
+node --test scripts/ws-c-guidance.test.mjs scripts/ws-f-guidance.test.mjs scripts/agent-cti-contract.test.mjs
 ```
 
 The contracts check the closed Agent Plugins manifests, Agent Skills discovery,
 package-local paths, documentation and release wiring, MCP lifecycle, complete
 tool discovery, HTTP mapping, bearer isolation, timeouts, bounded failures, and
-stdout purity.
+stdout purity. The capability-adapter contract checks that the tool set covers
+exactly the capabilities the catalogue exposes to `mcp`, that each
+`readOnlyHint` matches the defined effect, and that the operator-approval
+capability is advertised as destructive. The guidance contracts check that both
+skills reach the candidate loop and the claim audit playbook without bypassing
+the candidate tier.
 
 ## Claim audit before verdicts
 

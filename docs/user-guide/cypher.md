@@ -95,14 +95,22 @@ read-only graph in the epistemic vocabulary that any read query can traverse:
 | `VerificationRecord`, `Assessment` | `VerificationRecord` | `verification_id`, `verification_claim`, `verification_verifier_id`, `verification_verifier_version`, `verification_deterministic`, `verification_result`, `verification_coverage_class`, `verification_coverage_current` |
 | `ReconciliationRecord`, `Decision` | `ReconciliationRecord` | `reconciliation_id`, `reconciliation_left`, `reconciliation_right`, `reconciliation_outcome`, `reconciliation_decider`, `reconciliation_citations` |
 | `StateTransition`, `Decision` | `StateTransition` | `transition_id`, `transition_claim`, `transition_from_state`, `transition_to_state`, `transition_trigger` |
+| `Narrative` | neutral `Narrative` collection (WS-G) | `narrative_id`, `narrative_themes`, `narrative_membership`, `narrative_stamp` |
+| `Campaign` | neutral `Campaign` collection (WS-G) | `campaign_id`, `campaign_themes`, `campaign_membership`, `campaign_stamp`, `campaign_narratives` |
+| `RecordReference` | actor or infrastructure member reference | `record_kind`, `record_id` |
 
 Relationships follow the vocabulary: `REPORTS` (source to observation),
 `HAS_MENTION` (observation to entity mention), the
 evidence-link kinds `SUPPORTS`, `REFUTES`, `CONTRADICTS`, `SUPERSEDES`,
 `CONTEXT_FOR`, `DUPLICATES`, `DERIVED_FROM`, `DEPENDS_ON` (link source to
 claim, carrying `evidence_link_*` properties), `ASSESSES` (verdict and
-verification record to claim), and `DECIDES` (state transition to claim or
-reconciliation record to each mention).
+verification record to claim), `DECIDES` (state transition to claim or
+reconciliation record to each mention), and `HAS_MEMBER` (narrative or
+campaign to a claim, evidence source, `RecordReference`, or narrative, carrying
+`membership_role`). `HAS_MEMBER` has no claim-support semantics: membership is
+context, never a judgment. The projected `Campaign` label is the neutral
+epistemic collection, not a canonical CTI `Campaign` node. See
+[Narratives, Campaigns, and Misleadingness](narratives-and-campaigns.md).
 
 ```cypher
 MATCH (c:Claim) RETURN c.claim_id, c.verdict_state, c.claim_status ORDER BY c.claim_id ASC
@@ -247,7 +255,20 @@ MATCH (v:Verdict) RETURN v.verdict_id, v.verdict_uncertainty_kind, v.verdict_exp
 
 The uncertainty token is `ignorance`, `ambiguity`, `unresolved_conflict` or
 `staleness`. If no cause is classified, the standalone token is absent and the
-JSON payload contains null. This does not authorize action or export.
+JSON payload contains null. This does not authorize action or export. The
+meaning of each dimension and of the separate actionability gate is explained in
+[Verdicts and Actionability](verdicts-and-actionability.md).
+
+### Why-provenance (WS-H)
+
+The executor's `ExecutionResult.why_provenance` explains what a read answer was
+computed from: a `computational` read set measured against the plan's declared
+read set, and a separate `semantic_support` list with the supporting and
+refuting links of every claim the answer read. The two never merge, so "the
+query touched it" cannot be read as "the evidence backs it". The field is
+present on the embedded executor result; the shared-runtime `CypherResponse`
+returned by the HTTP routes does not carry it yet. See
+[Agentic Platform Foundations](agentic-platform.md#why-provenance-for-query-results).
 
 Node identifiers in the projection are generated; record identifiers are
 properties. The projection is read-only: verdicts are computed by the engine

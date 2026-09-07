@@ -43,6 +43,10 @@ See [Architecture](architecture.md) for crate-level boundaries and
 ## What is implemented
 
 - an in-memory property graph with evidence, confidence, temporal metadata, snapshots, and epistemic claim primitives;
+- governed evidence stores (Epic 0029): immutable sources and observations, typed evidence links, deterministic-first verifiers, computed verdicts with six named confidence dimensions over independence clusters, a separate actionability gate, and a one-read claim audit with reversible analyst decisions;
+- candidate-first ingestion with constraint feedback, repair lineage, and reversible evidence-cited reconciliation;
+- domain-neutral narrative and campaign collections, coordination signals stored as evidence, an attribution gate, and additive FIMI misleadingness export fields;
+- agentic platform foundations: one capability catalogue behind HTTP and MCP adapters, agent write policy and run budgets decided outside the prompt with a hash-chained mutation log, why-provenance on executor results, corrective routes and falsifiers with a high-impact publish gate, capped memory fusion, and investigation artifacts bound to live records;
 - a bounded Cypher parser, planner, and executor for reads and mutations;
 - host-controlled runtime policies, budgets, and mutation permissions;
 - an embedded Rust facade and an authenticated HTTP service;
@@ -64,6 +68,10 @@ Corrobore is not a distributed graph database and does not claim full openCypher
 - [Embedded Engine](user-guide/embedded-engine.md) — in-process Rust integration.
 - [TAXII Ingestion](user-guide/ingestion.md) — connector lifecycle and cursor behavior.
 - [For LLM Agents](for-llms.md) — model operating boundaries.
+- [Verdicts and Actionability](user-guide/verdicts-and-actionability.md) — how to read confidence dimensions, clusters, and the actionability gate.
+- [Narratives, Campaigns, and Misleadingness](user-guide/narratives-and-campaigns.md) — neutral collections, coordination signals, and FIMI export fields.
+- [Agentic Platform Foundations](user-guide/agentic-platform.md) — capability catalogue, write policy, provenance, corrective routes, artifacts.
+- [Agent Plugin](agent-skill.md) — portable skills and the MCP bridge.
 - [Cypher Support](user-guide/cypher.md) — exact supported query surface.
 - [Architecture](architecture.md) — crate and runtime boundaries.
 - [Interactive API reference](api/index.html) — browse HTTP API parameters and schemas.

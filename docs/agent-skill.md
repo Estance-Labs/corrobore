@@ -58,20 +58,34 @@ MCP server.
 
 ## Included MCP tools
 
-| Area | Tools | Public Corrobore route |
-| :--- | :--- | :--- |
-| Claim audit (current source) | `corrobore_claim_audit` | `GET /v1/claims/{id}/audit` |
-| Runtime | `corrobore_ready` | `GET /health/ready` |
-| Memory writes | `corrobore_remember`, `corrobore_relate`, `corrobore_update`, `corrobore_forget` | `POST /v1/memory/operations` |
-| Memory reads | `corrobore_recall`, `corrobore_trace` | `POST /v1/memory/operations` |
-| Memory policy | `corrobore_consolidate` | `POST /v1/memory/operations` |
-| STIX | `corrobore_stix_import`, `corrobore_stix_validate`, `corrobore_stix_export` | `/v1/import/stix`, `/v1/stix/validate`, `/v1/export/stix` |
+The MCP surface is the `mcp` projection of the runtime's
+[capability catalogue](user-guide/agentic-platform.md#one-capability-catalogue-several-adapters).
+Each tool renders one catalogued capability; effect and authorization are
+decided in the catalogue, so the tool annotations can never disagree with the
+HTTP surface about whether an operation writes. Raw Cypher execution is
+restricted to HTTP and is not a tool.
+
+| Area | Tools | Capability | Public Corrobore route |
+| :--- | :--- | :--- | :--- |
+| Claim audit (current source) | `corrobore_claim_audit` | `claim.audit` | `GET /v1/claims/{id}/audit` |
+| Runtime | `corrobore_ready` | `runtime.ready` | `GET /health/ready` |
+| Memory writes | `corrobore_remember`, `corrobore_relate`, `corrobore_update`, `corrobore_forget` | `memory.remember`, `memory.relate`, `memory.update`, `memory.forget` | `POST /v1/memory/operations` |
+| Memory reads | `corrobore_recall`, `corrobore_trace` | `memory.recall`, `memory.trace` | `POST /v1/memory/operations` |
+| Memory policy | `corrobore_consolidate` | `memory.consolidate` (operator approval) | `POST /v1/memory/operations` |
+| STIX | `corrobore_stix_import`, `corrobore_stix_validate`, `corrobore_stix_export` | `stix.import`, `stix.validate`, `stix.export` | `/v1/import/stix`, `/v1/stix/validate`, `/v1/export/stix` |
 
 Each memory tool fixes `contract_version` to `v1` and maps to the operation in
 its name. Callers supply the typed `input`, explicit recall budget, and any
-required mutation idempotency key. Strict STIX export remains the default;
-permissive or forced export is used only when explicitly requested and its
-diagnostics must be inspected.
+required mutation idempotency key. `corrobore_consolidate` accepts the additive
+`authority_policy` and `revoked_source_ids` fields: fused authority is capped by
+the strongest justified source and a revocation recomputes without deleting.
+Strict STIX export remains the default; permissive or forced export is used only
+when explicitly requested and its diagnostics must be inspected.
+
+`scripts/ws-h-capability-adapters.test.mjs` holds the bridge to the committed
+`compatibility/capabilities/v1/catalogue.json`: the tool set must cover exactly
+the capabilities exposed to `mcp`, each `readOnlyHint` must match the defined
+effect, and the operator-approval capability must be advertised as destructive.
 
 ## Included skills
 
@@ -84,7 +98,9 @@ mutation authority, candidate status, strict export, and session cleanup.
 [Read the Corrobore skill](https://github.com/Estance-Labs/corrobore/blob/main/plugins/corrobore/skills/corrobore/SKILL.md)
 
 Its progressive references cover working memory, CTI, FIMI, report-to-STIX,
-and evidence-first validation workflows.
+evidence-first validation, candidate ingestion, the claim audit, verdicts and
+actionability with corrective routes, and campaign provenance without
+attribution.
 
 ### OpenCTI Intelligence Harvester
 
@@ -108,6 +124,8 @@ skills-only historical package.
 - MCP manifest: `plugins/corrobore/mcp.json`
 - Package contract: `scripts/agent-plugin-contract.test.mjs`
 - MCP integration contract: `scripts/agent-plugin-mcp.test.mjs`
+- Capability catalogue projection: `scripts/ws-h-capability-adapters.test.mjs`
+- Skill guidance contracts: `scripts/ws-c-guidance.test.mjs`, `scripts/ws-f-guidance.test.mjs`, `scripts/agent-cti-contract.test.mjs`
 - Specification: [agent-plugins.org/specification](https://agent-plugins.org/specification)
 
 The repository contracts reject unknown portable fields, invalid skill
@@ -124,3 +142,15 @@ judgments. See the [audit guide and acceptance evidence](user-guide/claim-audit.
 
 The current source package exposes this read as `corrobore_claim_audit` with
 `claim_id`; the historical v0.2.0 archive does not include this additional tool.
+
+## Verdicts, corrective routes, and collections
+
+The packaged `references/verdicts-and-actionability.md` playbook tells an agent
+how to report the six named confidence dimensions, independence clusters, the
+separate actionability gate, and what could change a verdict (`falsifiers`,
+`corrective_routes`, or the `no_recorded_falsifier` gap). The packaged
+`references/campaign-provenance.md` playbook keeps narrative and campaign
+membership as context, reports coordination signals as shared production
+patterns rather than authorship, and attributes only through a supported
+governed claim. See [Verdicts and Actionability](user-guide/verdicts-and-actionability.md)
+and [Narratives, Campaigns, and Misleadingness](user-guide/narratives-and-campaigns.md).
