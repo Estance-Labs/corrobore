@@ -21,6 +21,19 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
 ### Added
 
+- WS-H agentic platform foundations: corrective routes and falsifier records
+  with a high-impact publish gate composed onto the WS-D actionability
+  decision; memory fusion back-pointers with an authority cap where repetition
+  cannot raise authority and revocation recomputes without deleting; planned
+  why-provenance for query results, kept separate from semantic support, with a
+  PROV-O reading in the exporters; agent write authorization decided outside
+  the prompt with four-dimension run budgets and a hash-chained mutation log;
+  one capability catalogue projected by every protocol adapter with no protocol
+  shape in the definition; and investigation artifacts bound to governed
+  records by identity, regenerable while preserving analyst annotations, with
+  publication independent of truth. No agent runtime object enters the evidence
+  graph (#222, #223, #224, #225, #226, #227).
+
 - WS-G FIMI misleadingness and campaign provenance: domain-neutral `Narrative`
   and `Campaign` collections, collection-scoped coordination signals stored as
   evidence with explainable independence-cluster effects, an attribution gate

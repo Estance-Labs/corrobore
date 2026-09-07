@@ -39,6 +39,9 @@ use crate::{ClaimStore, ObservationStore, SourceStore, VerdictStore, Verificatio
 /// The governed evidence stores of one graph.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct EpistemicStores {
+    /// Investigation artifacts bound to governed records by identity.
+    #[serde(default, skip_serializing_if = "crate::ArtifactStore::is_empty")]
+    pub artifacts: crate::ArtifactStore,
     /// How each claim type could be re-checked against the world.
     #[serde(
         default,
@@ -99,7 +102,8 @@ pub struct EpistemicStores {
 impl EpistemicStores {
     /// Whether every store is empty.
     pub fn is_empty(&self) -> bool {
-        self.corrective_routes.is_empty()
+        self.artifacts.is_empty()
+            && self.corrective_routes.is_empty()
             && self.falsifiers.is_empty()
             && self.narrative_campaigns.is_empty()
             && self.analyst_decisions.is_empty()

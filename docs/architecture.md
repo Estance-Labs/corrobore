@@ -358,6 +358,37 @@ Exporter tests additionally cover additive explanation payloads and unchanged
 ungoverned exports (`export-stix/tests/epistemic_lineage.rs` and the FIMI unit
 contracts). The full workspace gate runs these alongside WS-D acceptance.
 
+## Investigation artifacts bound to live records
+
+An artifact is a view, not a fact. `EpistemicStores.artifacts` retains
+timelines, evidence maps, claim matrices, campaign graphs and analyst briefs as
+version lineages, each version binding governed records **by identity**: claims,
+evidence, and the neutral narrative and campaign collections. The type has a
+title, analyst annotations, and those bindings, and no field anywhere for a
+factual statement, so an artifact cannot become a stale second copy of the
+evidence. An artifact that binds nothing is refused, because it would have to be
+carrying its content some other way.
+
+`Graph::regenerate_artifact` appends a version whose binding is what the records
+say now, carrying every analyst annotation forward and preserving the
+publication state; earlier versions are never rewritten, so a published brief
+keeps its lineage. `Graph::annotate_artifact` appends a note the same way.
+
+Publication is a permissions decision, not an epistemic one.
+`Graph::set_artifact_publication` reads no verdict and changes no claim, so a
+brief about a refuted claim publishes exactly like any other and a supported one
+may stay a draft. The contract asserts the claim and verdict stores are
+untouched by a publication change.
+
+Restoration refuses an artifact that names a record the snapshot does not carry,
+so an artifact cannot outlive its bindings, and a graph with no artifact omits
+the store and keeps its existing snapshot bytes. The acceptance contract is
+`graph-core/tests/investigation_artifacts.rs`, and the workstream gates are
+`graph-core/tests/epic_0029_ws_h_acceptance.rs` with
+`scripts/ws-h-runtime-isolation.test.mjs`, which holds the ADR-0019 boundary:
+no agent runtime object appears in `graph-core`, and `graph-core` depends on
+none of the crates that call it.
+
 ## One capability catalogue, several protocol adapters
 
 `CapabilityCatalogue::v1` defines each capability once: its identity, its effect
