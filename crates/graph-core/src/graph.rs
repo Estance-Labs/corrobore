@@ -345,17 +345,19 @@ impl Graph {
     /// Build a read-only graph rendering every governed record as nodes and
     /// relationships of the epistemic vocabulary, so Cypher reads can
     /// traverse claims, sources, observations, entity mentions, evidence, verdicts,
-    /// reconciliation judgments, verification records, and state transitions.
+    /// reconciliation judgments, verification records, state transitions, narratives,
+    /// campaigns, and their contextual membership references.
     ///
     /// Node identifiers are generated; record identifiers are properties
     /// (`claim_id`, `source_id`, ...). Labels: `Source`, `Observation`,
     /// `EntityMention`, `Claim`, `Evidence`, `Verdict` + `Assessment`,
     /// `VerificationRecord` + `Assessment`, `StateTransition` + `Decision`,
-    /// `ReconciliationRecord` + `Decision`.
+    /// `ReconciliationRecord` + `Decision`, `Narrative`, `Campaign`, `RecordReference`.
     /// Relationships: `REPORTS` (source to observation), `HAS_MENTION`
     /// (observation to mention, never an entity-resolution link), the evidence-link
     /// kinds (link source to claim), `ASSESSES` (verdict and verification
-    /// record to claim), `DECIDES` (transition to claim or reconciliation to mentions).
+    /// record to claim), `DECIDES` (transition to claim or reconciliation to mentions),
+    /// and `HAS_MEMBER` (contextual membership, without factual support).
     /// The source graph is
     /// not mutated and the projection carries no stores.
     ///

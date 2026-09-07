@@ -79,7 +79,7 @@ fn node_vocabulary_is_complete_with_stable_labels() {
 // then every kind should map to itself and unknown types to none.
 #[test]
 fn relation_vocabulary_is_complete_with_stable_types() {
-    // Eight Epic 0018 kinds, four evidence-link kinds, and mention containment.
+    // Eight Epic 0018 kinds, four evidence-link kinds, and two containment kinds.
     assert_eq!(EpistemicRelationKind::ALL.len(), 14);
     for kind in [
         EpistemicRelationKind::HasMention,

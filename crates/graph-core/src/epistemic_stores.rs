@@ -23,7 +23,7 @@
 //! Module boundary:
 //! this module owns the `EpistemicStores` bundle that moves sources,
 //! observations, entity mentions, reconciliation records, claims, verification records,
-//! and verdicts together through
+//! verdicts, narratives, and campaigns together through
 //! the graph, its persistence snapshot, and the durable store. It does not
 //! define any of the records themselves.
 //!
