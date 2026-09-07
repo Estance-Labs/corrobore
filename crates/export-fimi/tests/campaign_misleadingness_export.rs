@@ -549,3 +549,61 @@ fn the_export_stays_deterministic_with_collections_and_signals() {
     let restored = Graph::from_persistence_snapshot(graph.persistence_snapshot()).expect("restore");
     assert_eq!(export_fimi_json(&restored, &first).expect("json"), json);
 }
+
+//
+// Epic acceptance: traceability has to be visible in the export. The core
+// cannot enforce the pack's anchoring rule, so an annotation that cites nothing
+// must export as visibly untraceable rather than as a grounded assessment.
+#[test]
+fn an_annotation_that_cites_nothing_exports_as_visibly_untraceable() {
+    let mut unanchored = recorded_assessment();
+    for finding in unanchored["fimi_misleadingness"]["findings"]
+        .as_array_mut()
+        .expect("findings")
+    {
+        finding["anchors"] = json!([]);
+    }
+    let (mut graph, node) = fixture(&unanchored);
+    collect(&mut graph, &node);
+    make_claim_actionable(&mut graph);
+    let assessment = record(&document(&graph))["misleadingness"][0].clone();
+
+    assert_eq!(assessment["band"], "high");
+    assert!(
+        assessment["traced_records"].is_null(),
+        "an assessment citing nothing must not appear to cite something"
+    );
+    assert_eq!(assessment["not_a_factual_determination"], true);
+}
+
+//
+// Epic acceptance: every assessment the exporter carries surfaces the records
+// it traces to, and each one resolves to a record the graph holds.
+#[test]
+fn every_exported_assessment_surfaces_records_the_graph_holds() {
+    let (mut graph, node) = fixture(&recorded_assessment());
+    collect(&mut graph, &node);
+    make_claim_actionable(&mut graph);
+    let exported = record(&document(&graph));
+
+    let assessments = exported["misleadingness"]
+        .as_array()
+        .expect("assessments")
+        .clone();
+    assert!(!assessments.is_empty());
+    for assessment in assessments {
+        let traced = assessment["traced_records"]
+            .as_array()
+            .expect("traced records")
+            .clone();
+        assert!(!traced.is_empty());
+        for record in traced {
+            let record = record.as_str().expect("record identity");
+            assert!(
+                record.starts_with("observation--") || record.starts_with("omission-pattern--"),
+                "{record} must name an observation or an omission pattern record"
+            );
+        }
+        assert_eq!(assessment["evidence_id"], ANNOTATION);
+    }
+}
