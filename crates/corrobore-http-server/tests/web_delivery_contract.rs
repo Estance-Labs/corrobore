@@ -39,6 +39,8 @@ fn config(web_dir: Option<String>) -> ServerConfig {
     ServerConfig {
         host: "127.0.0.1".to_owned(),
         port: 0,
+        bolt_port: 7687,
+        bolt_max_connections: 64,
         auth_mode: corrobore_http_server::security::AuthenticationMode::Required,
         auth_token: Some("test-token".to_owned()),
         auth_token_source: Some(corrobore_http_server::security::SecretSource::Inline),

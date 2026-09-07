@@ -20,6 +20,7 @@
 // THE SOFTWARE.
 pub mod app;
 pub mod auth;
+pub mod bolt;
 pub mod config;
 pub mod correlation;
 pub mod database_operations;

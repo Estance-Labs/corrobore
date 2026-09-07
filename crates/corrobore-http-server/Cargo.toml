@@ -52,7 +52,8 @@ sha2 = { workspace = true }
 shared-runtime = { path = "../shared-runtime" }
 subtle = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["net"] }
+tokio = { workspace = true, features = ["net", "io-util", "sync"] }
+tokio-rustls = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true, features = ["fs"] }
 tower_governor = { workspace = true }
