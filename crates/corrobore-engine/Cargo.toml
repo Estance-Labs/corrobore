@@ -13,6 +13,8 @@ name = "corrobore_engine"
 path = "src/lib.rs"
 
 [dependencies]
+# The shared query AST is the contract another frontend hands the engine.
+cypher-parser = { path = "../cypher-parser" }
 export-stix = { path = "../export-stix" }
 graph-core = { path = "../graph-core" }
 opencti-access = { path = "../opencti-access" }

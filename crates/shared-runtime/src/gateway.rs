@@ -307,7 +307,63 @@ impl CypherGateway {
             }
         };
         let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.finish_execution(request, execution_result, elapsed_ms)
+    }
 
+    /// Execute a query that arrived as a structured AST from another frontend.
+    ///
+    /// Validation reads the AST kind instead of scanning query text, and the
+    /// executor runs the AST directly; everything else — policy, budgets,
+    /// usage accounting, response shape — is the path text queries take, so
+    /// two frontends cannot drift in what they allow.
+    pub fn execute_prepared(
+        &mut self,
+        request: &CypherRequest,
+        ast: &cypher_parser::QueryAst,
+    ) -> Result<CypherResponse, RuntimeError> {
+        request.validate_for_gateway_execution()?;
+        if let Err(error) = self.validator.validate_prepared_request(request, &ast.kind) {
+            return Ok(runtime_error_to_rejected_response(error));
+        }
+        if let Err(error) = self
+            .validator
+            .validate_request_budget_limits(request, &self.budget)
+        {
+            return Ok(runtime_error_to_rejected_response(error));
+        }
+        if request.mode == CypherRequestMode::ValidateOnly {
+            return Ok(map_execution_result_to_response(ExecutionResult {
+                status: ExecutionStatus::Success,
+                data: ExecutionResultData::Empty,
+                warnings: vec![],
+                validation_errors: vec![],
+                fix_hints: vec![],
+                why_provenance: None,
+                columns: vec![],
+            }));
+        }
+        let started = Instant::now();
+        let execution_result = match self
+            .executor
+            .execute_ast_with_limits(ast, execution_limits(&self.budget))
+        {
+            Ok(result) => result,
+            Err(error) => {
+                return Ok(runtime_error_to_rejected_response(
+                    execution_error_to_runtime_error(error),
+                ));
+            }
+        };
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.finish_execution(request, execution_result, elapsed_ms)
+    }
+
+    fn finish_execution(
+        &mut self,
+        request: &CypherRequest,
+        execution_result: ExecutionResult,
+        elapsed_ms: u64,
+    ) -> Result<CypherResponse, RuntimeError> {
         let usage = measure_budget_usage(request, &execution_result, elapsed_ms);
         let recorded = self
             .validator

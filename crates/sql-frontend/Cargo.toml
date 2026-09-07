@@ -1,0 +1,21 @@
+[package]
+name = "sql-frontend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description = "SQL frontend compiling a documented PostgreSQL-flavoured subset into the shared Corrobore query AST"
+
+[dependencies]
+# The shared structural AST is the language-neutral representation both
+# frontends target; SQL never becomes Cypher text.
+cypher-parser = { path = "../cypher-parser" }
+# Typed record values are what a SQL row is projected from.
+cypher-executor = { path = "../cypher-executor" }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

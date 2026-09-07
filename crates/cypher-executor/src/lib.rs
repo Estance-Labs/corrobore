@@ -493,13 +493,26 @@ impl CypherPipelineExecutor {
         parameters: &ParameterBindings,
         limits: ExecutionLimits,
     ) -> Result<ExecutionResult, ExecutionError> {
-        let mut budget = ExecutionBudget::new(limits);
         debug!(
             read_only_by_default = self.policy.read_only_by_default,
             "executing cypher query"
         );
         let ast = parse_and_plan_query(query_text, parameters)?;
         trace!(query_kind = ?ast.kind, "parsed cypher query");
+        self.execute_ast_with_limits(&ast, limits)
+    }
+
+    /// Execute an already structured query under `limits`.
+    ///
+    /// This is the shared execution path: the Cypher frontend reaches it after
+    /// parsing text, and any other frontend reaches it with the AST it built,
+    /// so policy, budgets, provenance and record typing are decided once.
+    pub fn execute_ast_with_limits(
+        &mut self,
+        ast: &cypher_parser::QueryAst,
+        limits: ExecutionLimits,
+    ) -> Result<ExecutionResult, ExecutionError> {
+        let mut budget = ExecutionBudget::new(limits);
 
         // Reject any query with write semantics under read-only policy.
         if self.policy.read_only_by_default
@@ -550,16 +563,14 @@ impl CypherPipelineExecutor {
                     validation_errors: vec![],
                     fix_hints: vec![],
                     why_provenance: Some(why_provenance::assemble(
-                        build_logical_plan(&ast).provenance,
+                        build_logical_plan(ast).provenance,
                         rows,
                         support,
                     )),
                     columns,
                 })
             }
-            QueryKind::Mutation | QueryKind::Mixed => {
-                self.execute_mutation_query(&ast, &mut budget)
-            }
+            QueryKind::Mutation | QueryKind::Mixed => self.execute_mutation_query(ast, &mut budget),
         }
     }
 

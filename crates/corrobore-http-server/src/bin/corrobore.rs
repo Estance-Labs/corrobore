@@ -18,6 +18,7 @@ use corrobore_http_server::{
     s3_snapshot_store::{S3SnapshotArtifactStore, S3SnapshotStoreConfig},
     security::{OperationalEndpointPolicy, TlsMaterialPaths, load_tls_material},
     serve_tls_with_lifecycle, serve_with_lifecycle,
+    sql::serve_sql,
 };
 use graph_storage::{
     CanonicalEngineStore, CanonicalStoreOptions, MigrationRequest, SnapshotRequest,
@@ -268,6 +269,12 @@ struct ConfigArgs {
     /// Override the maximum number of concurrent Bolt connections.
     #[arg(long)]
     bolt_max_connections: Option<usize>,
+    /// Override the SQL listener port used when the `sql` interface is enabled.
+    #[arg(long)]
+    sql_port: Option<u16>,
+    /// Override the maximum number of concurrent SQL connections.
+    #[arg(long)]
+    sql_max_connections: Option<usize>,
     /// Override whether maintenance tasks are enabled.
     #[arg(long, action = clap::ArgAction::Set)]
     maintenance_enabled: Option<bool>,
@@ -324,6 +331,8 @@ struct FileConfig {
     tls: FileTls,
     #[serde(default)]
     bolt: FileBolt,
+    #[serde(default)]
+    sql: FileSql,
 }
 
 #[derive(Default, Deserialize)]
@@ -427,6 +436,15 @@ struct FileOperations {
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FileBolt {
+    port: Option<u16>,
+    max_connections: Option<usize>,
+}
+
+/// `[sql]`: the opt-in PostgreSQL wire listener; like `[bolt]` it shares the
+/// host, the bearer token and the TLS material.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileSql {
     port: Option<u16>,
     max_connections: Option<usize>,
 }
@@ -1060,6 +1078,12 @@ fn apply_file(path: &Path, values: &mut HashMap<String, String>) -> Result<(), S
         "CORROBORE_BOLT_MAX_CONNECTIONS",
         config.bolt.max_connections,
     );
+    insert_num(values, "CORROBORE_SQL_PORT", config.sql.port);
+    insert_num(
+        values,
+        "CORROBORE_SQL_MAX_CONNECTIONS",
+        config.sql.max_connections,
+    );
     insert_bool(
         values,
         "CORROBORE_MAINTENANCE_ENABLED",
@@ -1240,6 +1264,12 @@ fn apply_cli(args: &ConfigArgs, values: &mut HashMap<String, String>) {
         values,
         "CORROBORE_BOLT_MAX_CONNECTIONS",
         args.bolt_max_connections,
+    );
+    insert_num(values, "CORROBORE_SQL_PORT", args.sql_port);
+    insert_num(
+        values,
+        "CORROBORE_SQL_MAX_CONNECTIONS",
+        args.sql_max_connections,
     );
     insert_bool(
         values,
@@ -1426,19 +1456,25 @@ fn validate_operational(config: &OperationalConfig) -> Result<(), String> {
         return Err("interfaces.enabled: must contain at least one interface".to_owned());
     }
     for interface in &config.interfaces {
-        if !matches!(interface.as_str(), "http" | "web" | "bolt") {
+        if !matches!(interface.as_str(), "http" | "web" | "bolt" | "sql") {
             return Err(format!(
                 "interfaces.enabled: unsupported interface {interface:?}"
             ));
         }
     }
-    if config
+    let bolt_enabled = config
         .interfaces
         .iter()
-        .any(|interface| interface == "bolt")
-        && config.server.bolt_port == config.server.port
-    {
+        .any(|interface| interface == "bolt");
+    let sql_enabled = config.interfaces.iter().any(|interface| interface == "sql");
+    if bolt_enabled && config.server.bolt_port == config.server.port {
         return Err("bolt.port: the Bolt listener cannot share the HTTP port".to_owned());
+    }
+    if sql_enabled && config.server.sql_port == config.server.port {
+        return Err("sql.port: the SQL listener cannot share the HTTP port".to_owned());
+    }
+    if sql_enabled && bolt_enabled && config.server.sql_port == config.server.bolt_port {
+        return Err("sql.port: the SQL listener cannot share the Bolt port".to_owned());
     }
     if config.interfaces.iter().any(|interface| interface == "web")
         && config.server.web_dir.is_none()
@@ -1595,6 +1631,11 @@ fn print_effective(config: &OperationalConfig) {
         "bolt.max_connections = {}",
         config.server.bolt_max_connections
     );
+    println!("sql.port = {}", config.server.sql_port);
+    println!(
+        "sql.max_connections = {}",
+        config.server.sql_max_connections
+    );
     println!("maintenance.enabled = {}", config.maintenance.enabled);
     println!(
         "maintenance.interval_ms = {}",
@@ -1626,6 +1667,7 @@ async fn start_server(config: OperationalConfig) -> Result<(), Box<dyn std::erro
         .interfaces
         .iter()
         .any(|interface| interface == "bolt");
+    let sql_enabled = config.interfaces.iter().any(|interface| interface == "sql");
     let tls = if config.tls.enabled {
         let paths = TlsMaterialPaths {
             certificate_file: PathBuf::from(
@@ -1677,6 +1719,19 @@ async fn start_server(config: OperationalConfig) -> Result<(), Box<dyn std::erro
         tokio::spawn(async move {
             if let Err(error) = serve_bolt(bolt_listener, bolt_state, bolt_tls).await {
                 tracing::error!(error = %error, "bolt listener stopped with an error");
+            }
+        });
+    }
+    if sql_enabled {
+        let sql_addr: SocketAddr =
+            format!("{}:{}", state.config.host, state.config.sql_port).parse()?;
+        let sql_listener = TcpListener::bind(sql_addr).await?;
+        let sql_tls = tls.as_ref().map(|material| material.get_inner());
+        let sql_state = state.clone();
+        info!(addr = %sql_addr, tls = sql_tls.is_some(), "corrobore sql listener open");
+        tokio::spawn(async move {
+            if let Err(error) = serve_sql(sql_listener, sql_state, sql_tls).await {
+                tracing::error!(error = %error, "sql listener stopped with an error");
             }
         });
     }

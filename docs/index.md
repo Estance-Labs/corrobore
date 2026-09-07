@@ -18,6 +18,7 @@ server.
 | HTTP API | Agent tools and services | [`corrobore-http-server`](user-guide/http-server.md) |
 | TAXII ingestion | Incremental STIX 2.1 collection polling through the public HTTP import boundary | [`corrobore-ingest`](user-guide/ingestion.md) |
 | Bolt (opt-in) | Neo4j drivers running the supported Cypher subset against the standalone server | [`bolt` interface](user-guide/bolt-protocol.md) |
+| SQL (opt-in) | PostgreSQL clients and drivers querying the relational projection of the graph | [`sql` interface](user-guide/sql-frontend.md) |
 
 ```mermaid
 flowchart LR
