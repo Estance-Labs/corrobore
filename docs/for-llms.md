@@ -157,6 +157,7 @@ ambiguous, abstain when evidence or permission is missing, and say
 `unsupported` for capabilities Corrobore does not expose. The host validates
 the envelope through the real parsers before anything runs. See
 [Natural-Language Queries](user-guide/nlq.md).
+
 ## Read verdicts before you assert them
 
 A governed claim carries a computed verdict and a separate actionability
