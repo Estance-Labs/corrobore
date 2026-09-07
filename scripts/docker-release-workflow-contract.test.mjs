@@ -51,7 +51,7 @@ test("release CI smoke-tests the actual image before publishing", async () => {
   assert.match(workflow, /smoke-test:/);
   assert.match(workflow, /docker build/);
   assert.match(workflow, /scripts\/container-smoke\.sh/);
-  assert.match(workflow, /needs: smoke-test/);
+  assert.match(workflow, /needs: \[smoke-test, release-quality\]/);
   assert.match(workflow, /CORROBORE_BUILD_VERSION/);
   assert.match(workflow, /CORROBORE_BUILD_REVISION/);
 });

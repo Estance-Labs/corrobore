@@ -1,0 +1,105 @@
+name: Release quality
+description: Qualify the exact release with the pinned canonical WS-E provider.
+inputs:
+  candidate:
+    required: true
+    description: Exact evaluated core commit.
+  baseline:
+    required: true
+    description: Independently approved reference commit.
+  release-ref:
+    required: true
+    description: Publication reference bound in the evidence.
+  release-path:
+    required: true
+    description: Core publication family.
+  evidence-revision:
+    required: true
+    description: Immutable benchmark evidence commit.
+  token:
+    required: true
+    description: Read-only token for the provider and evidence repository.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 26.4.0
+    - name: Require immutable independent release references
+      id: pin
+      shell: bash
+      env:
+        QUALITY_CANDIDATE: ${{ inputs.candidate }}
+        QUALITY_BASELINE: ${{ inputs.baseline }}
+        QUALITY_EVIDENCE_REVISION: ${{ inputs.evidence-revision }}
+        QUALITY_RELEASE_PATH: ${{ inputs.release-path }}
+      run: |
+        for revision in "$QUALITY_CANDIDATE" "$QUALITY_BASELINE" "$QUALITY_EVIDENCE_REVISION"; do
+          [[ "$revision" =~ ^[0-9a-f]{40}$ ]] || { echo "Missing immutable release reference" >&2; exit 1; }
+        done
+        test "$(git rev-parse HEAD)" = "$QUALITY_CANDIDATE"
+        case "$QUALITY_RELEASE_PATH" in
+          engine-release|docker-release|agent-plugin-release|release-notes-publication) ;;
+          *) echo "Unsupported publication family" >&2; exit 1 ;;
+        esac
+        node --input-type=module - <<'NODE'
+        import {readFileSync,appendFileSync} from 'node:fs';
+        const pin=JSON.parse(readFileSync('scripts/release-quality-provider.json','utf8'));
+        if(pin.repository!=='Estance-Labs/corrobore-benchmarks'||! /^[a-f0-9]{40}$/.test(pin.revision))throw Error('Invalid provider pin');
+        appendFileSync(process.env.GITHUB_OUTPUT,`revision=${pin.revision}\n`);
+        NODE
+    - uses: actions/checkout@v7
+      with:
+        repository: Estance-Labs/corrobore-benchmarks
+        ref: ${{ steps.pin.outputs.revision }}
+        path: .quality-provider
+        token: ${{ inputs.token }}
+        persist-credentials: false
+    - uses: actions/checkout@v7
+      with:
+        repository: Estance-Labs/corrobore-benchmarks
+        ref: ${{ inputs.evidence-revision }}
+        path: .quality-evidence
+        token: ${{ inputs.token }}
+        persist-credentials: false
+    - name: Qualify release before publication
+      shell: bash
+      env:
+        QUALITY_CANDIDATE: ${{ inputs.candidate }}
+        QUALITY_BASELINE: ${{ inputs.baseline }}
+        QUALITY_EVIDENCE_REVISION: ${{ inputs.evidence-revision }}
+        QUALITY_RELEASE_REF: ${{ inputs.release-ref }}
+        QUALITY_RELEASE_PATH: ${{ inputs.release-path }}
+      run: |
+        test "$(git -C .quality-evidence rev-parse HEAD)" = "$QUALITY_EVIDENCE_REVISION"
+        test -z "$(git -C .quality-evidence status --porcelain)"
+        node scripts/release-quality.mjs \
+          --provider .quality-provider \
+          --bundle ".quality-evidence/qualification/${QUALITY_RELEASE_PATH}.json" \
+          --candidate "$QUALITY_CANDIDATE" --baseline "$QUALITY_BASELINE" \
+          --release-ref "$QUALITY_RELEASE_REF" --release-path "$QUALITY_RELEASE_PATH" \
+          --output-dir ".release-quality/${QUALITY_RELEASE_PATH}"
+    # Preserve the computed decision after a failing gate without resuming publication.
+    # Summaries and review artifacts contain the report, never the private input bundle.
+    - name: Show release qualification decision
+      if: always()
+      shell: bash
+      env:
+        QUALITY_RELEASE_PATH: ${{ inputs.release-path }}
+      run: |
+        report=".release-quality/${QUALITY_RELEASE_PATH}/report.md"
+        if test -f "$report"; then
+          cat "$report" >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo 'Release qualification did not produce a decision; publication remains blocked.' >> "$GITHUB_STEP_SUMMARY"
+        fi
+    - name: Retain release qualification reports
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: release-quality-${{ inputs.release-path }}
+        path: |
+          .release-quality/${{ inputs.release-path }}/decision.json
+          .release-quality/${{ inputs.release-path }}/report.md
+          .release-quality/${{ inputs.release-path }}/report.html
+        if-no-files-found: ignore

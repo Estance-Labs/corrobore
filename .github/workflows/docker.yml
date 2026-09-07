@@ -14,6 +14,20 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  release-quality:
+    name: Qualify release evidence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/release-quality
+        with:
+          candidate: ${{ github.sha }}
+          baseline: ${{ vars.WS_E_BASELINE_REVISION }}
+          evidence-revision: ${{ vars.WS_E_EVIDENCE_REVISION }}
+          release-ref: ${{ github.ref_name }}
+          release-path: docker-release
+          token: ${{ secrets.QUALITY_EVIDENCE_TOKEN }}
+
   smoke-test:
     name: Smoke-test production image
     runs-on: ubuntu-latest
@@ -46,7 +60,7 @@ jobs:
     name: Build and publish image
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    needs: smoke-test
+    needs: [smoke-test, release-quality]
 
     steps:
       - name: Checkout repository

@@ -1,0 +1,139 @@
+{
+  "schemaVersion": "corrobore-release-hook-validation-v1",
+  "productionQualification": false,
+  "description": "Measured fixture test doubles verify enforcement; no release is published.",
+  "results": [
+    {
+      "releasePath": "engine-release",
+      "seededStage": null,
+      "exitCode": 0,
+      "passed": true,
+      "failingStages": [],
+      "providerRevision": "ec91162b21883843bee5772cddc2f4aa89582b73"
+    },
+    {
+      "releasePath": "engine-release",
+      "seededStage": "verifier",
+      "exitCode": 1,
+      "passed": false,
+      "failingStages": [
+        "verifier"
+      ],
+      "providerRevision": "ec91162b21883843bee5772cddc2f4aa89582b73"
+    },
+    {
+      "releasePath": "docker-release",
+      "seededStage": null,
+      "exitCode": 0,
+      "passed": true,
+      "failingStages": [],
+      "providerRevision": "ec91162b21883843bee5772cddc2f4aa89582b73"
+    },
+    {
+      "releasePath": "docker-release",
+      "seededStage": "verifier",
+      "exitCode": 1,
+      "passed": false,
+      "failingStages": [
+        "verifier"
+      ],
+      "providerRevision": "ec91162b21883843bee5772cddc2f4aa89582b73"
+    },
+    {
+      "releasePath": "agent-plugin-release",
+      "seededStage": null,
+      "exitCode": 0,
+      "passed": true,
+      "failingStages": [],
+      "providerRevision": "ec91162b21883843bee5772cddc2f4aa89582b73"
+    },
+    {
+      "releasePath": "agent-plugin-release",
+      "seededStage": "verifier",
+      "exitCode": 1,
+      "passed": false,
+      "failingStages": [
+        "verifier"
+      ],
+      "providerRevision": "ec91162b21883843bee5772cddc2f4aa89582b73"
+    },
+    {
+      "releasePath": "release-notes-publication",
+      "seededStage": null,
+      "exitCode": 0,
+      "passed": true,
+      "failingStages": [],
+      "providerRevision": "ec91162b21883843bee5772cddc2f4aa89582b73"
+    },
+    {
+      "releasePath": "release-notes-publication",
+      "seededStage": "extraction",
+      "exitCode": 1,
+      "passed": false,
+      "failingStages": [
+        "extraction"
+      ],
+      "providerRevision": "ec91162b21883843bee5772cddc2f4aa89582b73"
+    },
+    {
+      "releasePath": "release-notes-publication",
+      "seededStage": "entity_resolution",
+      "exitCode": 1,
+      "passed": false,
+      "failingStages": [
+        "entity_resolution"
+      ],
+      "providerRevision": "ec91162b21883843bee5772cddc2f4aa89582b73"
+    },
+    {
+      "releasePath": "release-notes-publication",
+      "seededStage": "retrieval",
+      "exitCode": 1,
+      "passed": false,
+      "failingStages": [
+        "retrieval"
+      ],
+      "providerRevision": "ec91162b21883843bee5772cddc2f4aa89582b73"
+    },
+    {
+      "releasePath": "release-notes-publication",
+      "seededStage": "subgraph_construction",
+      "exitCode": 1,
+      "passed": false,
+      "failingStages": [
+        "subgraph_construction"
+      ],
+      "providerRevision": "ec91162b21883843bee5772cddc2f4aa89582b73"
+    },
+    {
+      "releasePath": "release-notes-publication",
+      "seededStage": "evidence_sufficiency",
+      "exitCode": 1,
+      "passed": false,
+      "failingStages": [
+        "evidence_sufficiency"
+      ],
+      "providerRevision": "ec91162b21883843bee5772cddc2f4aa89582b73"
+    },
+    {
+      "releasePath": "release-notes-publication",
+      "seededStage": "verifier",
+      "exitCode": 1,
+      "passed": false,
+      "failingStages": [
+        "verifier"
+      ],
+      "providerRevision": "ec91162b21883843bee5772cddc2f4aa89582b73"
+    },
+    {
+      "releasePath": "release-notes-publication",
+      "seededStage": "verdict",
+      "exitCode": 1,
+      "passed": false,
+      "failingStages": [
+        "verdict"
+      ],
+      "providerRevision": "ec91162b21883843bee5772cddc2f4aa89582b73"
+    }
+  ]
+}

@@ -9,6 +9,11 @@ on:
       - 'scripts/agent-plugin-contract.test.mjs'
       - 'scripts/agent-plugin-mcp.test.mjs'
       - 'scripts/ws-c-guidance.test.mjs'
+      - 'scripts/release-quality*'
+      - 'scripts/release-notes-scope*'
+      - 'scripts/docs-release-scope.mjs'
+      - 'scripts/docs-publication-history*'
+      - '.github/actions/release-quality/**'
       - 'scripts/docs-contract-guard.mjs'
       - 'scripts/docs-contract-guard.test.mjs'
       - 'mkdocs.yml'
@@ -17,6 +22,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 
@@ -33,6 +39,8 @@ jobs:
     needs: unit-tests
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v7
         with:
@@ -42,6 +50,22 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 26.4.0
+
+      - name: Detect unpublished release-note changes
+        id: release-scope
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/docs-release-scope.mjs
+
+      - uses: ./.github/actions/release-quality
+        if: steps.release-scope.outputs.required == 'true'
+        with:
+          candidate: ${{ github.sha }}
+          baseline: ${{ vars.WS_E_BASELINE_REVISION }}
+          evidence-revision: ${{ vars.WS_E_EVIDENCE_REVISION }}
+          release-ref: docs:${{ github.sha }}
+          release-path: release-notes-publication
+          token: ${{ secrets.QUALITY_EVIDENCE_TOKEN }}
 
       - uses: actions/cache@v6
         with:
