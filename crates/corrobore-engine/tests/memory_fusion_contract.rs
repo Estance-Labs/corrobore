@@ -11,8 +11,8 @@
 use corrobore_engine::{
     ConsolidateMode, ConsolidateRequest, CorroboreEngine, EngineMutationContext, FusionInput,
     MemoryAuthorityPolicyRef, MemoryContent, MemoryOperation, MemoryPermissions, MemoryRequest,
-    MemoryResponse, MemoryServiceContext, ProvenanceReference, RememberRequest,
-    SourceAuthorityCap, fuse_lineage,
+    MemoryResponse, MemoryServiceContext, ProvenanceReference, RememberRequest, SourceAuthorityCap,
+    fuse_lineage,
 };
 use graph_core::{Confidence, SourceAuthority, SourceAuthorityPolicy, SourceId};
 
@@ -116,6 +116,7 @@ fn consolidate(
     canonical: &str,
     mode: ConsolidateMode,
     revoked: Vec<String>,
+    idempotency_key: &str,
 ) -> MemoryRequest {
     MemoryRequest::new(MemoryOperation::Consolidate(ConsolidateRequest {
         mode,
@@ -130,6 +131,7 @@ fn consolidate(
         }),
         revoked_source_ids: revoked,
     }))
+    .with_idempotency_key(idempotency_key.to_owned())
 }
 
 fn lineage(response: &MemoryResponse) -> corrobore_engine::FusionLineage {
@@ -143,11 +145,7 @@ fn engine_with_policy() -> CorroboreEngine {
     let mut engine = CorroboreEngine::strict_default();
     engine
         .mutate_graph_atomically(
-            EngineMutationContext::new(
-                "workspace--fusion",
-                "session--fusion",
-                "budget--fusion",
-            ),
+            EngineMutationContext::new("workspace--fusion", "session--fusion", "budget--fusion"),
             |graph| {
                 graph
                     .epistemic_stores_mut()
@@ -323,7 +321,7 @@ fn consolidation_carries_the_lineage_and_retains_it_on_the_canonical_memory() {
 
     let proposed = consolidated(
         &mut engine,
-        &consolidate(&ids, &strong, ConsolidateMode::Propose, vec![]),
+        &consolidate(&ids, &strong, ConsolidateMode::Propose, vec![], "propose"),
     );
     let proposal_id = match &proposed {
         MemoryResponse::Consolidate(result) => {
@@ -346,6 +344,7 @@ fn consolidation_carries_the_lineage_and_retains_it_on_the_canonical_memory() {
                 approval_policy: "consolidation-approval-v1".to_owned(),
             },
             vec![],
+            "apply",
         ),
     );
     let applied_lineage = lineage(&applied);
@@ -371,7 +370,12 @@ fn consolidation_carries_the_lineage_and_retains_it_on_the_canonical_memory() {
     let retained = canonical
         .property("corrobore.memory.fusion_origins")
         .expect("the canonical memory retains its back-pointers");
-    assert!(serde_json::to_value(retained).unwrap().to_string().contains(&weak));
+    assert!(
+        serde_json::to_value(retained)
+            .unwrap()
+            .to_string()
+            .contains(&weak)
+    );
     assert!(
         canonical
             .property("corrobore.memory.fused_authority")
@@ -397,7 +401,7 @@ fn a_revocation_is_a_separate_approved_consolidation_that_keeps_every_original()
     let strong = remembered(&mut engine, &remember("strong", STRONG, 0.9));
     let weak = remembered(&mut engine, &remember("weak", WEAK, 0.9));
     let ids = vec![strong.clone(), weak.clone()];
-    let approve = |proposal_id: String, revoked: Vec<String>| {
+    let approve = |proposal_id: String, revoked: Vec<String>, key: &str| {
         consolidate(
             &ids,
             &strong,
@@ -406,32 +410,41 @@ fn a_revocation_is_a_separate_approved_consolidation_that_keeps_every_original()
                 approval_policy: "consolidation-approval-v1".to_owned(),
             },
             revoked,
+            key,
         )
     };
-    let proposal = |revoked: Vec<String>| consolidate(&ids, &strong, ConsolidateMode::Propose, revoked);
+    let proposal = |revoked: Vec<String>, key: &str| {
+        consolidate(&ids, &strong, ConsolidateMode::Propose, revoked, key)
+    };
 
-    let first = match consolidated(&mut engine, &proposal(vec![])) {
+    let first = match consolidated(&mut engine, &proposal(vec![], "propose-live")) {
         MemoryResponse::Consolidate(result) => result.proposal_id,
         other => panic!("expected consolidate, got {other:?}"),
     };
-    consolidated(&mut engine, &approve(first.clone(), vec![]));
+    consolidated(&mut engine, &approve(first.clone(), vec![], "apply-live"));
 
     // The earlier approval cannot silently cover a different set of live sources.
     let stale = engine
-        .execute_memory(&context(), &approve(first, vec![STRONG.to_owned()]))
+        .execute_memory(
+            &context(),
+            &approve(first, vec![STRONG.to_owned()], "apply-stale"),
+        )
         .expect_err("a revocation needs its own approval");
     assert_eq!(
         stale.code,
         corrobore_engine::MemoryErrorCode::PolicyApprovalRequired
     );
 
-    let revoked_proposal = match consolidated(&mut engine, &proposal(vec![STRONG.to_owned()])) {
+    let revoked_proposal = match consolidated(
+        &mut engine,
+        &proposal(vec![STRONG.to_owned()], "propose-revoked"),
+    ) {
         MemoryResponse::Consolidate(result) => result.proposal_id,
         other => panic!("expected consolidate, got {other:?}"),
     };
     let applied = consolidated(
         &mut engine,
-        &approve(revoked_proposal, vec![STRONG.to_owned()]),
+        &approve(revoked_proposal, vec![STRONG.to_owned()], "apply-revoked"),
     );
     let recomputed = lineage(&applied);
 

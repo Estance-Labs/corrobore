@@ -11,6 +11,9 @@ use std::{
     time::Instant,
 };
 
+use crate::memory_fusion::{
+    FusionInput, FusionLineage, MemoryAuthorityPolicyRef, SourceAuthorityCap, fuse_lineage,
+};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, FixedOffset, Utc};
 use graph_core::{
@@ -433,6 +436,14 @@ pub struct ConsolidateRequest {
     pub reason: String,
     /// Whether disagreements must remain explicit.
     pub preserve_disagreements: bool,
+    /// Authority policy that caps the fused interpretation. Absent means the
+    /// fusion carries back-pointers without a justified authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_policy: Option<MemoryAuthorityPolicyRef>,
+    /// Sources withdrawn from the interpretation. A revocation recomputes the
+    /// fusion and deletes no observation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub revoked_source_ids: Vec<String>,
 }
 
 /// Input for `trace`.
@@ -599,7 +610,8 @@ pub struct RecallResult {
 }
 
 /// Consolidation result preserving proposal and original identities.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+// f64 authority means this result is comparable but not totally equal.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ConsolidationResult {
     /// Stable proposal identity.
     pub proposal_id: String,
@@ -611,6 +623,10 @@ pub struct ConsolidationResult {
     pub originals_retained: Vec<String>,
     /// Whether disagreement preservation was enforced.
     pub disagreements_retained: bool,
+    /// Back-pointers to the atomic origins and the capped authority they
+    /// justify. A proposal reports what the fusion would be without writing it.
+    #[serde(default)]
+    pub lineage: FusionLineage,
     /// Optional mutation receipt for approved application.
     pub receipt: Option<MutationReceipt>,
 }
@@ -878,6 +894,9 @@ const P_VALID_UNTIL: &str = "corrobore.memory.valid_until";
 const P_RECORDED_AT: &str = "corrobore.memory.recorded_at";
 const P_EXPIRES_AT: &str = "corrobore.memory.expires_at";
 const P_LIFECYCLE: &str = "corrobore.memory.lifecycle";
+const P_FUSION_ORIGINS: &str = "corrobore.memory.fusion_origins";
+const P_FUSED_AUTHORITY: &str = "corrobore.memory.fused_authority";
+const P_FUSION_POLICY: &str = "corrobore.memory.fusion_policy";
 const P_TAGS: &str = "corrobore.memory.tags";
 const P_ACTOR: &str = "corrobore.memory.actor";
 const P_AGENT: &str = "corrobore.memory.agent";
@@ -1790,6 +1809,66 @@ fn forget_operation(
     })
 }
 
+// Read the atomic origins a consolidation would fuse: the provenance and
+// asserted confidence each original carries, owned so the graph borrow ends
+// before anything is written.
+fn fusion_inputs(
+    graph: &Graph,
+    workspace: &str,
+    ids: &[String],
+) -> Result<Vec<FusionInput>, MemoryError> {
+    let mut inputs = Vec::with_capacity(ids.len());
+    for id in ids {
+        let node = visible_memory_node(graph, workspace, id)?;
+        inputs.push(FusionInput {
+            memory_id: id.clone(),
+            provenance: json_property::<Vec<ProvenanceReference>>(node.properties(), P_PROVENANCE)
+                .unwrap_or_default(),
+            confidence: json_property::<Option<f64>>(node.properties(), P_CONFIDENCE).flatten(),
+        });
+    }
+    Ok(inputs)
+}
+
+// Resolve the cap against a registered WS-D policy. A named policy that is not
+// registered fails closed: an unjustified authority is never silently assumed.
+fn fusion_lineage(
+    graph: &Graph,
+    canonical: &str,
+    originals: &[FusionInput],
+    input: &ConsolidateRequest,
+) -> Result<FusionLineage, MemoryError> {
+    let Some(reference) = &input.authority_policy else {
+        return Ok(fuse_lineage(
+            canonical,
+            originals,
+            None,
+            &input.revoked_source_ids,
+        ));
+    };
+    let policy = graph
+        .epistemic_stores()
+        .verdicts
+        .source_authority_policy(&reference.version)
+        .ok_or_else(|| {
+            invalid(format!(
+                "authority policy {} is not registered",
+                reference.version
+            ))
+        })?;
+    let cap = SourceAuthorityCap::new(
+        policy,
+        &reference.authority_domain,
+        &reference.predicate_class,
+    );
+    Ok(fuse_lineage(
+        canonical,
+        originals,
+        Some(&cap),
+        &input.revoked_source_ids,
+    ))
+}
+
 fn consolidate_operation(
     graph: &mut Graph,
     context: &MemoryServiceContext,
@@ -1811,14 +1890,26 @@ fn consolidate_operation(
     {
         return Err(invalid("canonical_id must be one of memory_ids"));
     }
+    // The proposal identity covers the authority policy and the revoked
+    // sources, so withdrawing a source is its own governed decision and an
+    // earlier approval can never silently cover a different interpretation.
     let proposal_material = serde_json::to_vec(&(
         context.workspace_id.as_str(),
         &ids,
         &canonical_id,
         input.preserve_disagreements,
+        &input.authority_policy,
+        &input.revoked_source_ids,
     ))
     .map_err(|_| internal("consolidation proposal could not be canonicalized"))?;
     let proposal_id = format!("consolidation--{}", &hex_hash(&proposal_material)[..24]);
+    let originals = fusion_inputs(graph, &context.workspace_id, &ids)?;
+    let lineage = fusion_lineage(
+        graph,
+        canonical_id.as_deref().unwrap_or_default(),
+        &originals,
+        input,
+    )?;
     match &input.mode {
         ConsolidateMode::Propose => Ok(MemoryResponse::Consolidate(ConsolidationResult {
             proposal_id,
@@ -1826,6 +1917,7 @@ fn consolidate_operation(
             canonical_id,
             originals_retained: ids,
             disagreements_retained: input.preserve_disagreements,
+            lineage,
             receipt: None,
         })),
         ConsolidateMode::ApplyApproved {
@@ -1895,12 +1987,27 @@ fn consolidate_operation(
                     .create_relationship(relation_input)
                     .map_err(map_graph_error)?;
             }
+            // Retain the back-pointers and the capped authority on the fused
+            // memory itself, so a later read never has to re-derive where the
+            // interpretation came from.
+            let lineage_patch = NodePatch::default()
+                .set_property(P_FUSION_ORIGINS, json_value(&lineage.origins().to_vec())?)
+                .set_property(P_FUSED_AUTHORITY, optional_json_value(lineage.authority()))
+                .set_property(
+                    P_FUSION_POLICY,
+                    optional_string_value(lineage.policy_version()),
+                );
+            graph
+                .update_node(canonical_node.id(), lineage_patch)
+                .map_err(map_graph_error)?;
+            max_version = max_version.max(canonical_node.version().saturating_add(1));
             Ok(MemoryResponse::Consolidate(ConsolidationResult {
                 proposal_id: proposal_id.clone(),
                 applied: true,
                 canonical_id: Some(canonical),
                 originals_retained: ids,
                 disagreements_retained: true,
+                lineage,
                 receipt: Some(receipt(context, &proposal_id, max_version)),
             }))
         }
