@@ -38,6 +38,30 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
 ### Added
 
+- Opt-in SQL frontend for the standalone server (epic #90, item #259): the
+  `sql-frontend` crate compiles a documented PostgreSQL-flavoured subset
+  (`SELECT` with relationship joins, aggregates, ordering, pagination and
+  parameters; `INSERT`, `UPDATE`, `DELETE`; transactions; `information_schema`)
+  into the shared structural query AST, and a PostgreSQL wire-protocol v3
+  listener serves it with cleartext password authentication against the
+  Corrobore bearer token, `SSLRequest` over the shared `[tls]` material, the
+  simple and extended query protocols, typed row descriptions and standard
+  SQLSTATE errors. The engine gains `execute_prepared_request` and a
+  `prepare_graph_for_ast` persistence hook so a frontend that hands over an
+  AST takes the same policy, budget and durability path as Cypher text.
+  Enabled with `interfaces.enabled = ["http", "sql"]` and a `[sql]` section
+  (`port`, `max_connections`) or the matching environment variables and CLI
+  flags. Off by default; Cypher, HTTP and embedded behaviour are unchanged.
+- `corrobore-nlq` (epic #82, item #260): the versioned `nlq/v1` action
+  envelope with a validator that refuses trusted runtime context at any depth,
+  invented evidence, unbounded or mutating reads and writes the caller did not
+  allow, and canonicalizes actions through the real Cypher, `INVESTIGATE` and
+  `memory/v1` parsers; a compile-only `NlqCompiler` trait with a deterministic
+  bilingual `TemplateCompiler` baseline (French and English); a reproducible
+  paired dataset generator with adversarial families and leakage-safe splits;
+  and a parser-backed evaluation harness reporting per-language metrics. The
+  contract is committed under `compatibility/nlq/v1` with replayable fixtures.
+  No model ships and the runtime gains no machine-learning dependency.
 - Opt-in Bolt listener for the standalone server (epic #12, item #258):
   Bolt 4.4 and 5.0 to 5.8 negotiation, PackStream v1, `HELLO`/`LOGON`
   authentication against the Corrobore bearer token, `RUN`/`PULL`/`DISCARD`
