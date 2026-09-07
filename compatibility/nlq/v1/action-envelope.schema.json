@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://docs.corrobore.org/compatibility/nlq/v1/action-envelope.schema.json",
+  "title": "Corrobore NLQ action envelope v1",
+  "description": "The output contract of a natural-language compiler. Exactly one action per envelope; no field carries trusted runtime context (workspace, session, actor, agent, permissions, request or correlation identity), and validators refuse those keys at any depth. Canonicalization of cypher_read, cypher_write_proposal, investigation and memory_operation runs through the real Corrobore parsers.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "language", "action", "reason_code"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "nlq/v1" },
+    "language": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Language tag of the request the action was compiled from; fr and en are the release languages."
+    },
+    "action": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "operation", "input"],
+          "properties": {
+            "kind": { "const": "memory_operation" },
+            "operation": {
+              "type": "string",
+              "enum": ["remember", "relate", "recall", "update", "forget", "consolidate", "trace"]
+            },
+            "input": { "type": "object", "description": "The memory/v1 operation input; validated against the memory contract." }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "query"],
+          "properties": {
+            "kind": { "const": "cypher_read" },
+            "query": { "type": "string", "minLength": 1, "description": "Read-only, bounded (LIMIT or aggregate-only) Cypher in the supported subset." }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "query"],
+          "properties": {
+            "kind": { "const": "cypher_write_proposal" },
+            "query": { "type": "string", "minLength": 1, "description": "A mutation the caller may execute after inspection; never executed by the compiler." }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "statement"],
+          "properties": {
+            "kind": { "const": "investigation" },
+            "statement": { "type": "string", "minLength": 1, "description": "An INVESTIGATE statement in the supported grammar." }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "question"],
+          "properties": {
+            "kind": { "const": "clarification_required" },
+            "question": { "type": "string", "minLength": 1 },
+            "options": { "type": "array", "items": { "type": "string" }, "default": [] }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "reason"],
+          "properties": {
+            "kind": { "const": "abstain" },
+            "reason": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "reason"],
+          "properties": {
+            "kind": { "const": "unsupported" },
+            "reason": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "bounded": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "limit": { "type": "integer", "minimum": 0 },
+        "max_depth": { "type": "integer", "minimum": 0 },
+        "max_items": { "type": "integer", "minimum": 0 }
+      },
+      "default": {}
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "default": [],
+      "description": "Evidence references the compiler used. Each must have been supplied by the caller; a reference the caller did not supply is refused as invented evidence."
+    },
+    "reason_code": { "type": "string", "minLength": 1 }
+  },
+  "x-corrobore": {
+    "trusted_context_keys_refused_at_any_depth": [
+      "workspace_id", "session_id", "actor_id", "agent_id", "permissions", "request_id", "correlation_id", "budget_ref", "idempotency_key"
+    ],
+    "rejection_codes": [
+      "malformed", "unknown_field", "unsupported_schema_version", "trusted_context_supplied", "invented_evidence", "unbounded", "read_emits_write", "unsupported_cypher", "action_kind_mismatch", "write_not_allowed", "unsupported_investigation", "invalid_memory_input", "unknown_memory_operation"
+    ],
+    "canonical_forms": {
+      "cypher_read": "the parser's normalized query text",
+      "cypher_write_proposal": "the parser's normalized query text",
+      "investigation": "InvestigationQuery::to_canonical_string",
+      "memory_operation": "memory/v1 <operation> <canonical JSON of the typed request>",
+      "clarification_required": "clarification_required: <question>",
+      "abstain": "abstain: <reason>",
+      "unsupported": "unsupported: <reason>"
+    }
+  }
+}

@@ -21,6 +21,7 @@ members = [
     "crates/corrobore-engine",
     "crates/corrobore-http-server",
     "crates/corrobore-ingest",
+    "crates/corrobore-nlq",
     "crates/shared-runtime",
     "crates/sql-frontend",
     "crates/storage-api",

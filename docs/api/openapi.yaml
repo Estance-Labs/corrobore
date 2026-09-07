@@ -123,7 +123,7 @@ components:
     ClaimAuditPath:
       type: object
       description: Stored provenance only; no resolver or verifier execution. Arrays of records are deterministic; histories retain ledger order.
-      required: [claim, current_verdict, explanation, analyst_decisions, related_claims, evidence_links, link_membership, contradictions, observations, source_versions, evidence, mentions, reconciliations, merge_undos, verifications, coverage, verdict_history, state_transitions, claim_decisions, verification_disagreements, candidates, promotions, unverified_steps]
+      required: [claim, current_verdict, explanation, analyst_decisions, related_claims, evidence_links, link_membership, contradictions, observations, source_versions, evidence, mentions, reconciliations, merge_undos, verifications, coverage, verdict_history, state_transitions, claim_decisions, verification_disagreements, candidates, promotions, falsifiers, corrective_routes, unverified_steps]
       properties:
         claim: {type: object, additionalProperties: true}
         analyst_decisions:
@@ -185,6 +185,18 @@ components:
           items: {type: object, additionalProperties: true}
         promotions:
           type: array
+          items: {type: object, additionalProperties: true}
+        falsifiers:
+          type: array
+          description: Recorded falsifiers for the claim (WS-H). Each names the evidence that would change the verdict, the state it would move to, and the corrective routes that could produce it. Empty when nothing recorded could change the verdict; unverified_steps then carries a no_recorded_falsifier gap.
+          items: {type: object, additionalProperties: true}
+        corrective_routes:
+          type: array
+          description: Corrective routes named by the recorded falsifiers (WS-H), with kind, channel, and liveness. Read-only; ranking and the publish gate are not evaluated here.
+          items: {type: object, additionalProperties: true}
+        evidence_risk_assessments:
+          type: array
+          description: Present only when included evidence carries retained evidence-risk assessments (WS-E); omitted otherwise.
           items: {type: object, additionalProperties: true}
         unverified_steps:
           type: array
@@ -1251,6 +1263,19 @@ components:
         canonical_id: {type: [string, 'null']}
         reason: {type: string, minLength: 1}
         preserve_disagreements: {type: boolean}
+        authority_policy:
+          description: Optional registered WS-D source authority policy that caps the fused interpretation (WS-H). Absent means the fusion retains back-pointers with no justified authority; a named policy that is not registered fails the operation.
+          type: [object, 'null']
+          additionalProperties: false
+          required: [version, authority_domain, predicate_class]
+          properties:
+            version: {type: string, minLength: 1}
+            authority_domain: {type: string, minLength: 1}
+            predicate_class: {type: string, minLength: 1}
+        revoked_source_ids:
+          description: Optional sources withdrawn from the interpretation (WS-H). A revocation recomputes the fusion, deletes no memory, and enters the proposal identity.
+          type: array
+          items: {type: string, minLength: 1}
     TraceMemoryInput:
       type: object
       additionalProperties: false

@@ -50,7 +50,7 @@ provenance, confidence, temporal metadata, expiry, lifecycle, and version.
 | `recall` | Resolve explicit and lexical objective seeds, traverse only the authorized neighborhood, and return a bounded working set with reasons, paths, completeness, outcomes, usage, and an opaque workspace-bound page token. |
 | `update` | Apply an optimistic, auditable memory or relationship patch as a new version. Evidence additions preserve prior provenance. |
 | `forget` | Expire, tombstone, or apply application deletion semantics so ordinary recall no longer returns the memory. |
-| `consolidate` | Produce a non-destructive proposal, or apply a matching approved proposal while retaining originals and explicit disagreements. |
+| `consolidate` | Produce a non-destructive proposal, or apply a matching approved proposal while retaining originals and explicit disagreements. The fused memory retains back-pointers to every origin and an authority capped by the strongest justified source, never raised by repetition. |
 | `trace` | Explain memory/relationship versions, recall selection paths, evidence, actor/agent/session attribution, mutation correlation, and policy decisions. |
 
 ## Example
@@ -166,6 +166,21 @@ disagreements. The engine versions non-canonical originals as `superseded` and
 adds traceable `superseded_by` relationships. It does not silently destroy
 original evidence. Requests for destructive consolidation are rejected with
 `POLICY_APPROVAL_REQUIRED`.
+
+A consolidation retains a fusion lineage: every atomic origin, the sources each
+one cites, and the authority it contributed. Authority is
+`min(asserted confidence, granted authority)` per cited source under the
+optional `authority_policy` (a registered WS-D source authority policy named by
+`version`, `authority_domain`, and `predicate_class`), and the fused authority
+is the maximum over active origins, never a sum. Remembering the same weak
+observation repeatedly yields the authority of remembering it once. Without a
+policy the fusion carries back-pointers and no justified authority; a named
+policy that is not registered fails the operation. `revoked_source_ids`
+withdraws sources and recomputes the interpretation while every origin stays
+enumerated and every original memory survives. Both fields are additive to `v1`,
+omitted when unused, and part of the proposal identity, so a revocation is its
+own governed decision that an earlier approval never covers. See
+[Agentic Platform Foundations](agentic-platform.md#memory-fusion-back-pointers-and-the-authority-cap).
 
 ## Compatibility and evolution
 

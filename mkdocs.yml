@@ -85,9 +85,13 @@ nav:
   - User Guide:
     - High-level Memory Operations: user-guide/memory-operations.md
     - Agent Memory Lifecycle: user-guide/agent-memory-lifecycle.md
+    - Natural-Language Queries: user-guide/nlq.md
     - Cypher Support: user-guide/cypher.md
     - Intelligence Domains: user-guide/domains.md
     - Domain Provider Operations: user-guide/domain-provider-operations.md
+    - Verdicts and Actionability: user-guide/verdicts-and-actionability.md
+    - Narratives, Campaigns and Misleadingness: user-guide/narratives-and-campaigns.md
+    - Agentic Platform Foundations: user-guide/agentic-platform.md
     - Evidence Risk and Quarantine: user-guide/evidence-risk.md
     - Evidence Access Metrics: user-guide/evidence-access-metrics.md
     - Pipeline Stage Metrics: user-guide/stage-metrics.md

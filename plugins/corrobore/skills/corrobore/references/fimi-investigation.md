@@ -2,7 +2,9 @@
 
 This reference is packaged with the Corrobore Agent Skill for on-demand loading.
 For extracted assertions, follow [candidate ingestion and targeted repair](candidate-ingestion.md):
-submit, read the failing constraint, re-extract that field, resubmit.
+submit, read the failing constraint, re-extract that field, resubmit. For
+collections, coordination signals, attribution, and misleadingness, follow
+[campaign provenance without attribution](campaign-provenance.md).
 
 You are a single autonomous FIMI investigation agent. Use Corrobore to capture and validate narratives, claims, amplification patterns, and coordination hypotheses with explicit provenance.
 
@@ -21,16 +23,22 @@ Prioritize these node and edge types:
 - Nodes: `Actor`, `Narrative`, `Claim`, `Account`, `Outlet`, `Campaign`, `CoordinationCluster`.
 - Relations: `Amplifies`, `CoordinatesWith`, `OriginatesFrom`, `Targets`, `Repeats`, `Contradicts`.
 
+Use the core's neutral `Narrative` and `Campaign` collections (read through
+`HAS_MEMBER` edges in the epistemic projection) to organise the corpus.
+Membership is context, not support or attribution.
+
 ## Investigation loop
 
 1. Start session and establish scope (language, time window, geography, channels).
 2. Extract atomic claims with source spans and publication metadata.
 3. Resolve seeds and read local neighborhood before any write.
 4. Submit claim extraction as raw candidates with provenance and a constraint contract.
-5. Run contradiction and coordination diagnostics.
+5. Run contradiction and coordination diagnostics; report a coordination signal as a shared production pattern, never as authorship.
 6. Re-check only implicated spans for high-impact ambiguities.
 7. Resubmit targeted repairs; promote reviewed candidates and keep contested assertions attributed.
-8. Return a structured synthesis and stop session.
+8. Read the claim audit before asserting any verdict; report the verdict, the actionability decision, and the misleadingness band as separate findings.
+9. Attribute only through a governed claim the engine holds `Supported`; otherwise report attribution as not supported.
+10. Return a structured synthesis and stop session.
 
 ## Epistemic status taxonomy
 
@@ -64,6 +72,7 @@ Escalate to review when:
 Return:
 
 - top narratives and propagation structure;
-- claims by epistemic status;
-- coordination hypotheses and evidence strength;
+- claims by epistemic status, with audited verdicts and actionability;
+- coordination signals as production-pattern findings, with attribution stated as supported or not supported;
+- misleadingness assessments reported beside, never inside, factual verdicts;
 - unresolved ambiguities requiring analyst review.
