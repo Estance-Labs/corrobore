@@ -401,6 +401,20 @@ struct PersistentEnginePersistence {
     opencti_write: Arc<Mutex<OpenCtiWriteRuntime>>,
 }
 
+impl PersistentEnginePersistence {
+    fn load_canonical_projection(
+        &self,
+        request: CanonicalProjectionRequest,
+    ) -> Result<Option<graph_core::Graph>, String> {
+        self.store
+            .lock()
+            .map_err(|_| "canonical graph store lock is poisoned".to_owned())?
+            .load_projection(request)
+            .map(Some)
+            .map_err(|error| error.to_string())
+    }
+}
+
 impl EnginePersistence for PersistentEnginePersistence {
     fn ingestion_metrics(&self) -> Result<Option<graph_core::IngestionMetrics>, String> {
         self.store
@@ -425,13 +439,18 @@ impl EnginePersistence for PersistentEnginePersistence {
         &mut self,
         query: &str,
     ) -> Result<Option<graph_core::Graph>, String> {
-        let request = canonical_projection_for_query(query);
-        self.store
-            .lock()
-            .map_err(|_| "canonical graph store lock is poisoned".to_owned())?
-            .load_projection(request)
-            .map(Some)
-            .map_err(|error| error.to_string())
+        self.load_canonical_projection(canonical_projection_for_query(query))
+    }
+
+    fn prepare_graph_for_ast(
+        &mut self,
+        ast: &cypher_parser::QueryAst,
+    ) -> Result<Option<graph_core::Graph>, String> {
+        let request = ast.query.as_ref().map_or_else(
+            CanonicalProjectionRequest::all,
+            canonical_projection_for_parsed,
+        );
+        self.load_canonical_projection(request)
     }
 
     fn prepare_knowledge_data_operation(
@@ -701,7 +720,15 @@ fn canonical_projection_for_query(query: &str) -> CanonicalProjectionRequest {
     let Some(parsed) = ast.query else {
         return CanonicalProjectionRequest::all();
     };
-    if let Some(match_clause) = parsed.match_clause {
+    canonical_projection_for_parsed(&parsed)
+}
+
+/// Derive the paged projection from the structure a query will touch; shared
+/// by the Cypher text path and frontends that hand over the AST directly.
+fn canonical_projection_for_parsed(
+    parsed: &cypher_parser::ParsedQuery,
+) -> CanonicalProjectionRequest {
+    if let Some(match_clause) = &parsed.match_clause {
         if let Some((relationship, _)) = parsed
             .merge_clause
             .as_ref()
@@ -714,8 +741,8 @@ fn canonical_projection_for_query(query: &str) -> CanonicalProjectionRequest {
             .relationship
             .as_ref()
             .and_then(|(relationship, _)| relationship.rel_type.clone());
-        let mut request = match match_clause.start.label {
-            Some(label) => CanonicalProjectionRequest::for_label(label),
+        let mut request = match &match_clause.start.label {
+            Some(label) => CanonicalProjectionRequest::for_label(label.clone()),
             None => CanonicalProjectionRequest::all_nodes(),
         };
         if match_clause.relationship.is_some() {
@@ -723,10 +750,11 @@ fn canonical_projection_for_query(query: &str) -> CanonicalProjectionRequest {
         }
         return request;
     }
-    if let Some(merge_clause) = parsed.merge_clause {
+    if let Some(merge_clause) = &parsed.merge_clause {
         return merge_clause
             .pattern
             .label
+            .clone()
             .map(CanonicalProjectionRequest::for_label)
             .unwrap_or_else(CanonicalProjectionRequest::all_nodes);
     }

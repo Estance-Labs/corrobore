@@ -300,6 +300,79 @@ pub enum LiteralValue {
 /// Maximum number of values accepted by the bounded list subset.
 pub const MAX_LIST_ITEMS: usize = 256;
 
+impl QueryAst {
+    /// Build the shared AST from an already structured query.
+    ///
+    /// This is the entry point another frontend uses: it hands over the same
+    /// structure the Cypher parser would have produced, and the clause list,
+    /// query kind and aggregation summary are derived from that structure so
+    /// the planner and executor see exactly what they see for Cypher text.
+    /// `normalized_query` is the source text kept for audit; it is not parsed.
+    #[must_use]
+    pub fn from_structured(normalized_query: impl Into<String>, query: ParsedQuery) -> Self {
+        let mut clauses = Vec::new();
+        if let Some(match_clause) = &query.match_clause {
+            clauses.push(if match_clause.optional {
+                ClauseKind::OptionalMatch
+            } else {
+                ClauseKind::Match
+            });
+        }
+        if query.where_clause.is_some() {
+            clauses.push(ClauseKind::Where);
+        }
+        if query.create_clause.is_some() {
+            clauses.push(ClauseKind::Create);
+        }
+        if query.merge_clause.is_some() {
+            clauses.push(ClauseKind::Merge);
+        }
+        if query.set_clause.is_some() {
+            clauses.push(ClauseKind::Set);
+        }
+        if query.remove_clause.is_some() {
+            clauses.push(ClauseKind::Remove);
+        }
+        if query.delete_clause.is_some() {
+            clauses.push(ClauseKind::Delete);
+        }
+        let mut aggregations = Vec::new();
+        if let Some(return_clause) = &query.return_clause {
+            clauses.push(ClauseKind::Return);
+            if return_clause.distinct {
+                clauses.push(ClauseKind::Distinct);
+            }
+            if !return_clause.order_by.is_empty() {
+                clauses.push(ClauseKind::OrderBy);
+            }
+            if return_clause.skip.is_some() {
+                clauses.push(ClauseKind::Skip);
+            }
+            if return_clause.limit.is_some() {
+                clauses.push(ClauseKind::Limit);
+            }
+            for item in &return_clause.items {
+                let function = match item {
+                    ProjectionItem::Count(_) => AggregationFunction::Count,
+                    ProjectionItem::Sum(_) => AggregationFunction::Sum,
+                    ProjectionItem::Average(_) => AggregationFunction::Avg,
+                    ProjectionItem::Minimum(_) => AggregationFunction::Min,
+                    ProjectionItem::Maximum(_) => AggregationFunction::Max,
+                    ProjectionItem::Variable(_) | ProjectionItem::Property(_) => continue,
+                };
+                aggregations.push(function);
+            }
+        }
+        Self {
+            normalized_query: normalized_query.into(),
+            kind: classify_query_kind(&clauses),
+            clauses,
+            aggregations,
+            query: Some(query),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Return clause.
 pub struct ReturnClause {

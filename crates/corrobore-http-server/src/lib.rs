@@ -38,6 +38,7 @@ pub mod opencti_write;
 pub mod s3_snapshot_store;
 pub mod security;
 pub mod session_runtime;
+pub mod sql;
 mod storage_ownership;
 pub mod visualization;
 mod web;

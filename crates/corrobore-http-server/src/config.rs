@@ -56,6 +56,11 @@ pub struct ServerConfig {
     pub bolt_port: u16,
     /// Maximum concurrent Bolt connections; excess connections wait for a slot.
     pub bolt_max_connections: usize,
+    /// PostgreSQL wire listener port, used only when the `sql` interface is
+    /// enabled. It shares `host`, the bearer token and the TLS material.
+    pub sql_port: u16,
+    /// Maximum concurrent SQL connections; excess connections wait for a slot.
+    pub sql_max_connections: usize,
     pub auth_mode: AuthenticationMode,
     pub auth_token: Option<String>,
     pub auth_token_source: Option<SecretSource>,
@@ -137,6 +142,8 @@ impl fmt::Debug for ServerConfig {
             .field("port", &self.port)
             .field("bolt_port", &self.bolt_port)
             .field("bolt_max_connections", &self.bolt_max_connections)
+            .field("sql_port", &self.sql_port)
+            .field("sql_max_connections", &self.sql_max_connections)
             .field("auth_mode", &self.auth_mode.as_str())
             .field("auth_token", &"<redacted>")
             .field(
@@ -427,6 +434,19 @@ impl ServerConfig {
         let bolt_max_connections = parse_positive_usize(
             "CORROBORE_BOLT_MAX_CONNECTIONS",
             vars.get("CORROBORE_BOLT_MAX_CONNECTIONS")
+                .map(String::as_str)
+                .unwrap_or("64"),
+        )?;
+
+        let sql_port = parse_u16(
+            "CORROBORE_SQL_PORT",
+            vars.get("CORROBORE_SQL_PORT")
+                .map(String::as_str)
+                .unwrap_or("5432"),
+        )?;
+        let sql_max_connections = parse_positive_usize(
+            "CORROBORE_SQL_MAX_CONNECTIONS",
+            vars.get("CORROBORE_SQL_MAX_CONNECTIONS")
                 .map(String::as_str)
                 .unwrap_or("64"),
         )?;
@@ -752,6 +772,8 @@ impl ServerConfig {
             port,
             bolt_port,
             bolt_max_connections,
+            sql_port,
+            sql_max_connections,
             auth_mode,
             auth_token,
             auth_token_source,

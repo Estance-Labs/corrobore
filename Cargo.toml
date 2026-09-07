@@ -22,6 +22,7 @@ members = [
     "crates/corrobore-http-server",
     "crates/corrobore-ingest",
     "crates/shared-runtime",
+    "crates/sql-frontend",
     "crates/storage-api",
 ]
 resolver = "2"

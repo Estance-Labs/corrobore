@@ -270,6 +270,16 @@ pub trait EnginePersistence: std::fmt::Debug + Send {
     /// Atomically commits the graph after a successful mutation.
     fn persist_graph(&mut self, graph: &Graph) -> Result<(), String>;
 
+    /// Prepares the graph for a query that arrived as a structured AST. The
+    /// default hands the retained source text to [`Self::prepare_graph_for_request`];
+    /// a paged adapter overrides it to derive its projection from the AST.
+    fn prepare_graph_for_ast(
+        &mut self,
+        ast: &cypher_parser::QueryAst,
+    ) -> Result<Option<Graph>, String> {
+        self.prepare_graph_for_request(&ast.normalized_query)
+    }
+
     /// Prepare a request-scoped graph projection before execution.
     ///
     /// Snapshot adapters use the default and keep their already loaded graph.
@@ -592,49 +602,20 @@ impl CorroboreEngine {
         &mut self,
         request: EngineRequest,
     ) -> Result<CypherResponse, EngineError> {
-        if contains_mutation_keywords(&request.query) {
+        let writes = contains_mutation_keywords(&request.query);
+        if writes {
             self.advanced_query_cache.clear();
         }
         self.prepare_graph_for_query(&request.query)?;
-        let workspace_id = match request.workspace_id {
-            Some(value) => {
-                WorkspaceId::new(value).map_err(|error| EngineError::InvalidConfiguration {
-                    field: "workspace_id",
-                    reason: error.to_string(),
-                })?
-            }
-            None => self.workspace_id.clone(),
-        };
-        let session_id = match request.session_id {
-            Some(value) => {
-                SessionId::new(value).map_err(|error| EngineError::InvalidConfiguration {
-                    field: "session_id",
-                    reason: error.to_string(),
-                })?
-            }
-            None => self.session_id.clone(),
-        };
-        let budget_ref = match request.budget_ref {
-            Some(value) => {
-                CypherBudgetRef::new(value).map_err(|error| EngineError::InvalidConfiguration {
-                    field: "budget_ref",
-                    reason: error.to_string(),
-                })?
-            }
-            None => self.budget_ref.clone(),
-        };
+        let (workspace_id, session_id, budget_ref) = self.resolve_request_identity(&request)?;
         let mode = match request.mode {
-            EngineRequestMode::Auto if contains_mutation_keywords(&request.query) => {
-                shared_runtime::CypherRequestMode::Mutation
-            }
+            EngineRequestMode::Auto if writes => shared_runtime::CypherRequestMode::Mutation,
             EngineRequestMode::Auto | EngineRequestMode::ReadOnly => {
                 shared_runtime::CypherRequestMode::ReadOnly
             }
             EngineRequestMode::Mutation => shared_runtime::CypherRequestMode::Mutation,
             EngineRequestMode::ValidateOnly => shared_runtime::CypherRequestMode::ValidateOnly,
         };
-        let durable_mutation =
-            mode == shared_runtime::CypherRequestMode::Mutation && self.persistence.is_some();
         let runtime_request = CypherRequest::new(
             request.query,
             CypherParameters::typed(request.parameters),
@@ -643,9 +624,105 @@ impl CorroboreEngine {
             session_id,
             budget_ref,
         )?;
+        self.run_with_durability(runtime_request, |gateway, request| gateway.execute(request))
+    }
 
+    /// Execute a query another frontend already compiled into the shared AST.
+    ///
+    /// The request text is kept for audit and identity resolution; the AST is
+    /// what runs. Mode, cache invalidation and persistent projection follow
+    /// the AST kind, and the gateway applies the same policy and budgets as
+    /// for Cypher text, so a frontend cannot reach the graph on easier terms.
+    ///
+    /// # Errors
+    /// The same failures as [`Self::execute_request`].
+    pub fn execute_prepared_request(
+        &mut self,
+        request: EngineRequest,
+        ast: cypher_parser::QueryAst,
+    ) -> Result<CypherResponse, EngineError> {
+        let writes = ast.kind != cypher_parser::QueryKind::Read;
+        if writes {
+            self.advanced_query_cache.clear();
+        }
+        if let Some(adapter) = self.persistence.as_mut()
+            && let Some(projection) = adapter
+                .prepare_graph_for_ast(&ast)
+                .map_err(EngineError::Persistence)?
+        {
+            self.advanced_query_cache.clear();
+            self.gateway.replace_graph(projection);
+        }
+        let (workspace_id, session_id, budget_ref) = self.resolve_request_identity(&request)?;
+        let mode = match request.mode {
+            EngineRequestMode::Auto if writes => shared_runtime::CypherRequestMode::Mutation,
+            EngineRequestMode::Auto | EngineRequestMode::ReadOnly => {
+                shared_runtime::CypherRequestMode::ReadOnly
+            }
+            EngineRequestMode::Mutation => shared_runtime::CypherRequestMode::Mutation,
+            EngineRequestMode::ValidateOnly => shared_runtime::CypherRequestMode::ValidateOnly,
+        };
+        let runtime_request = CypherRequest::new(
+            request.query,
+            CypherParameters::typed(request.parameters),
+            mode,
+            workspace_id,
+            session_id,
+            budget_ref,
+        )?;
+        self.run_with_durability(runtime_request, |gateway, request| {
+            gateway.execute_prepared(request, &ast)
+        })
+    }
+
+    fn resolve_request_identity(
+        &self,
+        request: &EngineRequest,
+    ) -> Result<(WorkspaceId, SessionId, CypherBudgetRef), EngineError> {
+        let workspace_id = match &request.workspace_id {
+            Some(value) => WorkspaceId::new(value.clone()).map_err(|error| {
+                EngineError::InvalidConfiguration {
+                    field: "workspace_id",
+                    reason: error.to_string(),
+                }
+            })?,
+            None => self.workspace_id.clone(),
+        };
+        let session_id = match &request.session_id {
+            Some(value) => SessionId::new(value.clone()).map_err(|error| {
+                EngineError::InvalidConfiguration {
+                    field: "session_id",
+                    reason: error.to_string(),
+                }
+            })?,
+            None => self.session_id.clone(),
+        };
+        let budget_ref = match &request.budget_ref {
+            Some(value) => CypherBudgetRef::new(value.clone()).map_err(|error| {
+                EngineError::InvalidConfiguration {
+                    field: "budget_ref",
+                    reason: error.to_string(),
+                }
+            })?,
+            None => self.budget_ref.clone(),
+        };
+        Ok((workspace_id, session_id, budget_ref))
+    }
+
+    /// Run one gateway call, persisting a successful durable mutation and
+    /// rolling the in-memory graph back when persistence refuses it.
+    fn run_with_durability(
+        &mut self,
+        runtime_request: CypherRequest,
+        run: impl FnOnce(
+            &mut shared_runtime::CypherGateway,
+            &CypherRequest,
+        ) -> Result<CypherResponse, shared_runtime::RuntimeError>,
+    ) -> Result<CypherResponse, EngineError> {
+        let durable_mutation = runtime_request.mode == shared_runtime::CypherRequestMode::Mutation
+            && self.persistence.is_some();
         let previous_graph = durable_mutation.then(|| self.gateway.graph().clone());
-        let response = self.gateway.execute(&runtime_request)?;
+        let response = run(&mut self.gateway, &runtime_request)?;
         if durable_mutation && response.status == CypherResponseStatus::Success {
             let committed_graph = self.gateway.graph().clone();
             if let Some(adapter) = self.persistence.as_mut()

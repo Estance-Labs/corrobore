@@ -68,6 +68,35 @@ impl RequestValidator {
     }
 
     /// Validates the explain request.
+    /// Validate a request whose query arrived as a structured AST rather than
+    /// text. The mode check reads the AST kind, because the keyword scan that
+    /// guards read-only Cypher text has nothing to scan here.
+    pub fn validate_prepared_request(
+        &self,
+        request: &CypherRequest,
+        kind: &cypher_parser::QueryKind,
+    ) -> Result<(), RuntimeError> {
+        match request.mode {
+            CypherRequestMode::ReadOnly => {
+                self.ensure_mode_matches_request(request, CypherRequestMode::ReadOnly)?;
+                self.validate_common_request_policy(request)?;
+                if *kind != cypher_parser::QueryKind::Read {
+                    return Err(RuntimeError::UnsafeMutationAttempt {
+                        reason: "mutation statements are not allowed in read-only mode".to_owned(),
+                        fix_hint:
+                            "Use mutation mode for write statements or remove write operations."
+                                .to_owned(),
+                    });
+                }
+                Ok(())
+            }
+            CypherRequestMode::Mutation => self.validate_mutation_request(request),
+            CypherRequestMode::ValidateOnly => self.validate_validate_only_request(request),
+            CypherRequestMode::Explain => self.validate_explain_request(request),
+        }
+    }
+
+    /// Validate an explain request against the runtime policy.
     pub fn validate_explain_request(&self, request: &CypherRequest) -> Result<(), RuntimeError> {
         self.ensure_mode_matches_request(request, CypherRequestMode::Explain)?;
         self.validate_common_request_policy(request)
