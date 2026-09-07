@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "corrobore-release-quality-provider-v1",
+  "repository": "Estance-Labs/corrobore-benchmarks",
+  "revision": "ec91162b21883843bee5772cddc2f4aa89582b73",
+  "entrypoint": "scripts/release-quality-cli.mjs",
+  "files": {
+    "scripts/abstention.mjs": "cb02a0a483bc7fdf38464faafd047e56a69a0974836bdb7f7006f76324bc0cca",
+    "scripts/graph-perturbation.mjs": "608a142344d1b632bb12336a19cc58f8f02b0cfcf121d59f3f6462222c7f0436",
+    "scripts/minimal-pair.mjs": "e66783194663162330eb7d2f12077da8380567f581848bf43a9497c5a4cc73db",
+    "scripts/policies/ws-e-release-quality-v1.json": "f6a32894f973678a94a27137332efa4c95dac00f56d165b131b70c0833510005",
+    "scripts/red-team.mjs": "50834d39477223531d2760db9d4c60a2da65c9837c2baa9caee48bdd5c352862",
+    "scripts/release-quality-artifacts.mjs": "d8421a7e1e929ecb9ae4854a80889ec5e2214a761479a4da9b4da6830a99165b",
+    "scripts/release-quality-audits.mjs": "8cc70c3c1be0c86a68f624aaa531ccf334a4618f23b41431f803060212a7e80b",
+    "scripts/release-quality-cli.mjs": "560ef55f3702f15b52442ab25b050221fb68149626fa78579e46e1d44edcc7fe",
+    "scripts/release-quality-components.mjs": "11db5e2ae5c7bb25d495426631562aa9c9ea03eb3b319b00acf91e7160bf85b1",
+    "scripts/release-quality-gate.mjs": "f7c5cb591896d7e323c00fb0e6d9568584ac365cc6d4f7cc036f8b7ac4d3d7fd",
+    "scripts/release-quality-package.mjs": "d5b45fdaba0ff42820ca9aa9c699702a9ddda8721f2beee21942add5b8c626b9",
+    "scripts/release-quality-poisoning.mjs": "55f40c8097eebd6638b0a4883d8fe312e6871b86f7a7804bbf1a9f9db63348ef",
+    "scripts/release-quality-policy.mjs": "6a06c47854811856000ee3dc42e70c59bad1e74686a66dc69bf916bfa1f9fe92",
+    "scripts/release-quality-report.mjs": "85553b4f9349944ac812188b627ced4b6e1f6dd1ea6540ff6f4cbbea10423d14",
+    "scripts/release-quality-stages.mjs": "68e81a7c5610b69f4cc2961c4d47eec8f03c0c4c9b699a2a57fd571e4a19ddca",
+    "scripts/stage-metrics.mjs": "5ef3922de55245ad575944bdf3d0d2d2db599996306d9fe1ff96d610de54b81f"
+  }
+}

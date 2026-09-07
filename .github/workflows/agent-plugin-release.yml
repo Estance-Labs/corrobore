@@ -51,6 +51,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - uses: ./.github/actions/release-quality
+        with:
+          candidate: ${{ github.sha }}
+          baseline: ${{ vars.WS_E_BASELINE_REVISION }}
+          evidence-revision: ${{ vars.WS_E_EVIDENCE_REVISION }}
+          release-ref: ${{ github.ref_name }}
+          release-path: agent-plugin-release
+          token: ${{ secrets.QUALITY_EVIDENCE_TOKEN }}
+
       - name: Match tag to plugin version
         run: |
           plugin_version="$(jq -r '.version' plugins/corrobore/plugin.json)"

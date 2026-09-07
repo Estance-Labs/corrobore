@@ -14,13 +14,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  release-quality:
+    name: Qualify release evidence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/release-quality
+        with:
+          candidate: ${{ github.sha }}
+          baseline: ${{ vars.WS_E_BASELINE_REVISION }}
+          evidence-revision: ${{ vars.WS_E_EVIDENCE_REVISION }}
+          release-ref: ${{ github.ref_name }}
+          release-path: engine-release
+          token: ${{ secrets.QUALITY_EVIDENCE_TOKEN }}
+
   unit-tests:
     uses: ./.github/workflows/unit-tests.yml
 
   build-release-assets:
     name: Build and test (${{ matrix.artifact_suffix }})
     runs-on: ${{ matrix.os }}
-    needs: unit-tests
+    needs: [unit-tests, release-quality]
     timeout-minutes: 25
     env:
       CARGO_NET_RETRY: "10"
