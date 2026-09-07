@@ -120,6 +120,13 @@ pub use reconciliation::{
     ReconciliationInput, ReconciliationOutcome, ReconciliationRecord, ReconciliationSimilarity,
     ReconciliationSimilarityKind, ReconciliationStore,
 };
+mod corrective_routes;
+pub use corrective_routes::{
+    ClaimImpact, CorrectiveRoute, CorrectiveRouteCatalogue, CorrectiveRouteInput,
+    CorrectiveRouteKind, CorrectiveRouteRanking, FalsifierInput, FalsifierRecord, FalsifierStore,
+    PublishBlocker, PublishDecision, RankedCorrectiveRoute, RouteIndependence, RouteLiveness,
+    rank_corrective_routes,
+};
 mod campaign_signals;
 pub use campaign_signals::{
     AttributionAdmissibility, AttributionRefusal, AttributionRequest,

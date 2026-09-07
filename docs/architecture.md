@@ -358,6 +358,43 @@ Exporter tests additionally cover additive explanation payloads and unchanged
 ungoverned exports (`export-stix/tests/epistemic_lineage.rs` and the FIMI unit
 contracts). The full workspace gate runs these alongside WS-D acceptance.
 
+## Corrective routes, falsifiers, and the publish gate
+
+A supported claim is not a closed claim. `EpistemicStores.corrective_routes`
+catalogues, per claim type, how a claim could be re-checked against the world:
+an authoritative API, a primary document, a sensor, a signature check,
+independent retrieval, or human review. `EpistemicStores.falsifiers` records
+what evidence would change a claim's state and which routes could produce it. A
+falsifier must name a state other than `Supported`, because evidence that would
+confirm a claim is corroboration, and recording it as a falsifier would make a
+claim look falsifiable while nothing could ever move it.
+
+Every route kind is one of the Epic 0020 investigation actions, and route
+eligibility is delegated to `rank_next_best_evidence`, so budget, policy and
+source-risk limits keep one implementation instead of gaining a parallel one.
+On top of that delegated order, `rank_corrective_routes` applies one rule the
+core owns: a route whose channel produced the claim is `SelfConsistent`, and
+that key is lexicographic rather than a weight. No expected value can promote a
+same-pipeline recheck above an independent channel, because asking the model
+that produced a claim to agree with itself is not a correction. Producing
+channels are derived from the extraction lineage of the claim's evidence, so the
+classification is explainable rather than declared.
+
+`Graph::evaluate_publish_gate` composes the WS-D actionability decision instead
+of restating it: it adds no dimension-level reason of its own and retains the
+actionability blockers beside its own. A high-impact claim additionally needs a
+live route on a channel that did not produce it, and a recorded falsifier;
+either absence is named separately. A standard-impact claim keeps the WS-D gate
+alone, so the corrective requirement is a high-impact policy and not a new
+universal precondition.
+
+`Graph::claim_audit_path` carries the recorded falsifiers and the routes they
+name, which is how the audit answers what could make Corrobore change its mind,
+and records a `no_recorded_falsifier` gap when nothing could. Both stores are
+omitted when empty, so existing snapshot bytes are unchanged, and restoration
+rejects a falsifier citing an unknown claim or route. The acceptance contract is
+`graph-core/tests/corrective_routes.rs`.
+
 ## FIMI misleadingness and campaign provenance
 
 Corrobore answers whether a claim is supported. For an influence operation that
