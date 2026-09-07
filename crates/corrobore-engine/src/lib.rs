@@ -62,6 +62,7 @@
 
 mod knowledge_data;
 mod memory;
+mod memory_fusion;
 mod opencti_routing;
 mod opencti_shadow;
 
@@ -89,6 +90,10 @@ use thiserror::Error;
 
 pub use knowledge_data::*;
 pub use memory::*;
+pub use memory_fusion::{
+    FusionInput, FusionLineage, FusionOrigin, MemoryAuthorityPolicyRef, SourceAuthorityCap,
+    fuse_lineage,
+};
 pub use opencti_routing::*;
 pub use opencti_shadow::*;
 

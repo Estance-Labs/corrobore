@@ -358,6 +358,38 @@ Exporter tests additionally cover additive explanation payloads and unchanged
 ungoverned exports (`export-stix/tests/epistemic_lineage.rs` and the FIMI unit
 contracts). The full workspace gate runs these alongside WS-D acceptance.
 
+## Memory fusion back-pointers and the authority cap
+
+`fuse_lineage` in `corrobore-engine` derives what a consolidation retains. A
+fused memory enumerates every atomic origin that produced it, with the sources
+each one cites, so consolidation aggregates without erasing where an
+interpretation came from. Origins are ordered by memory identity, so a lineage
+is stable whatever order the originals arrive in.
+
+Authority is the guardrail. Each origin contributes `min(asserted confidence,
+granted authority)` for every source it cites, resolved against a registered
+WS-D `SourceAuthorityPolicy` scoped to an authority domain and predicate class.
+The fused authority is the **maximum** of those contributions over active
+origins: never a sum, never scaled by how many origins there are. Remembering a
+weak observation five times therefore yields exactly the authority of
+remembering it once, which is what stops repetition from laundering itself into
+authority. A source with no binding contributes nothing, and a fusion evaluated
+with no policy carries back-pointers with no justified authority at all: absence
+is never replaced by a default weight. A named policy that is not registered
+fails the operation closed.
+
+Revocation is a recomputation, not a deletion. `ConsolidateRequest` carries
+`revoked_source_ids` and the optional `authority_policy`, both additive to the
+`memory/v1` contract and omitted from serialization when unused. Withdrawing a
+source recomputes the interpretation while every origin stays enumerated and
+every original memory survives; an origin is inactive only when nothing it
+cites remains, so one live source keeps it contributing. Both new fields enter
+the proposal identity, so a revocation is its own governed decision and an
+earlier approval can never silently cover a different set of live sources. An
+approved apply retains the origins and the capped authority on the canonical
+memory. The acceptance contract is
+`corrobore-engine/tests/memory_fusion_contract.rs`.
+
 ## Corrective routes, falsifiers, and the publish gate
 
 A supported claim is not a closed claim. `EpistemicStores.corrective_routes`

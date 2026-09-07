@@ -95,6 +95,8 @@ fn public_contract_is_versioned_domain_neutral_and_contains_no_cypher_field() {
             canonical_id: None,
             reason: "duplicate identity".to_owned(),
             preserve_disagreements: true,
+            authority_policy: None,
+            revoked_source_ids: vec![],
         })),
         MemoryRequest::new(MemoryOperation::Trace(TraceRequest {
             target: MemoryTarget::Memory("memory--alpha".to_owned()),
@@ -428,6 +430,8 @@ fn consolidation_proposal_and_approved_apply_preserve_originals_and_disagreement
                 canonical_id: Some(first.clone()),
                 reason: "same application identity".to_owned(),
                 preserve_disagreements: true,
+                authority_policy: None,
+                revoked_source_ids: vec![],
             })),
         )
         .expect("proposal mode should not destroy evidence");
@@ -453,6 +457,8 @@ fn consolidation_proposal_and_approved_apply_preserve_originals_and_disagreement
                 canonical_id: Some(first.clone()),
                 reason: "approved identity merge".to_owned(),
                 preserve_disagreements: true,
+                authority_policy: None,
+                revoked_source_ids: vec![],
             }))
             .with_idempotency_key("consolidate:approved"),
         )
