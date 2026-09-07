@@ -55,6 +55,7 @@ jobs:
               - 'scripts/agent-plugin-contract.test.mjs'
               - 'scripts/agent-plugin-mcp.test.mjs'
               - 'scripts/ws-c-guidance.test.mjs'
+              - 'scripts/ws-g-neutrality.test.mjs'
               - 'plugins/corrobore/**'
               - 'scripts/open-source-readiness.test.mjs'
               - 'scripts/standalone-acceptance-contract.test.mjs'
@@ -123,6 +124,7 @@ jobs:
           node --test scripts/agent-plugin-contract.test.mjs
           node --test scripts/agent-plugin-mcp.test.mjs
           node --test scripts/ws-c-guidance.test.mjs
+          node --test scripts/ws-g-neutrality.test.mjs
           node --test scripts/docs-contract-guard.test.mjs
           node --test scripts/release-notes-contract.test.mjs
           node --test scripts/release-quality*.test.mjs scripts/release-notes-scope.test.mjs scripts/docs-publication-history.test.mjs

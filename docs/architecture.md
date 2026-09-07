@@ -358,6 +358,42 @@ Exporter tests additionally cover additive explanation payloads and unchanged
 ungoverned exports (`export-stix/tests/epistemic_lineage.rs` and the FIMI unit
 contracts). The full workspace gate runs these alongside WS-D acceptance.
 
+## Neutral narrative and campaign records
+
+`Graph::create_narrative` and `Graph::create_campaign` append immutable governed
+records in `EpistemicStores.narrative_campaigns`. Both retain typed claim and
+content-source membership, neutral themes, actor and infrastructure references,
+and a validated `BitemporalStamp`. Campaigns additionally refer to existing
+narrative IDs. Repeating an identical record is idempotent; changing content under
+the same ID returns an immutable-record conflict. A changed collection must be
+appended under a new ID; the earlier record remains intact.
+
+Claim, content-source and narrative references must resolve in the governed
+stores. Actor and infrastructure members are opaque canonical node references:
+their payload need not be resident in a bounded graph view. Membership does not
+assert identity, ownership, responsibility, or factual support. Creation leaves
+claims, verdicts and canonical graph nodes unchanged.
+
+The read projection adds `Narrative` and `Campaign` nodes with namespaced
+membership and timestamp properties. `HAS_MEMBER` relationships retain an
+explicit `membership_role` (`claim`, `content`, `actor`, `infrastructure`, or
+`narrative`). Actor and infrastructure endpoints use `RecordReference` nodes,
+with `record_kind` and `record_id`, rather than materializing canonical entities.
+These edges have no claim-support semantics and pass the neutral endpoint schema.
+The projection is deterministic, read-only, and carries no mutable governed stores.
+
+Native memory export, restoration and the durable governed sidecar retain both
+record kinds. Restoration rejects duplicate identities, malformed timestamps,
+unknown collection fields and missing governed references. Empty collection
+stores are omitted, preserving legacy snapshot bytes. Domain vocabulary,
+assessment mechanisms and specialized campaign-export fields are separate pack
+and exporter work; these primitives require no domain provider.
+
+The acceptance contracts are `graph-core/tests/narrative_campaign_records.rs`,
+`graph-core/tests/epistemic_vocabulary.rs`, and the collection-recovery test in
+`graph-storage/tests/epistemic_sidecar.rs`. They include reopening a durable store
+and projecting memberships when their referenced canonical nodes are not loaded.
+
 ## Durability and transport boundaries
 
 The current HTTP runtime keeps its graph in process. Session metadata and JSONL logs are durable on disk, while `graph-storage` provides the append-only storage and pager building blocks used by lower-level integrations. `corrobore-ingest` deliberately imports through HTTP instead of depending on graph internals.

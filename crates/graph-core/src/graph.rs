@@ -125,6 +125,10 @@ impl Graph {
         snapshot.evidence.validate_risk_references()?;
         snapshot
             .epistemic
+            .narrative_campaigns
+            .validate_bindings(&snapshot.epistemic)?;
+        snapshot
+            .epistemic
             .mentions
             .validate_bindings(&snapshot.epistemic.observations)?;
         snapshot.epistemic.reconciliations.validate_bindings(
@@ -341,17 +345,19 @@ impl Graph {
     /// Build a read-only graph rendering every governed record as nodes and
     /// relationships of the epistemic vocabulary, so Cypher reads can
     /// traverse claims, sources, observations, entity mentions, evidence, verdicts,
-    /// reconciliation judgments, verification records, and state transitions.
+    /// reconciliation judgments, verification records, state transitions, narratives,
+    /// campaigns, and their contextual membership references.
     ///
     /// Node identifiers are generated; record identifiers are properties
     /// (`claim_id`, `source_id`, ...). Labels: `Source`, `Observation`,
     /// `EntityMention`, `Claim`, `Evidence`, `Verdict` + `Assessment`,
     /// `VerificationRecord` + `Assessment`, `StateTransition` + `Decision`,
-    /// `ReconciliationRecord` + `Decision`.
+    /// `ReconciliationRecord` + `Decision`, `Narrative`, `Campaign`, `RecordReference`.
     /// Relationships: `REPORTS` (source to observation), `HAS_MENTION`
     /// (observation to mention, never an entity-resolution link), the evidence-link
     /// kinds (link source to claim), `ASSESSES` (verdict and verification
-    /// record to claim), `DECIDES` (transition to claim or reconciliation to mentions).
+    /// record to claim), `DECIDES` (transition to claim or reconciliation to mentions),
+    /// and `HAS_MEMBER` (contextual membership, without factual support).
     /// The source graph is
     /// not mutated and the projection carries no stores.
     ///
@@ -622,6 +628,9 @@ impl Graph {
             ))?;
             claim_nodes.insert(claim.id().as_str().to_owned(), node_id);
         }
+
+        // Neutral collection membership is projected separately from factual links.
+        self.project_context_collections(&mut projection, &claim_nodes, &source_nodes)?;
 
         // Evidence links as vocabulary relationships.
         for link in stores.claims.claim_links() {
