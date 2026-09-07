@@ -1,0 +1,26 @@
+[package]
+name = "corrobore-nlq"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description = "Versioned natural-language action envelope, canonicalization through the real parsers, and a compile-only bilingual adapter"
+
+[dependencies]
+# Canonicalization runs through the real parsers and contracts, never a copy.
+cypher-parser = { path = "../cypher-parser" }
+corrobore-engine = { path = "../corrobore-engine" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+
+[[example]]
+name = "nlq_dataset"
+path = "examples/nlq_dataset.rs"
+
+[lints]
+workspace = true

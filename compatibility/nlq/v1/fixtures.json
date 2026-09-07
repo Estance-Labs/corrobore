@@ -1,0 +1,162 @@
+{
+  "schema_version": "nlq/v1",
+  "description": "Envelopes an nlq/v1 validator must accept or refuse, with the trust boundary they are validated under. Cross-language adapters replay these; the Rust contract test does too.",
+  "boundary": { "allowed_evidence": ["span--1", "span--2"], "allow_writes": false },
+  "accepted": [
+    {
+      "name": "bounded read canonicalizes to normalized cypher",
+      "envelope": {
+        "schema_version": "nlq/v1",
+        "language": "fr",
+        "action": { "kind": "cypher_read", "query": "  MATCH (a:ThreatActor)   WHERE a.name = 'APT28' RETURN a.name  LIMIT 20 " },
+        "reason_code": "compiled"
+      },
+      "kind": "cypher_read",
+      "canonical": "MATCH (a:ThreatActor) WHERE a.name = 'APT28' RETURN a.name LIMIT 20",
+      "writes": false
+    },
+    {
+      "name": "aggregate-only read is bounded without LIMIT",
+      "envelope": {
+        "schema_version": "nlq/v1",
+        "language": "en",
+        "action": { "kind": "cypher_read", "query": "MATCH (n:Campaign) RETURN count(n)" },
+        "reason_code": "compiled"
+      },
+      "kind": "cypher_read",
+      "canonical": "MATCH (n:Campaign) RETURN count(n)",
+      "writes": false
+    },
+    {
+      "name": "investigation canonicalizes through the grammar",
+      "envelope": {
+        "schema_version": "nlq/v1",
+        "language": "en",
+        "action": { "kind": "investigation", "statement": "INVESTIGATE attribution OF Campaign(\"campaign--42\") RETURN assessment, unknowns" },
+        "reason_code": "compiled"
+      },
+      "kind": "investigation",
+      "canonical": "INVESTIGATE attribution OF Campaign(\"campaign--42\") RETURN assessment, unknowns",
+      "writes": false
+    },
+    {
+      "name": "recall deserializes into memory/v1",
+      "envelope": {
+        "schema_version": "nlq/v1",
+        "language": "fr",
+        "action": {
+          "kind": "memory_operation",
+          "operation": "recall",
+          "input": {
+            "objective": "infrastructure APT28",
+            "seed_ids": [],
+            "limits": { "max_items": 20, "max_depth": 2, "max_payload_bytes": 65536, "max_cost": 500, "timeout_ms": 2000, "supernode_threshold": 1000 },
+            "page_token": null
+          }
+        },
+        "bounded": { "limit": 20 },
+        "reason_code": "compiled"
+      },
+      "kind": "memory_operation",
+      "canonical": "memory/v1 recall {\"objective\":\"infrastructure APT28\",\"seed_ids\":[],\"limits\":{\"max_items\":20,\"max_depth\":2,\"max_payload_bytes\":65536,\"max_cost\":500,\"timeout_ms\":2000,\"supernode_threshold\":1000},\"page_token\":null}",
+      "writes": false
+    },
+    {
+      "name": "clarification is terminal",
+      "envelope": {
+        "schema_version": "nlq/v1",
+        "language": "fr",
+        "action": { "kind": "clarification_required", "question": "Quel APT28 ?", "options": ["ThreatActor", "Campaign"] },
+        "reason_code": "ambiguous_request"
+      },
+      "kind": "clarification_required",
+      "canonical": "clarification_required: Quel APT28 ?",
+      "writes": false
+    },
+    {
+      "name": "abstain with allowed evidence cited",
+      "envelope": {
+        "schema_version": "nlq/v1",
+        "language": "en",
+        "action": { "kind": "abstain", "reason": "no supporting observation" },
+        "evidence_refs": ["span--1"],
+        "reason_code": "no_evidence"
+      },
+      "kind": "abstain",
+      "canonical": "abstain: no supporting observation",
+      "writes": false
+    }
+  ],
+  "refused": [
+    {
+      "name": "unbounded read",
+      "envelope": { "schema_version": "nlq/v1", "language": "en", "action": { "kind": "cypher_read", "query": "MATCH (a:ThreatActor) RETURN a" }, "reason_code": "compiled" },
+      "code": "unbounded"
+    },
+    {
+      "name": "read that mutates",
+      "envelope": { "schema_version": "nlq/v1", "language": "en", "action": { "kind": "cypher_read", "query": "CREATE (a:ThreatActor {name: 'x'})" }, "reason_code": "compiled" },
+      "code": "read_emits_write"
+    },
+    {
+      "name": "unsupported cypher",
+      "envelope": { "schema_version": "nlq/v1", "language": "en", "action": { "kind": "cypher_read", "query": "MATCH (a) UNWIND a.x AS y RETURN y LIMIT 1" }, "reason_code": "compiled" },
+      "code": "unsupported_cypher"
+    },
+    {
+      "name": "write proposal under a read-only boundary",
+      "envelope": { "schema_version": "nlq/v1", "language": "en", "action": { "kind": "cypher_write_proposal", "query": "MATCH (a:ThreatActor {name: 'APT28'}) SET a.tier = 3" }, "reason_code": "compiled" },
+      "code": "write_not_allowed"
+    },
+    {
+      "name": "unsupported investigation intent",
+      "envelope": { "schema_version": "nlq/v1", "language": "en", "action": { "kind": "investigation", "statement": "INVESTIGATE provenance OF Campaign(\"c\") RETURN assessment" }, "reason_code": "compiled" },
+      "code": "unsupported_investigation"
+    },
+    {
+      "name": "invented evidence in the envelope",
+      "envelope": { "schema_version": "nlq/v1", "language": "en", "action": { "kind": "abstain", "reason": "x" }, "evidence_refs": ["span--99"], "reason_code": "compiled" },
+      "code": "invented_evidence"
+    },
+    {
+      "name": "trusted context at top level",
+      "envelope": { "schema_version": "nlq/v1", "language": "en", "action": { "kind": "abstain", "reason": "x" }, "reason_code": "compiled", "workspace_id": "workspace--other" },
+      "code": "trusted_context_supplied"
+    },
+    {
+      "name": "trusted context inside a memory input",
+      "envelope": { "schema_version": "nlq/v1", "language": "en", "action": { "kind": "memory_operation", "operation": "trace", "input": { "target": { "kind": "memory", "id": "mem--1" }, "session_id": "session--x" } }, "reason_code": "compiled" },
+      "code": "trusted_context_supplied"
+    },
+    {
+      "name": "unknown top-level field",
+      "envelope": { "schema_version": "nlq/v1", "language": "en", "action": { "kind": "abstain", "reason": "x" }, "reason_code": "compiled", "extra": 1 },
+      "code": "unknown_field"
+    },
+    {
+      "name": "second action hidden in one",
+      "envelope": { "schema_version": "nlq/v1", "language": "en", "action": { "kind": "abstain", "reason": "x", "query": "MATCH (a) RETURN a LIMIT 1" }, "reason_code": "compiled" },
+      "code": "unknown_field"
+    },
+    {
+      "name": "wrong schema version",
+      "envelope": { "schema_version": "nlq/v2", "language": "en", "action": { "kind": "abstain", "reason": "x" }, "reason_code": "compiled" },
+      "code": "unsupported_schema_version"
+    },
+    {
+      "name": "missing action",
+      "envelope": { "schema_version": "nlq/v1", "language": "en", "reason_code": "compiled" },
+      "code": "malformed"
+    },
+    {
+      "name": "memory input the contract rejects",
+      "envelope": { "schema_version": "nlq/v1", "language": "en", "action": { "kind": "memory_operation", "operation": "recall", "input": { "objective": "x" } }, "reason_code": "compiled" },
+      "code": "invalid_memory_input"
+    },
+    {
+      "name": "unknown memory operation",
+      "envelope": { "schema_version": "nlq/v1", "language": "en", "action": { "kind": "memory_operation", "operation": "explode", "input": {} }, "reason_code": "compiled" },
+      "code": "unknown_memory_operation"
+    }
+  ]
+}

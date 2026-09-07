@@ -144,6 +144,19 @@ LIMIT 100
 
 Use `GET /v1/export/stix` for deterministic, CTI-scoped STIX projection after validation. The route is read-only and strict is the default correctness gate. Late writes remain candidate and require a new readiness and promotion pass before another strict attempt. Permissive is only for an explicit caller request for a diagnostic partial bundle. `force=true` is an explicit operator decision and never an automatic LLM fallback. Validation still runs and each bypassed semantic finding remains in diagnostics; force does not bypass lifecycle, identity, evidence-integrity, endpoint, provider, or license gates. Preserve the returned object identities and `x_corrobore_evidence_refs` instead of inventing replacements. Logical export metadata identifies the snapshot and transaction, but the current HTTP export does not roll the graph back in time.
 
+## Compile natural language through the envelope, not into authority
+
+When a host lets you compile a user's question, produce one `nlq/v1` action
+envelope: exactly one action (`memory_operation`, `cypher_read`,
+`cypher_write_proposal`, `investigation`, `clarification_required`, `abstain`
+or `unsupported`), the language, the bounds, the evidence references you used
+and a reason code. Never put workspace, session, actor, agent, permissions,
+request or correlation identifiers in it; they are refused wherever they
+appear. Cite only evidence the caller supplied, ask when the request is
+ambiguous, abstain when evidence or permission is missing, and say
+`unsupported` for capabilities Corrobore does not expose. The host validates
+the envelope through the real parsers before anything runs. See
+[Natural-Language Queries](user-guide/nlq.md).
 ## Read verdicts before you assert them
 
 A governed claim carries a computed verdict and a separate actionability

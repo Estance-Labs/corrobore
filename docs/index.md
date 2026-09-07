@@ -69,6 +69,7 @@ Corrobore is not a distributed graph database and does not claim full openCypher
 - [Embedded Engine](user-guide/embedded-engine.md) — in-process Rust integration.
 - [TAXII Ingestion](user-guide/ingestion.md) — connector lifecycle and cursor behavior.
 - [For LLM Agents](for-llms.md) — model operating boundaries.
+- [Natural-Language Queries](user-guide/nlq.md) — the compile-only `nlq/v1` action envelope, its trust boundary, the bilingual template compiler and the evaluation harness.
 - [Verdicts and Actionability](user-guide/verdicts-and-actionability.md) — how to read confidence dimensions, clusters, and the actionability gate.
 - [Narratives, Campaigns, and Misleadingness](user-guide/narratives-and-campaigns.md) — neutral collections, coordination signals, and FIMI export fields.
 - [Agentic Platform Foundations](user-guide/agentic-platform.md) — capability catalogue, write policy, provenance, corrective routes, artifacts.
