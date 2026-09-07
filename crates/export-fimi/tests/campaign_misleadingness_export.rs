@@ -5,19 +5,22 @@
 //! and stay byte-identical for graphs with no narrative or campaign record.
 use export_fimi::{export_fimi_json, export_fimi_json_document};
 use graph_core::{
-    BitemporalStamp, CampaignId, CampaignInput, CampaignSignal, CampaignSignalFeatures, ClaimId,
-    ClaimInput, ClaimLink, ClaimLinkKind, ClaimLinkSource, ClaimStatement, ClaimTarget,
-    ContextMembership, EvidenceId, EvidenceInput, EvidenceSourceType, ExportMetadata, ExportMode,
-    ExportProfile, Graph, NarrativeId, NarrativeInput, NodeId, NodeInput, ObservationId,
-    ObservationInput, ObservationModality, RecordStatus, ResolutionInputs, SignalScope, SourceId,
-    SourceInput, TemporalTimestamp, TransactionId, build_deterministic_export_plan,
-    resolve_claim_verdict,
+    BitemporalStamp, CampaignId, CampaignInput, CampaignSignal, CampaignSignalFeatures,
+    ClaimAnalyticalTarget, ClaimId, ClaimInput, ClaimLink, ClaimLinkKind, ClaimLinkSource,
+    ClaimStatement, ClaimTarget, Confidence, ContextMembership, EvidenceId, EvidenceInput,
+    EvidenceRecordStore, EvidenceSourceType, ExportMetadata, ExportMode, ExportProfile, Graph,
+    NarrativeId, NarrativeInput, NodeId, NodeInput, ObservationId, ObservationInput,
+    ObservationModality, RecordStatus, ResolutionInputs, SignalScope, SourceAuthority,
+    SourceAuthorityPolicy, SourceId, SourceInput, TemporalTimestamp, TransactionId,
+    VerificationInputs, VerificationRecord, VerificationRecordId, VerificationResult,
+    build_deterministic_export_plan, resolve_current_claim_verdict,
 };
 use serde_json::{Value, json};
 
 const NARRATIVE: &str = "narrative--relief-convoy";
 const CAMPAIGN: &str = "campaign--relief-convoy";
 const CLAIM: &str = "claim--convoy-delay";
+const CONTEXT_CLAIM: &str = "claim--convoy-context";
 const ANNOTATION: &str = "evidence--assessment";
 const SECOND: &str = "evidence--second-outlet";
 const OUTLET: &str = "source--outlet-a";
@@ -136,6 +139,7 @@ fn fixture(annotation: &Value) -> (Graph, NodeId) {
         .expect("node");
 
     let claim = ClaimId::new(CLAIM).expect("claim id");
+    let context = ClaimId::new(CONTEXT_CLAIM).expect("claim id");
     let stores = graph.epistemic_stores_mut();
     stores
         .claims
@@ -146,32 +150,17 @@ fn fixture(annotation: &Value) -> (Graph, NodeId) {
             ClaimTarget::Node(node.clone()),
         ))
         .expect("claim");
-    stores
-        .observations
-        .create_observation(
-            ObservationInput::new(
-                ObservationId::new(OBSERVATION).expect("id"),
-                SourceId::new(OUTLET).expect("id"),
-                "convoy 7 of 12 held four hours at checkpoint, released same day",
-                ObservationModality::Text,
-            ),
-            &stores.sources,
-        )
-        .expect("observation");
+    // A second claim of the same collection carries the records a coordination
+    // signal needs, which is also what makes the campaign scope cross-claim.
     stores
         .claims
-        .register_observation(ObservationId::new(OBSERVATION).expect("id"));
-    stores
-        .claims
-        .attach_link(
-            ClaimLink::new(
-                ClaimLinkSource::Observation(ObservationId::new(OBSERVATION).expect("id")),
-                claim.clone(),
-                ClaimLinkKind::Supports,
-            )
-            .with_bitemporal(stamp()),
-        )
-        .expect("observation link");
+        .create_asserted_claim(ClaimInput::new(
+            context.clone(),
+            ClaimStatement::new("the checkpoint delay was reported by two outlets")
+                .expect("statement"),
+            ClaimTarget::AnalyticalAssertion(ClaimAnalyticalTarget::new("convoy", None)),
+        ))
+        .expect("context claim");
     for evidence in [ANNOTATION, SECOND] {
         let evidence = EvidenceId::new(evidence).expect("id");
         stores.claims.register_evidence(evidence.clone());
@@ -180,7 +169,7 @@ fn fixture(annotation: &Value) -> (Graph, NodeId) {
             .attach_link(
                 ClaimLink::new(
                     ClaimLinkSource::Evidence(evidence),
-                    claim.clone(),
+                    context.clone(),
                     ClaimLinkKind::Supports,
                 )
                 .with_bitemporal(stamp()),
@@ -190,23 +179,92 @@ fn fixture(annotation: &Value) -> (Graph, NodeId) {
     (graph, node)
 }
 
-fn support_claim(graph: &mut Graph) {
+// The export plan refuses a record whose claim is not actionable, so the
+// exported claim gets grounded, authoritative support and a deterministic pass.
+fn make_claim_actionable(graph: &mut Graph) {
     let claim = ClaimId::new(CLAIM).expect("claim id");
-    let evidence = graph.evidence_store().clone();
     let stores = graph.epistemic_stores_mut();
+    let mut bindings = Vec::new();
+    for name in ["first", "second"] {
+        let source = SourceId::new(format!("source--gate-{name}")).expect("id");
+        stores
+            .sources
+            .register_source(SourceInput::new(
+                source.clone(),
+                format!("https://{name}.test"),
+                EvidenceSourceType::Document,
+            ))
+            .expect("source");
+        let observation = ObservationId::new(format!("observation--gate-{name}")).expect("id");
+        stores
+            .observations
+            .create_observation(
+                ObservationInput::new(
+                    observation.clone(),
+                    source.clone(),
+                    "convoy 7 of 12 held four hours at checkpoint, released same day",
+                    ObservationModality::Text,
+                ),
+                &stores.sources,
+            )
+            .expect("observation");
+        stores.claims.register_observation(observation.clone());
+        stores
+            .claims
+            .attach_link(
+                ClaimLink::new(
+                    ClaimLinkSource::Observation(observation),
+                    claim.clone(),
+                    ClaimLinkKind::Supports,
+                )
+                .with_strength(Confidence::new(1.0).expect("score"))
+                .with_bitemporal(stamp()),
+            )
+            .expect("link");
+        bindings.push(
+            SourceAuthority::new(
+                source,
+                "test",
+                "fact",
+                Confidence::new(1.0).expect("score"),
+                "fimi-ws-g-authority-v1",
+            )
+            .expect("authority"),
+        );
+    }
+    stores
+        .verifications
+        .append(VerificationRecord::new(
+            VerificationRecordId::new("verification--convoy").expect("id"),
+            "zz.grounded",
+            "1",
+            true,
+            VerificationInputs::for_claim(claim.clone())
+                .with_observation(ObservationId::new("observation--gate-first").expect("id")),
+            VerificationResult::Pass,
+            stamp(),
+        ))
+        .expect("verification");
+    stores
+        .verdicts
+        .register_source_authority_policy(
+            SourceAuthorityPolicy::new("fimi-ws-g-authority-v1", bindings).expect("policy"),
+        )
+        .expect("register");
+    let evidence = EvidenceRecordStore::new();
     let inputs = ResolutionInputs::new(
         &stores.verifications,
         &evidence,
         &stores.observations,
         &stores.sources,
-    );
-    resolve_claim_verdict(
+    )
+    .with_source_authority("fimi-ws-g-authority-v1", "test", "fact");
+    resolve_current_claim_verdict(
         &mut stores.claims,
         &mut stores.verdicts,
         &inputs,
         &claim,
         stamp(),
-        "ws-a-minimal-v1",
     )
     .expect("resolve");
 }
@@ -216,7 +274,10 @@ fn collect(graph: &mut Graph, node: &NodeId) {
         .create_narrative(NarrativeInput::new(
             NarrativeId::new(NARRATIVE).expect("id"),
             ContextMembership {
-                claims: vec![ClaimId::new(CLAIM).expect("id")],
+                claims: vec![
+                    ClaimId::new(CLAIM).expect("id"),
+                    ClaimId::new(CONTEXT_CLAIM).expect("id"),
+                ],
                 themes: vec!["relief".into()],
                 content: vec![SourceId::new(OUTLET).expect("id")],
                 infrastructure: vec![],
@@ -291,7 +352,7 @@ fn record(document: &Value) -> Value {
 fn a_supported_claim_and_a_high_misleadingness_assessment_export_distinctly() {
     let (mut graph, node) = fixture(&recorded_assessment());
     collect(&mut graph, &node);
-    support_claim(&mut graph);
+    make_claim_actionable(&mut graph);
     let exported = record(&document(&graph));
 
     let claim_lineage = exported["lineage"]
@@ -339,6 +400,7 @@ fn campaign_lineage_carries_the_collections_and_their_coordination_signals() {
     let (mut graph, node) = fixture(&recorded_assessment());
     collect(&mut graph, &node);
     let group_id = record_signal(&mut graph);
+    make_claim_actionable(&mut graph);
     let exported = record(&document(&graph));
 
     let lineage = exported["campaign_lineage"]
@@ -381,7 +443,7 @@ fn campaign_lineage_carries_the_collections_and_their_coordination_signals() {
 #[test]
 fn governed_records_without_collections_carry_no_campaign_or_assessment_keys() {
     let (mut graph, _) = fixture(&json!({"unrelated": true}));
-    support_claim(&mut graph);
+    make_claim_actionable(&mut graph);
     let plan = build_deterministic_export_plan(&graph, metadata(), &[]).expect("plan");
     let json = export_fimi_json(&graph, &plan).expect("json");
 
@@ -397,7 +459,7 @@ fn governed_records_without_collections_carry_no_campaign_or_assessment_keys() {
 #[test]
 fn a_collection_that_references_no_exported_record_keeps_the_export_byte_identical() {
     let (mut graph, _) = fixture(&json!({"unrelated": true}));
-    support_claim(&mut graph);
+    make_claim_actionable(&mut graph);
     let plan = build_deterministic_export_plan(&graph, metadata(), &[]).expect("plan");
     let before = export_fimi_json(&graph, &plan).expect("json");
 
@@ -425,6 +487,7 @@ fn a_collection_that_references_no_exported_record_keeps_the_export_byte_identic
 fn an_annotation_without_a_recorded_report_exports_without_a_band() {
     let (mut graph, node) = fixture(&assessment_without_a_recorded_report());
     collect(&mut graph, &node);
+    make_claim_actionable(&mut graph);
     let exported = record(&document(&graph));
     let assessment = &exported["misleadingness"][0];
 
@@ -452,6 +515,7 @@ fn an_annotation_without_a_recorded_report_exports_without_a_band() {
 fn a_malformed_annotation_is_skipped_without_failing_the_export() {
     let (mut graph, node) = fixture(&json!({"fimi_misleadingness": {"gap": null}}));
     collect(&mut graph, &node);
+    make_claim_actionable(&mut graph);
     let exported = record(&document(&graph));
 
     assert!(exported["misleadingness"].is_null());
@@ -470,7 +534,7 @@ fn the_export_stays_deterministic_with_collections_and_signals() {
     let (mut graph, node) = fixture(&recorded_assessment());
     collect(&mut graph, &node);
     record_signal(&mut graph);
-    support_claim(&mut graph);
+    make_claim_actionable(&mut graph);
 
     let first = build_deterministic_export_plan(&graph, metadata(), &[]).expect("plan");
     let second = build_deterministic_export_plan(&graph, metadata(), &[]).expect("plan");

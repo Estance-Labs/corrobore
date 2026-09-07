@@ -26,8 +26,9 @@
 //! document with deterministic record ordering.
 
 use graph_core::{
-    DeterministicExportPlan, ExportMode, ExportProfile, ExportRecordKind, Graph, Node, NodeId,
-    RelationshipId, VerificationCoverage,
+    Campaign, ContextMembership, DeterministicExportPlan, ExportMode, ExportProfile,
+    ExportRecordKind, Graph, Narrative, NodeId, Node, RelationshipId, SourceId,
+    VerificationCoverage,
 };
 use serde::{Deserialize, Serialize};
 
@@ -60,6 +61,117 @@ struct FimiRecord {
     /// reference, present only when governed records exist.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     lineage: Vec<FimiLineage>,
+    /// Epic 0029 WS-G item 4: neutral collections that contextualize this
+    /// record, with the coordination evidence retained for each. Present only
+    /// when a collection references the record.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    campaign_lineage: Vec<FimiCampaignLineage>,
+    /// Epic 0029 WS-G item 4: pack assessments carried as evidence. Kept in
+    /// their own field so a misleadingness band is never read as, folded into,
+    /// or able to move a factual verdict.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    misleadingness: Vec<FimiMisleadingnessAssessment>,
+}
+
+/// Evidence payload key under which the FIMI pack records one assessment.
+const MISLEADINGNESS_EVIDENCE_KEY: &str = "fimi_misleadingness";
+/// Value stating that a coordination signal asserts no author.
+const ATTRIBUTION_NOT_ASSERTED: &str = "not_asserted";
+
+/// One collection referencing an exported record, and why it matched.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct FimiCampaignLineage {
+    collection: String,
+    collection_id: String,
+    membership_roles: Vec<String>,
+    themes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    narratives: Vec<String>,
+    valid_from: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    coordination_signals: Vec<FimiCoordinationSignal>,
+}
+
+/// One retained coordination signal of a collection.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct FimiCoordinationSignal {
+    signal: String,
+    group_id: String,
+    evidence_refs: Vec<String>,
+    source_refs: Vec<String>,
+    reason: String,
+    affects_independence: bool,
+    /// A shared production pattern is not authorship. The export states it so a
+    /// consumer cannot read coordination evidence as an attribution.
+    attribution: String,
+}
+
+/// One assessment the pack recorded, exported as recorded.
+///
+/// The exporter carries the pack's own outputs and derives nothing: the
+/// assessment policy lives in `corrobore-domain-fimi`, so an annotation
+/// recorded without a report exports without a band.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct FimiMisleadingnessAssessment {
+    evidence_id: String,
+    subject_kind: String,
+    subject_id: String,
+    gap: String,
+    reader_interpretation: String,
+    evidence_warranted_interpretation: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    band: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    mechanisms: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    declared_mechanisms: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    explanation: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    traced_records: Vec<String>,
+    not_a_factual_determination: bool,
+}
+
+/// Pack-recorded assessment as it appears in an evidence payload. Unknown
+/// fields are tolerated so the pack can extend the annotation additively.
+#[derive(Deserialize)]
+struct RecordedAssessment {
+    subject: RecordedSubject,
+    gap: RecordedGap,
+    #[serde(default)]
+    findings: Vec<RecordedFinding>,
+    #[serde(default)]
+    band: Option<String>,
+    #[serde(default)]
+    mechanisms: Vec<String>,
+    #[serde(default)]
+    explanation: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RecordedSubject {
+    kind: String,
+    id: String,
+}
+
+#[derive(Deserialize)]
+struct RecordedGap {
+    reader_interpretation: String,
+    evidence_warranted_interpretation: String,
+    kind: String,
+}
+
+#[derive(Deserialize)]
+struct RecordedFinding {
+    #[serde(default)]
+    mechanism: Option<String>,
+    #[serde(default)]
+    anchors: Vec<RecordedAnchor>,
+}
+
+#[derive(Deserialize)]
+struct RecordedAnchor {
+    id: String,
 }
 
 /// Epistemic lineage of one evidence reference.
@@ -158,6 +270,44 @@ fn epistemic_lineage(
     lineage
 }
 
+/// Every assessment the pack recorded on this record's evidence.
+///
+/// Expected behavior: read each evidence payload as JSON, take the pack
+/// envelope, and carry its subject, gap, interpretations, recorded band,
+/// mechanisms, explanation and traced records as they stand. A payload that is
+/// not JSON, carries no assessment, or cannot be read is skipped: an export is
+/// a projection of retained records, not a validator of pack data.
+///
+/// Validation target: an assessment never derives a band, because the
+/// assessment policy lives in the pack, and never touches a verdict field.
+fn misleadingness_assessments(
+    _graph: &Graph,
+    _evidence_refs: &[String],
+) -> Vec<FimiMisleadingnessAssessment> {
+    Vec::new()
+}
+
+/// Neutral collections referencing an exported record, with their coordination
+/// evidence.
+///
+/// Expected behavior: a collection matches when one of its claims targets this
+/// record, when its declared content is the source behind one of the record's
+/// evidence references, or when the record is one of its canonical actor or
+/// infrastructure references. Every matched role is reported, since membership
+/// is context and never support. Each entry carries the coordination signals
+/// retained for that collection, each stating that it asserts no author.
+///
+/// Validation target: empty when no collection references the record, which is
+/// what keeps exports byte-identical for graphs without these records.
+fn campaign_lineage(
+    _graph: &Graph,
+    _evidence_refs: &[String],
+    _node_id: Option<&NodeId>,
+    _relationship_id: Option<&RelationshipId>,
+) -> Vec<FimiCampaignLineage> {
+    Vec::new()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 struct ExportMetadataView {
     snapshot_id: String,
@@ -197,6 +347,13 @@ pub fn export_fimi_json_document(
                         target_node_id: None,
                         relationship_type: None,
                         lineage: epistemic_lineage(graph, &evidence_refs, Some(node.id()), None),
+                        campaign_lineage: campaign_lineage(
+                            graph,
+                            &evidence_refs,
+                            Some(node.id()),
+                            None,
+                        ),
+                        misleadingness: misleadingness_assessments(graph, &evidence_refs),
                         evidence_refs,
                     })
                 }
@@ -217,6 +374,13 @@ pub fn export_fimi_json_document(
                             None,
                             Some(relationship.id()),
                         ),
+                        campaign_lineage: campaign_lineage(
+                            graph,
+                            &evidence_refs,
+                            None,
+                            Some(relationship.id()),
+                        ),
+                        misleadingness: misleadingness_assessments(graph, &evidence_refs),
                         evidence_refs,
                     })
                 }
