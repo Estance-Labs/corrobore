@@ -358,6 +358,38 @@ Exporter tests additionally cover additive explanation payloads and unchanged
 ungoverned exports (`export-stix/tests/epistemic_lineage.rs` and the FIMI unit
 contracts). The full workspace gate runs these alongside WS-D acceptance.
 
+## One capability catalogue, several protocol adapters
+
+`CapabilityCatalogue::v1` defines each capability once: its identity, its effect
+on state, the authorization a caller must hold, and the runtime operation it
+dispatches to. There is no route, tool name, message envelope, or protocol
+version in the definition, and the type has no field to put one in, so a
+protocol shape cannot enter the domain by accident. A protocol version bump
+therefore touches an adapter and never the evidence graph.
+
+Adapters own presentation and nothing else. Effect and authorization are decided
+once, in the catalogue, so two adapters cannot disagree about whether an
+operation writes — and the catalogue refuses its own invariants: a mutation
+reachable with session authorization alone fails `validate`, because that is how
+an adapter ends up granting itself permission.
+
+Exposure is named rather than enumerated. A capability restricts itself to
+adapter *names*, so `adapter_view("webmcp")` already returns a projection for an
+adapter nobody has written, and adding one requires no change to any capability.
+Raw mutation query execution is restricted to the HTTP surface, so it is not an
+agent tool.
+
+`compatibility/capabilities/v1/catalogue.json` is the committed artifact every
+adapter reads, produced by the `capability_catalogue` example. A Rust contract
+test compares it to the catalogue, so a cross-language adapter cannot drift
+silently, and `scripts/ws-h-capability-adapters.test.mjs` holds the MCP bridge
+to it: the tool set must cover exactly the capabilities exposed to `mcp`, each
+tool's `readOnlyHint` must match the defined effect, and a capability needing an
+operator approval must be advertised as destructive. The naming convention that
+turns a capability identity into a tool name lives in that adapter contract,
+never in the definition. The acceptance contract is
+`shared-runtime/tests/capability_catalogue.rs`.
+
 ## Agent write policy, run budgets, and the mutation chain
 
 `authorize_agent_write` decides whether an agent run may write, and its
