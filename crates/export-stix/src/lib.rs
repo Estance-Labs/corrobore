@@ -540,6 +540,49 @@ fn mode_label(mode: ExportMode) -> &'static str {
     }
 }
 
+/// One PROV-O entity reading of a retained record.
+///
+/// The mapping is a projection, never a second provenance model: the Corrobore
+/// relations stay authoritative, every identity here is a retained record
+/// identity, and a record with nothing to map produces nothing.
+fn prov_entity(
+    id: Option<&str>,
+    derived_from: Option<&str>,
+    used: &[&str],
+    generated_by: Option<&str>,
+) -> Option<Value> {
+    let id = id?;
+    let mut prov = serde_json::Map::new();
+    prov.insert("@id".to_owned(), Value::String(id.to_owned()));
+    prov.insert("@type".to_owned(), Value::String("prov:Entity".to_owned()));
+    if let Some(source) = derived_from {
+        prov.insert(
+            "prov:wasDerivedFrom".to_owned(),
+            Value::Array(vec![Value::String(source.to_owned())]),
+        );
+    }
+    if let Some(activity) = generated_by {
+        let mut generating = serde_json::Map::new();
+        generating.insert("@id".to_owned(), Value::String(activity.to_owned()));
+        generating.insert(
+            "@type".to_owned(),
+            Value::String("prov:Activity".to_owned()),
+        );
+        prov.insert("prov:wasGeneratedBy".to_owned(), Value::Object(generating));
+    }
+    if !used.is_empty() {
+        prov.insert(
+            "prov:used".to_owned(),
+            Value::Array(
+                used.iter()
+                    .map(|entry| Value::String((*entry).to_owned()))
+                    .collect(),
+            ),
+        );
+    }
+    Some(Value::Object(prov))
+}
+
 /// Epic 0029 WS-A item 7: add `x_corrobore_lineage` to an exported object when
 /// governed records exist behind it. Entries name the source and observation
 /// behind each evidence reference, and the current verdict of every claim
@@ -586,6 +629,20 @@ fn attach_epistemic_lineage(
                 Value::String(observation_id.as_str().to_owned()),
             );
         }
+        // PROV-O reading of the same retained records, beside the Corrobore
+        // relations rather than instead of them: the observation is the entity,
+        // and the source it was taken from is what it derives from.
+        if let Some(prov) = prov_entity(
+            record
+                .observation_id()
+                .map(|id| id.as_str())
+                .or_else(|| record.source_id().map(|id| id.as_str())),
+            record.source_id().map(|id| id.as_str()),
+            &[],
+            None,
+        ) {
+            entry.insert("prov".to_owned(), prov);
+        }
         lineage.push(Value::Object(entry));
     }
 
@@ -628,6 +685,33 @@ fn attach_epistemic_lineage(
                 "transitions".to_owned(),
                 Value::from(stores.verdicts.transitions_for_claim(claim.id()).len()),
             );
+        }
+        // The verdict is the activity that produced the claim's current state,
+        // and it used the observations the claim links to. A claim with no
+        // stored verdict gets an entity with no generating activity rather than
+        // a synthesized one.
+        let mut used: Vec<&str> = stores
+            .claims
+            .claim_links()
+            .iter()
+            .filter(|link| link.target_claim_id() == claim.id())
+            .filter_map(|link| match link.source() {
+                graph_core::ClaimLinkSource::Observation(id) => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        used.sort_unstable();
+        used.dedup();
+        if let Some(prov) = prov_entity(
+            Some(claim.id().as_str()),
+            None,
+            &used,
+            stores
+                .verdicts
+                .current_verdict(claim.id())
+                .map(|verdict| verdict.id().as_str()),
+        ) {
+            entry.insert("prov".to_owned(), prov);
         }
         lineage.push(Value::Object(entry));
     }

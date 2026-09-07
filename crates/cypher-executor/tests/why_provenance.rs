@@ -18,15 +18,14 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
+#![allow(clippy::unwrap_used)]
 //! A query answer says what it read and, separately, what supports it.
 //!
 //! Computational provenance is causal: the query used this substructure.
 //! Semantic support is evidential: this evidence supports the claim. Keeping
 //! them in one field would let a reader take "the query touched it" for "the
 //! evidence backs it", which is the confusion this contract exists to prevent.
-use cypher_executor::{
-    CypherPipelineExecutor, ExecutionPolicy, ExecutionResultData, ProvenanceElement,
-};
+use cypher_executor::{CypherPipelineExecutor, ExecutionPolicy, ProvenanceElement};
 use graph_core::{
     BitemporalStamp, ClaimAnalyticalTarget, ClaimId, ClaimInput, ClaimLink, ClaimLinkKind,
     ClaimLinkSource, ClaimStatement, ClaimTarget, EpistemicStores, EvidenceRecordStore,
@@ -170,7 +169,11 @@ fn a_query_result_exposes_its_contributing_substructure_without_manual_tracing()
     let row = &provenance.computational()[0];
     assert_eq!(row.row(), 0);
     let contributed = ids(row);
-    assert_eq!(contributed.len(), 3, "both endpoints and the edge were read");
+    assert_eq!(
+        contributed.len(),
+        3,
+        "both endpoints and the edge were read"
+    );
     assert!(
         contributed
             .iter()

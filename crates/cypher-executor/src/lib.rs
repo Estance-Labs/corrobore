@@ -43,9 +43,13 @@ use tracing::{debug, instrument, trace, warn};
 
 mod investigation_contracts;
 mod investigation_response;
+mod why_provenance;
 
 pub use investigation_contracts::*;
 pub use investigation_response::*;
+pub use why_provenance::{
+    ContributingElement, ProvenanceElement, RowProvenance, SemanticSupport, WhyProvenance,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Execution policy.
@@ -145,6 +149,9 @@ pub struct ExecutionResult {
     pub validation_errors: Vec<ExecutionValidationError>,
     /// Fix hints.
     pub fix_hints: Vec<ExecutionFixHint>,
+    /// What the answer was computed from, and what supports it. Absent for a
+    /// result that returned no records to explain.
+    pub why_provenance: Option<WhyProvenance>,
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -333,6 +340,8 @@ impl CypherPipelineExecutor {
             warnings: vec![],
             validation_errors: vec![],
             fix_hints: vec![],
+            // Validation reads no substructure, so there is nothing to explain.
+            why_provenance: None,
         })
     }
 
@@ -395,26 +404,33 @@ impl CypherPipelineExecutor {
                         "Enable explicit mutation permission or use validate-only mode for dry-run."
                             .to_owned(),
                 }],
+                why_provenance: None,
             });
         }
 
         // Execute based on query kind.
         match ast.kind {
             QueryKind::Read => {
-                let records = match ast.query.as_ref() {
+                let (records, rows) = match ast.query.as_ref() {
                     Some(query) => self.execute_structured_read_query(query, &mut budget)?,
-                    None => Vec::new(),
+                    None => (Vec::new(), Vec::new()),
                 };
                 debug!(
                     record_count = records.len(),
                     "query execution succeeded with read result"
                 );
+                let support = why_provenance::semantic_support(&self.graph, &rows);
                 Ok(ExecutionResult {
                     status: ExecutionStatus::Success,
                     data: ExecutionResultData::Records(records),
                     warnings: vec![],
                     validation_errors: vec![],
                     fix_hints: vec![],
+                    why_provenance: Some(why_provenance::assemble(
+                        build_logical_plan(&ast).provenance,
+                        rows,
+                        support,
+                    )),
                 })
             }
             QueryKind::Mutation | QueryKind::Mixed => {
@@ -459,6 +475,7 @@ impl CypherPipelineExecutor {
                     warnings: vec![],
                     validation_errors: vec![],
                     fix_hints: vec![],
+                    why_provenance: None,
                 });
             }
         };
@@ -688,6 +705,9 @@ impl CypherPipelineExecutor {
                 warnings: vec![],
                 validation_errors: vec![],
                 fix_hints: vec![],
+                // A mutation's answer is its own effect: its provenance is the
+                // mutation record, not a read set.
+                why_provenance: None,
             })
         } else {
             Ok(ExecutionResult {
@@ -707,6 +727,7 @@ impl CypherPipelineExecutor {
                 warnings: vec![],
                 validation_errors: vec![],
                 fix_hints: vec![],
+                why_provenance: None,
             })
         }
     }
@@ -884,14 +905,17 @@ impl CypherPipelineExecutor {
         Ok(None)
     }
 
+    // Records and the causal read set behind them are produced together: the
+    // executor records what it bound while it binds it, so nothing has to be
+    // traced back by hand afterwards.
     fn execute_structured_read_query(
         &self,
         query: &ParsedQuery,
         budget: &mut ExecutionBudget,
-    ) -> Result<Vec<ExecutionRecord>, ExecutionError> {
+    ) -> Result<(Vec<ExecutionRecord>, Vec<RowProvenance>), ExecutionError> {
         let match_clause = match &query.match_clause {
             Some(clause) => clause,
-            None => return Ok(Vec::new()),
+            None => return Ok((Vec::new(), Vec::new())),
         };
 
         let mut rows = self.build_rows_from_match(match_clause, budget)?;
@@ -901,7 +925,7 @@ impl CypherPipelineExecutor {
         }
 
         let Some(return_clause) = query.return_clause.as_ref() else {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         };
 
         if !return_clause.order_by.is_empty() {
@@ -931,7 +955,32 @@ impl CypherPipelineExecutor {
             rows.truncate(limit);
         }
 
+        let projected: Vec<String> = return_clause
+            .items
+            .iter()
+            .map(|item| projected_variable(item).to_owned())
+            .collect();
         let has_aggregation = return_clause.items.iter().any(is_aggregation_projection);
+        // An aggregate is one answer computed from every surviving row, so its
+        // causal read set is the union of those rows.
+        let provenance = if has_aggregation {
+            let contributing = rows
+                .iter()
+                .flat_map(|row| row_contributions(row, &projected))
+                .collect::<Vec<_>>();
+            if contributing.is_empty() {
+                Vec::new()
+            } else {
+                vec![why_provenance::row_provenance(0, contributing)]
+            }
+        } else {
+            rows.iter()
+                .enumerate()
+                .map(|(index, row)| {
+                    why_provenance::row_provenance(index, row_contributions(row, &projected))
+                })
+                .collect()
+        };
         let mut records = if has_aggregation {
             vec![aggregate_record(&rows, &return_clause.items)?]
         } else {
@@ -956,7 +1005,7 @@ impl CypherPipelineExecutor {
             });
         }
 
-        Ok(records)
+        Ok((records, provenance))
     }
 
     fn build_rows_from_match(
@@ -1892,6 +1941,36 @@ fn literal_scalar_kind(value: &LiteralValue) -> Option<u8> {
     }
 }
 
+// A projection item reads exactly one variable, whether it names it directly or
+// computes over one of its properties.
+fn projected_variable(item: &cypher_parser::ProjectionItem) -> &str {
+    match item {
+        cypher_parser::ProjectionItem::Variable(variable)
+        | cypher_parser::ProjectionItem::Count(variable) => variable.as_str(),
+        cypher_parser::ProjectionItem::Property(reference)
+        | cypher_parser::ProjectionItem::Sum(reference)
+        | cypher_parser::ProjectionItem::Average(reference)
+        | cypher_parser::ProjectionItem::Minimum(reference)
+        | cypher_parser::ProjectionItem::Maximum(reference) => reference.variable.as_str(),
+    }
+}
+
+// Every binding of one row, marked with whether the answer reads it.
+fn row_contributions(row: &ExecutionRow, projected: &[String]) -> Vec<ContributingElement> {
+    row.bindings
+        .iter()
+        .map(|(variable, binding)| {
+            let reads = projected.iter().any(|name| name == variable);
+            match binding {
+                BindingValue::Node(node) => why_provenance::node_element(variable, node, reads),
+                BindingValue::Relationship(relationship) => {
+                    why_provenance::relationship_element(variable, relationship, reads)
+                }
+            }
+        })
+        .collect()
+}
+
 fn parse_and_plan_query(
     query_text: &str,
     parameters: &ParameterBindings,
@@ -2114,6 +2193,7 @@ mod tests {
                     &mut ExecutionBudget::new(ExecutionLimits::unbounded()),
                 )
                 .expect("no match should return empty vector")
+                .0
                 .is_empty()
         );
         assert!(
@@ -2123,6 +2203,7 @@ mod tests {
                     &mut ExecutionBudget::new(ExecutionLimits::unbounded()),
                 )
                 .expect("no return should return empty vector")
+                .0
                 .is_empty()
         );
     }

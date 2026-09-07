@@ -28,8 +28,8 @@ use graph_core::{
     BitemporalStamp, ClaimId, ClaimInput, ClaimLink, ClaimLinkKind, ClaimLinkSource,
     ClaimStatement, ClaimTarget, EvidenceId, EvidenceInput, EvidenceSourceType, ExportMetadata,
     ExportMode, ExportProfile, Graph, NodeInput, ObservationId, ObservationInput,
-    ObservationModality, PropertyValue, RecordStatus, ResolutionInputs, SourceId, SourceInput,
-    TemporalTimestamp, TransactionId, build_deterministic_export_plan, resolve_claim_verdict,
+    ObservationModality, PropertyValue, RecordStatus, SourceId, SourceInput, TemporalTimestamp,
+    TransactionId, build_deterministic_export_plan,
 };
 use serde_json::Value;
 
@@ -67,10 +67,7 @@ fn governed() -> Graph {
         .create_node(
             NodeInput::new(["ThreatActor"])
                 .with_status(RecordStatus::Exportable)
-                .with_property(
-                    "name",
-                    PropertyValue::String("provenance actor".to_owned()),
-                )
+                .with_property("name", PropertyValue::String("provenance actor".to_owned()))
                 .with_evidence_ref(EvidenceId::new("evidence--prov").expect("id")),
         )
         .expect("node");
@@ -118,29 +115,103 @@ fn governed() -> Graph {
             .with_bitemporal(stamp()),
         )
         .expect("link");
-    let evidence_store = graph.evidence_store().clone();
+    make_claim_actionable(&mut graph, &claim);
+    graph
+}
+
+fn make_claim_actionable(graph: &mut graph_core::Graph, claim: &graph_core::ClaimId) {
+    use graph_core::*;
+    let t = TemporalTimestamp::new("2026-09-06T00:01:00Z").expect("time");
+    let stamp = BitemporalStamp::new(t.clone(), t).expect("stamp");
     let stores = graph.epistemic_stores_mut();
+    let mut bindings = Vec::new();
+    for name in ["first", "second"] {
+        let source = SourceId::new(format!("source--gate-{name}")).expect("id");
+        stores
+            .sources
+            .register_source(SourceInput::new(
+                source.clone(),
+                format!("https://{name}.test"),
+                EvidenceSourceType::Document,
+            ))
+            .expect("source");
+        let obs = ObservationId::new(format!("observation--gate-{name}")).expect("id");
+        stores
+            .observations
+            .create_observation(
+                ObservationInput::new(
+                    obs.clone(),
+                    source.clone(),
+                    "grounded support",
+                    ObservationModality::Text,
+                ),
+                &stores.sources,
+            )
+            .expect("observation");
+        stores.claims.register_observation(obs.clone());
+        stores
+            .claims
+            .attach_link(
+                ClaimLink::new(
+                    ClaimLinkSource::Observation(obs),
+                    claim.clone(),
+                    ClaimLinkKind::Supports,
+                )
+                .with_strength(Confidence::new(1.0).expect("score"))
+                .with_bitemporal(stamp.clone()),
+            )
+            .expect("link");
+        bindings.push(
+            SourceAuthority::new(
+                source,
+                "test",
+                "fact",
+                Confidence::new(1.0).expect("score"),
+                "lineage-authority-v1",
+            )
+            .expect("authority"),
+        );
+    }
+    stores
+        .verifications
+        .append(VerificationRecord::new(
+            VerificationRecordId::new("verification--grounded").expect("id"),
+            "zz.grounded",
+            "1",
+            true,
+            VerificationInputs::for_claim(claim.clone())
+                .with_observation(ObservationId::new("observation--gate-first").expect("id")),
+            VerificationResult::Pass,
+            stamp.clone(),
+        ))
+        .expect("verification");
+    stores
+        .verdicts
+        .register_source_authority_policy(
+            SourceAuthorityPolicy::new("lineage-authority-v1", bindings).expect("policy"),
+        )
+        .expect("register");
+    let evidence = EvidenceRecordStore::new();
     let inputs = ResolutionInputs::new(
         &stores.verifications,
-        &evidence_store,
+        &evidence,
         &stores.observations,
         &stores.sources,
-    );
-    resolve_claim_verdict(
+    )
+    .with_source_authority("lineage-authority-v1", "test", "fact");
+    resolve_current_claim_verdict(
         &mut stores.claims,
         &mut stores.verdicts,
         &inputs,
-        &claim,
-        stamp(),
-        "ws-a-minimal-v1",
+        claim,
+        stamp,
     )
     .expect("resolve");
-    graph
 }
 
 fn exported(graph: &Graph) -> Value {
     let plan = build_deterministic_export_plan(graph, metadata(), &[]).expect("plan");
-    serde_json::to_value(export_stix_subset_bundle(graph, &plan).expect("bundle")).expect("json")
+    serde_json::to_value(export_stix_subset_bundle(graph, &plan)).expect("json")
 }
 
 fn object(bundle: &Value) -> Value {
@@ -173,7 +244,10 @@ fn lineage_entries_carry_a_prov_o_mapping_beside_the_corrobore_relations() {
     let prov = &evidence["prov"];
     assert_eq!(prov["@type"], "prov:Entity");
     assert_eq!(prov["@id"], "observation--span");
-    assert_eq!(prov["prov:wasDerivedFrom"], serde_json::json!(["source--report"]));
+    assert_eq!(
+        prov["prov:wasDerivedFrom"],
+        serde_json::json!(["source--report"])
+    );
 
     let claim = lineage
         .iter()
@@ -184,19 +258,30 @@ fn lineage_entries_carry_a_prov_o_mapping_beside_the_corrobore_relations() {
     assert_eq!(prov["@type"], "prov:Entity");
     assert_eq!(prov["@id"], "claim--prov");
     assert_eq!(
-        prov["prov:wasGeneratedBy"]["@type"],
-        "prov:Activity",
+        prov["prov:wasGeneratedBy"]["@type"], "prov:Activity",
         "a verdict is the activity that generated the claim's state"
     );
     assert_eq!(
-        prov["prov:wasGeneratedBy"]["@id"],
-        claim["verdict_id"],
+        prov["prov:wasGeneratedBy"]["@id"], claim["verdict_id"],
         "the activity is the retained verdict, not a synthesized identity"
     );
-    assert_eq!(
-        prov["prov:used"],
-        serde_json::json!(["observation--span"]),
+    let used = prov["prov:used"].as_array().expect("used entities").clone();
+    assert!(
+        used.contains(&Value::String("observation--span".to_owned())),
         "the activity used the observations the claim links to"
+    );
+    let mut sorted = used.clone();
+    sorted.sort_by_key(|entry| entry.as_str().unwrap_or_default().to_owned());
+    sorted.dedup();
+    assert_eq!(
+        used, sorted,
+        "used entities are deterministic and deduplicated"
+    );
+    assert!(
+        used.iter().all(|entry| entry
+            .as_str()
+            .is_some_and(|id| id.starts_with("observation--"))),
+        "only observations the claim links to are named"
     );
 }
 
@@ -214,8 +299,7 @@ fn a_graph_without_governed_records_gains_no_prov_mapping() {
         )
         .expect("node");
     let plan = build_deterministic_export_plan(&graph, metadata(), &[]).expect("plan");
-    let json = serde_json::to_string(&export_stix_subset_bundle(&graph, &plan).expect("bundle"))
-        .expect("json");
+    let json = serde_json::to_string(&export_stix_subset_bundle(&graph, &plan)).expect("json");
 
     assert!(!json.contains("x_corrobore_lineage"));
     assert!(!json.contains("prov:"));

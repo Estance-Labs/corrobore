@@ -522,6 +522,7 @@ mod tests {
             warnings: vec!["w".to_owned()],
             validation_errors: vec![],
             fix_hints: vec![],
+            why_provenance: None,
         });
         assert_eq!(rejected.status, CypherResponseStatus::Rejected);
         assert_eq!(rejected.warnings, vec!["w".to_owned()]);
@@ -538,6 +539,7 @@ mod tests {
                 code: "H".to_owned(),
                 message: "fix".to_owned(),
             }],
+            why_provenance: None,
         });
         assert_eq!(
             validation_failed.status,

@@ -44,25 +44,47 @@ fn the_plan_declares_every_binding_a_read_query_will_contribute_from() {
         ]
     );
     assert_eq!(provenance.projected_variables(), ["a", "r"]);
-    assert!(provenance.binding("b").is_some_and(|binding| !binding.projected()));
+    assert!(
+        provenance
+            .binding("b")
+            .is_some_and(|binding| !binding.projected())
+    );
     assert!(provenance.binding("absent").is_none());
 }
 
 #[test]
 fn a_computed_field_declares_the_binding_it_reads() {
     let counted = plan("MATCH (n:Actor) RETURN count(n)");
-    assert!(counted.binding("n").is_some_and(|binding| binding.projected()));
+    assert!(
+        counted
+            .binding("n")
+            .is_some_and(|binding| binding.projected())
+    );
 
     let summed = plan("MATCH (n:Actor)-[r:LINKED_TO]->(m:Actor) RETURN sum(n.weight)");
-    assert!(summed.binding("n").is_some_and(|binding| binding.projected()));
     assert!(
-        summed.binding("m").is_some_and(|binding| !binding.projected()),
+        summed
+            .binding("n")
+            .is_some_and(|binding| binding.projected())
+    );
+    assert!(
+        summed
+            .binding("m")
+            .is_some_and(|binding| !binding.projected()),
         "a binding the answer never reads is declared and not projected"
     );
-    assert!(summed.binding("r").is_some_and(|binding| !binding.projected()));
+    assert!(
+        summed
+            .binding("r")
+            .is_some_and(|binding| !binding.projected())
+    );
 
     let property = plan("MATCH (n:Actor) RETURN n.name");
-    assert!(property.binding("n").is_some_and(|binding| binding.projected()));
+    assert!(
+        property
+            .binding("n")
+            .is_some_and(|binding| binding.projected())
+    );
 }
 
 #[test]
