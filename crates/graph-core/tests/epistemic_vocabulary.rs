@@ -35,7 +35,7 @@ fn create_node(graph: &mut Graph, labels: &[&str]) -> NodeId {
 }
 
 //
-// Verify that the epistemic node vocabulary is exactly the epic's kinds plus EntityMention
+// Verify that the epistemic node vocabulary is exactly the epic's kinds plus neutral governed collections
 // with stable canonical labels, so classification never depends on free text.
 //
 // Given the exported node-kind set,
@@ -43,9 +43,12 @@ fn create_node(graph: &mut Graph, labels: &[&str]) -> NodeId {
 // then every kind should map to itself and unknown labels to none.
 #[test]
 fn node_vocabulary_is_complete_with_stable_labels() {
-    assert_eq!(EpistemicNodeKind::ALL.len(), 12);
+    assert_eq!(EpistemicNodeKind::ALL.len(), 15);
     for kind in [
         EpistemicNodeKind::EntityMention,
+        EpistemicNodeKind::Narrative,
+        EpistemicNodeKind::Campaign,
+        EpistemicNodeKind::RecordReference,
         EpistemicNodeKind::Entity,
         EpistemicNodeKind::Event,
         EpistemicNodeKind::Observation,
@@ -64,7 +67,7 @@ fn node_vocabulary_is_complete_with_stable_labels() {
             Some(kind)
         );
     }
-    assert!(EpistemicNodeKind::from_label("Campaign").is_none());
+    assert!(EpistemicNodeKind::from_label("DomainSpecificCollection").is_none());
 }
 
 //
@@ -77,9 +80,10 @@ fn node_vocabulary_is_complete_with_stable_labels() {
 #[test]
 fn relation_vocabulary_is_complete_with_stable_types() {
     // Eight Epic 0018 kinds, four evidence-link kinds, and mention containment.
-    assert_eq!(EpistemicRelationKind::ALL.len(), 13);
+    assert_eq!(EpistemicRelationKind::ALL.len(), 14);
     for kind in [
         EpistemicRelationKind::HasMention,
+        EpistemicRelationKind::HasMember,
         EpistemicRelationKind::Reports,
         EpistemicRelationKind::Supports,
         EpistemicRelationKind::Refutes,
@@ -149,7 +153,7 @@ fn nodes_classify_by_canonical_label_with_stable_precedence() {
     let source = create_node(&mut graph, &["Source", "Organization"]);
     // Vocabulary order puts Claim before Source: the first kind wins.
     let mixed = create_node(&mut graph, &["Source", "Claim"]);
-    let plain = create_node(&mut graph, &["Campaign"]);
+    let plain = create_node(&mut graph, &["DomainSpecificCollection"]);
 
     let classify = |node_id: &NodeId| {
         let node = graph
@@ -180,7 +184,7 @@ fn kinds_are_independently_queryable_over_the_graph() {
     let claim = create_node(&mut graph, &["Claim"]);
     let source = create_node(&mut graph, &["Source"]);
     let second_observation = create_node(&mut graph, &["Observation"]);
-    create_node(&mut graph, &["Campaign"]);
+    create_node(&mut graph, &["DomainSpecificCollection"]);
 
     let observations = epistemic_nodes_of_kind(&graph, EpistemicNodeKind::Observation)
         .expect("observation query should succeed");

@@ -182,3 +182,79 @@ fn engine_graph_snapshot_round_trips_epistemic_stores() {
 
     let _ = fs::remove_dir_all(root.path());
 }
+
+#[test]
+fn neutral_collections_survive_reopen_and_bounded_projections_without_loading_members() {
+    use graph_core::{
+        BitemporalStamp, CampaignId, CampaignInput, ContextMembership, NarrativeId, NarrativeInput,
+        TemporalTimestamp,
+    };
+    let root = empty_store("neutral-collections");
+    let mut graph = governed_graph();
+    let actor = graph.list_nodes().unwrap()[0].id().clone();
+    let members = ContextMembership {
+        actors: vec![actor],
+        content: vec![SourceId::new("source--durable").unwrap()],
+        ..Default::default()
+    };
+    let time = TemporalTimestamp::new("2026-01-01T00:00:00Z").unwrap();
+    let stamp = BitemporalStamp::new(time.clone(), time).unwrap();
+    let narrative = graph
+        .create_narrative(NarrativeInput::new(
+            NarrativeId::new("narrative--durable").unwrap(),
+            members.clone(),
+            stamp.clone(),
+        ))
+        .unwrap();
+    graph
+        .create_campaign(CampaignInput::new(
+            CampaignId::new("campaign--durable").unwrap(),
+            vec![narrative],
+            members,
+            stamp,
+        ))
+        .unwrap();
+    let mut store =
+        CanonicalEngineStore::open(root.clone(), CanonicalStoreOptions::default()).unwrap();
+    store
+        .commit_transition(
+            &Graph::new(),
+            &graph,
+            DurableTransactionId::new("tx--collections").unwrap(),
+            None,
+        )
+        .unwrap();
+    drop(store);
+    let mut reopened =
+        CanonicalEngineStore::open(root.clone(), CanonicalStoreOptions::default()).unwrap();
+    let bounded = reopened
+        .load_projection(CanonicalProjectionRequest::for_label("absent-label"))
+        .unwrap();
+    assert!(bounded.list_nodes().unwrap().is_empty());
+    assert_eq!(
+        bounded.epistemic_stores().narrative_campaigns,
+        graph.epistemic_stores().narrative_campaigns
+    );
+    let view = bounded.epistemic_projection().unwrap();
+    assert!(
+        graph_core::validate_graph_structure(&view, &[])
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        graph_core::epistemic_nodes_of_kind(&view, graph_core::EpistemicNodeKind::RecordReference)
+            .unwrap()
+            .len(),
+        1
+    );
+    let json = bounded.export_memory_json().unwrap();
+    assert_eq!(
+        Graph::from_memory_json(&json)
+            .unwrap()
+            .export_memory_json()
+            .unwrap(),
+        json
+    );
+    drop(reopened);
+    fs::remove_dir_all(root.path()).unwrap();
+}

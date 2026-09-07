@@ -120,6 +120,11 @@ pub use reconciliation::{
     ReconciliationInput, ReconciliationOutcome, ReconciliationRecord, ReconciliationSimilarity,
     ReconciliationSimilarityKind, ReconciliationStore,
 };
+mod narrative_campaign;
+pub use ids::{CampaignId, NarrativeId};
+pub use narrative_campaign::{
+    Campaign, CampaignInput, ContextMembership, Narrative, NarrativeCampaignStore, NarrativeInput,
+};
 mod entity_mention;
 pub use entity_mention::{
     EntityMention, EntityMentionInput, EntityMentionStore, MentionFeatures, MentionOffsets,

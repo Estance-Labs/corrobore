@@ -125,6 +125,10 @@ impl Graph {
         snapshot.evidence.validate_risk_references()?;
         snapshot
             .epistemic
+            .narrative_campaigns
+            .validate_bindings(&snapshot.epistemic)?;
+        snapshot
+            .epistemic
             .mentions
             .validate_bindings(&snapshot.epistemic.observations)?;
         snapshot.epistemic.reconciliations.validate_bindings(
@@ -622,6 +626,9 @@ impl Graph {
             ))?;
             claim_nodes.insert(claim.id().as_str().to_owned(), node_id);
         }
+
+        // Neutral collection membership is projected separately from factual links.
+        self.project_context_collections(&mut projection, &claim_nodes, &source_nodes)?;
 
         // Evidence links as vocabulary relationships.
         for link in stores.claims.claim_links() {

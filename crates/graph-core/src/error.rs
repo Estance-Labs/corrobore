@@ -603,6 +603,10 @@ mod tests {
 /// [`GraphError::ImmutableRecordConflict`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ImmutableRecordKind {
+    /// A neutral narrative record.
+    Narrative,
+    /// A neutral campaign record.
+    Campaign,
     /// An append-only reconciliation decision.
     ReconciliationRecord,
     /// An observation-bound entity mention.
@@ -623,6 +627,8 @@ impl ImmutableRecordKind {
     /// Canonical lowercase token.
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Narrative => "narrative",
+            Self::Campaign => "campaign",
             Self::ReconciliationRecord => "reconciliation_record",
             Self::EntityMention => "entity_mention",
             Self::Source => "source",
