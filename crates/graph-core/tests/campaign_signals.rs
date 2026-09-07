@@ -573,3 +573,61 @@ fn support_claim(graph: &mut Graph, target: &ClaimId) {
         VerdictState::Supported
     );
 }
+
+//
+// Epic acceptance: one corpus clusters by narrative, by infrastructure and by
+// probable generation pipeline, and each dimension works on its own. A campaign
+// view that only worked when all three agreed would tell an analyst nothing
+// about the one signal actually present.
+#[test]
+fn campaign_clustering_works_independently_by_narrative_infrastructure_and_pipeline() {
+    let policy = |signal: CampaignSignal| {
+        let fixture = fixture(Some(signal));
+        let findings =
+            detect_campaign_signals(&fixture.graph, &narrative_scope(), &fixture.features).unwrap();
+        assert_eq!(findings.len(), 1, "{signal:?} must cluster alone");
+        findings[0].source_ids().to_vec()
+    };
+
+    for dimension in [
+        CampaignSignal::NarrativeCoMembership,
+        CampaignSignal::SharedInfrastructure,
+        CampaignSignal::GenerationStyleFingerprint,
+        CampaignSignal::RepeatedPromptArtifact,
+    ] {
+        assert_eq!(policy(dimension), [source("a"), source("b")]);
+    }
+
+    // All three dimensions present at once keep their own findings instead of
+    // collapsing into one undifferentiated cluster.
+    let mut fixture = fixture(Some(CampaignSignal::NarrativeCoMembership));
+    for index in [0, 1] {
+        fixture.features[index].generation_style_fingerprint = Some("style:fixture".into());
+        fixture.features[index].infrastructure = vec!["origin:shared-host".into()];
+        fixture.features[index].prompt_artifacts = vec!["as an ai language model".into()];
+    }
+    let findings =
+        detect_campaign_signals(&fixture.graph, &narrative_scope(), &fixture.features).unwrap();
+    let mut signals: Vec<_> = findings
+        .iter()
+        .map(|finding| finding.signal().as_str())
+        .collect();
+    signals.sort_unstable();
+    assert_eq!(
+        signals,
+        [
+            "generation_style_fingerprint",
+            "narrative_co_membership",
+            "repeated_prompt_artifact",
+            "shared_infrastructure",
+        ]
+    );
+    assert_eq!(
+        findings
+            .iter()
+            .filter(|finding| finding.affects_independence())
+            .count(),
+        3,
+        "curation stays out of the dependency effect while the three production dimensions carry it"
+    );
+}
