@@ -55,6 +55,132 @@ pub enum PlanOperator {
     FunctionCall,
 }
 
+/// What kind of element a declared binding will hold.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlannedElement {
+    /// A node pattern.
+    Node,
+    /// A relationship pattern.
+    Relationship,
+}
+
+/// One binding the plan will produce while matching.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlannedBinding {
+    variable: String,
+    element: PlannedElement,
+    projected: bool,
+}
+
+/// The read set a query declares before it runs.
+///
+/// This is the planner half of why-provenance: the plan states what will be
+/// bound and which bindings reach the answer, so the executor records a
+/// measurement against a declaration instead of tracing a query by hand.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProvenancePlan {
+    declared_bindings: Vec<PlannedBinding>,
+}
+
+impl PlannedBinding {
+    /// Pattern variable.
+    pub fn variable(&self) -> &str {
+        &self.variable
+    }
+
+    /// Kind of element the binding holds.
+    pub fn element(&self) -> PlannedElement {
+        self.element
+    }
+
+    /// Whether the answer reads this binding, directly or through a computed
+    /// field. A binding that is matched but never read is declared and not
+    /// projected.
+    pub fn projected(&self) -> bool {
+        self.projected
+    }
+}
+
+impl ProvenancePlan {
+    /// Every declared binding in pattern order.
+    pub fn declared_bindings(&self) -> &[PlannedBinding] {
+        &self.declared_bindings
+    }
+
+    /// One declared binding by variable.
+    pub fn binding(&self, variable: &str) -> Option<&PlannedBinding> {
+        self.declared_bindings
+            .iter()
+            .find(|binding| binding.variable == variable)
+    }
+
+    /// Variables the answer reads, in pattern order.
+    pub fn projected_variables(&self) -> Vec<&str> {
+        self.declared_bindings
+            .iter()
+            .filter(|binding| binding.projected)
+            .map(|binding| binding.variable.as_str())
+            .collect()
+    }
+}
+
+// A projection item reads exactly one variable, whether it names it directly or
+// computes over one of its properties.
+fn projected_variable(item: &cypher_parser::ProjectionItem) -> &str {
+    match item {
+        cypher_parser::ProjectionItem::Variable(variable)
+        | cypher_parser::ProjectionItem::Count(variable) => variable.as_str(),
+        cypher_parser::ProjectionItem::Property(reference)
+        | cypher_parser::ProjectionItem::Sum(reference)
+        | cypher_parser::ProjectionItem::Average(reference)
+        | cypher_parser::ProjectionItem::Minimum(reference)
+        | cypher_parser::ProjectionItem::Maximum(reference) => reference.variable.as_str(),
+    }
+}
+
+// Declare the read set from the match pattern, then mark the bindings the
+// return clause reads. Order follows the pattern so a plan is stable.
+fn build_provenance_plan(ast: &QueryAst) -> ProvenancePlan {
+    let Some(match_clause) = ast
+        .query
+        .as_ref()
+        .and_then(|query| query.match_clause.as_ref())
+    else {
+        return ProvenancePlan::default();
+    };
+    let projected: Vec<&str> = ast
+        .query
+        .as_ref()
+        .and_then(|query| query.return_clause.as_ref())
+        .map(|clause| clause.items.iter().map(projected_variable).collect())
+        .unwrap_or_default();
+
+    let mut declared: Vec<PlannedBinding> = Vec::new();
+    let mut push = |variable: &str, element: PlannedElement| {
+        if variable.trim().is_empty() || declared.iter().any(|b| b.variable == variable) {
+            return;
+        }
+        declared.push(PlannedBinding {
+            variable: variable.to_owned(),
+            element,
+            projected: projected.contains(&variable),
+        });
+    };
+    push(&match_clause.start.variable, PlannedElement::Node);
+    if let Some((relationship, target)) = &match_clause.relationship {
+        if let Some(variable) = &relationship.variable {
+            push(variable, PlannedElement::Relationship);
+        }
+        push(&target.variable, PlannedElement::Node);
+    }
+    for node in &match_clause.additional_nodes {
+        push(&node.variable, PlannedElement::Node);
+    }
+    ProvenancePlan {
+        declared_bindings: declared,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Logical plan.
 pub struct LogicalPlan {
@@ -62,6 +188,8 @@ pub struct LogicalPlan {
     pub operators: Vec<PlanOperator>,
     /// Query kind.
     pub query_kind: QueryKind,
+    /// Read set this plan declares for why-provenance.
+    pub provenance: ProvenancePlan,
 }
 
 //
@@ -164,6 +292,7 @@ pub fn build_logical_plan(ast: &QueryAst) -> LogicalPlan {
         operators,
         // Query kind.
         query_kind: ast.kind.clone(),
+        provenance: build_provenance_plan(ast),
     }
 }
 
@@ -176,5 +305,7 @@ pub fn build_function_call_plan(_function_name: &str) -> LogicalPlan {
         operators: vec![PlanOperator::FunctionCall],
         // Query kind.
         query_kind: QueryKind::Read,
+        // A direct function call binds no graph pattern.
+        provenance: ProvenancePlan::default(),
     }
 }

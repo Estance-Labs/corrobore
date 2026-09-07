@@ -358,6 +358,42 @@ Exporter tests additionally cover additive explanation payloads and unchanged
 ungoverned exports (`export-stix/tests/epistemic_lineage.rs` and the FIMI unit
 contracts). The full workspace gate runs these alongside WS-D acceptance.
 
+## Why-provenance for query results
+
+Why-provenance is planned and measured, never traced by hand. `build_logical_plan`
+returns a `ProvenancePlan` declaring the read set: every binding the match
+pattern will produce, and which of them the answer reads, directly or through a
+computed field. The executor then records what it actually bound while it bound
+it, so `ExecutionResult.why_provenance` carries a measurement against a
+declaration.
+
+Two provenance kinds stay in separate fields because they answer different
+questions. `computational` is causal — this query bound that node, read that
+property — and says nothing about whether the answer is true. `semantic_support`
+is evidential: for every claim the answer read, the supporting and refuting
+links the graph retains, with the claim's projected verdict state. Folding them
+into one list would let a reader take "the query touched it" for "the evidence
+backs it", so a report has to say which it is showing;
+`WhyProvenance::is_computational_only` makes that explicit for the ordinary
+structural query that read no claim.
+
+One aggregate answer is one causal read set: the union of the rows that fed it,
+with a variable and element pair as identity so several rows contributing
+through the same variable stay visible. A mutation carries no read set — its
+answer is its own effect, and its provenance is the mutation record.
+
+The exporters carry a PROV-O reading beside the Corrobore epistemic relations,
+never instead of them. Each `x_corrobore_lineage` entry gains a `prov` object:
+an observation is a `prov:Entity` that `prov:wasDerivedFrom` its source, and a
+claim is a `prov:Entity` whose retained verdict is the `prov:Activity` that
+`prov:wasGeneratedBy` it and that `prov:used` the observations the claim links
+to. Every identity is a retained record identity; a claim with no stored verdict
+gets no generating activity rather than a synthesized one, and a graph with no
+governed record gains no mapping, so exports stay byte-identical. The acceptance
+contracts are `cypher-planner/tests/why_provenance_plan.rs`,
+`cypher-executor/tests/why_provenance.rs`, and
+`export-stix/tests/prov_mapping.rs`.
+
 ## Memory fusion back-pointers and the authority cap
 
 `fuse_lineage` in `corrobore-engine` derives what a consolidation retains. A
