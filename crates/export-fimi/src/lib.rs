@@ -27,7 +27,7 @@
 
 use graph_core::{
     Campaign, ContextMembership, DeterministicExportPlan, ExportMode, ExportProfile,
-    ExportRecordKind, Graph, Narrative, NodeId, Node, RelationshipId, SourceId,
+    ExportRecordKind, Graph, Narrative, Node, NodeId, RelationshipId, SourceId,
     VerificationCoverage,
 };
 use serde::{Deserialize, Serialize};
@@ -272,40 +272,244 @@ fn epistemic_lineage(
 
 /// Every assessment the pack recorded on this record's evidence.
 ///
-/// Expected behavior: read each evidence payload as JSON, take the pack
-/// envelope, and carry its subject, gap, interpretations, recorded band,
-/// mechanisms, explanation and traced records as they stand. A payload that is
-/// not JSON, carries no assessment, or cannot be read is skipped: an export is
-/// a projection of retained records, not a validator of pack data.
-///
-/// Validation target: an assessment never derives a band, because the
-/// assessment policy lives in the pack, and never touches a verdict field.
+/// A payload that is not JSON, carries no assessment, or cannot be read is
+/// skipped: an export is a projection of retained records, not a validator of
+/// pack data.
 fn misleadingness_assessments(
-    _graph: &Graph,
-    _evidence_refs: &[String],
+    graph: &Graph,
+    evidence_refs: &[String],
 ) -> Vec<FimiMisleadingnessAssessment> {
-    Vec::new()
+    let mut assessments = Vec::new();
+    for evidence_ref in evidence_refs {
+        let Some(record) = graph_core::EvidenceId::new(evidence_ref)
+            .ok()
+            .and_then(|id| graph.evidence_by_id(&id))
+        else {
+            continue;
+        };
+        let Some(recorded) = serde_json::from_str::<serde_json::Value>(record.payload())
+            .ok()
+            .and_then(|payload| payload.get(MISLEADINGNESS_EVIDENCE_KEY).cloned())
+            .and_then(|envelope| serde_json::from_value::<RecordedAssessment>(envelope).ok())
+        else {
+            continue;
+        };
+        let mut declared_mechanisms: Vec<String> = recorded
+            .findings
+            .iter()
+            .filter_map(|finding| finding.mechanism.clone())
+            .collect();
+        declared_mechanisms.sort();
+        declared_mechanisms.dedup();
+        let mut traced_records: Vec<String> = Vec::new();
+        for anchor in recorded
+            .findings
+            .iter()
+            .flat_map(|finding| finding.anchors.iter())
+        {
+            if !traced_records.contains(&anchor.id) {
+                traced_records.push(anchor.id.clone());
+            }
+        }
+        assessments.push(FimiMisleadingnessAssessment {
+            evidence_id: evidence_ref.clone(),
+            subject_kind: recorded.subject.kind,
+            subject_id: recorded.subject.id,
+            gap: recorded.gap.kind,
+            reader_interpretation: recorded.gap.reader_interpretation,
+            evidence_warranted_interpretation: recorded.gap.evidence_warranted_interpretation,
+            band: recorded.band,
+            mechanisms: recorded.mechanisms,
+            declared_mechanisms,
+            explanation: recorded.explanation,
+            traced_records,
+            not_a_factual_determination: true,
+        });
+    }
+    assessments
+}
+
+/// Sources behind an exported record, resolved through its evidence.
+fn record_sources(graph: &Graph, evidence_refs: &[String]) -> Vec<SourceId> {
+    let stores = graph.epistemic_stores();
+    let mut sources = Vec::new();
+    for evidence_ref in evidence_refs {
+        let Some(record) = graph_core::EvidenceId::new(evidence_ref)
+            .ok()
+            .and_then(|id| graph.evidence_by_id(&id))
+        else {
+            continue;
+        };
+        let source = record.source_id().cloned().or_else(|| {
+            record
+                .observation_id()
+                .and_then(|id| stores.observations.observation_by_id(id))
+                .map(|observation| observation.source_id().clone())
+        });
+        if let Some(source) = source
+            && !sources.contains(&source)
+        {
+            sources.push(source);
+        }
+    }
+    sources
+}
+
+/// Why a collection references this record: by one of its claims, by the source
+/// of its content, or by a canonical actor or infrastructure reference.
+///
+/// A role is context, never support: membership does not assert responsibility.
+fn membership_roles(
+    membership: &ContextMembership,
+    claims: &[String],
+    sources: &[SourceId],
+    node_id: Option<&NodeId>,
+) -> Vec<String> {
+    let mut roles = Vec::new();
+    if membership
+        .claims
+        .iter()
+        .any(|claim| claims.iter().any(|id| id == claim.as_str()))
+    {
+        roles.push("claim".to_owned());
+    }
+    if membership
+        .content
+        .iter()
+        .any(|source| sources.contains(source))
+    {
+        roles.push("content".to_owned());
+    }
+    if let Some(node_id) = node_id {
+        if membership.actors.contains(node_id) {
+            roles.push("actor".to_owned());
+        }
+        if membership.infrastructure.contains(node_id) {
+            roles.push("infrastructure".to_owned());
+        }
+    }
+    roles.sort();
+    roles
+}
+
+/// Coordination signals retained for one collection, oldest identity first.
+fn coordination_signals(
+    graph: &Graph,
+    collection: &str,
+    collection_id: &str,
+) -> Vec<FimiCoordinationSignal> {
+    let mut signals: Vec<FimiCoordinationSignal> = graph
+        .evidence_store()
+        .campaign_signals()
+        .iter()
+        .map(|stored| &stored.annotation.finding)
+        .filter(|finding| {
+            finding.scope().kind() == collection && finding.scope().id() == collection_id
+        })
+        .map(|finding| FimiCoordinationSignal {
+            signal: finding.signal().as_str().to_owned(),
+            group_id: finding.group_id().to_owned(),
+            evidence_refs: finding
+                .evidence_ids()
+                .iter()
+                .map(|id| id.as_str().to_owned())
+                .collect(),
+            source_refs: finding
+                .source_ids()
+                .iter()
+                .map(|id| id.as_str().to_owned())
+                .collect(),
+            reason: finding.reason().to_owned(),
+            affects_independence: finding.affects_independence(),
+            attribution: ATTRIBUTION_NOT_ASSERTED.to_owned(),
+        })
+        .collect();
+    signals.sort_by(|left, right| left.group_id.cmp(&right.group_id));
+    signals
 }
 
 /// Neutral collections referencing an exported record, with their coordination
-/// evidence.
-///
-/// Expected behavior: a collection matches when one of its claims targets this
-/// record, when its declared content is the source behind one of the record's
-/// evidence references, or when the record is one of its canonical actor or
-/// infrastructure references. Every matched role is reported, since membership
-/// is context and never support. Each entry carries the coordination signals
-/// retained for that collection, each stating that it asserts no author.
-///
-/// Validation target: empty when no collection references the record, which is
-/// what keeps exports byte-identical for graphs without these records.
+/// evidence. Empty when no collection references it, which keeps exports
+/// byte-identical for graphs without these records.
 fn campaign_lineage(
-    _graph: &Graph,
-    _evidence_refs: &[String],
-    _node_id: Option<&NodeId>,
-    _relationship_id: Option<&RelationshipId>,
+    graph: &Graph,
+    evidence_refs: &[String],
+    node_id: Option<&NodeId>,
+    relationship_id: Option<&RelationshipId>,
 ) -> Vec<FimiCampaignLineage> {
-    Vec::new()
+    let stores = graph.epistemic_stores();
+    let collections = &stores.narrative_campaigns;
+    if collections.is_empty() {
+        return Vec::new();
+    }
+    let claims: Vec<String> = stores
+        .claims
+        .claims()
+        .into_iter()
+        .filter(|claim| match claim.target() {
+            graph_core::ClaimTarget::Node(target) => node_id == Some(target),
+            graph_core::ClaimTarget::Relationship(target) => relationship_id == Some(target),
+            _ => false,
+        })
+        .map(|claim| claim.id().as_str().to_owned())
+        .collect();
+    let sources = record_sources(graph, evidence_refs);
+
+    let mut lineage: Vec<FimiCampaignLineage> = Vec::new();
+    for narrative in collections.narratives() {
+        let roles = membership_roles(narrative.membership(), &claims, &sources, node_id);
+        if roles.is_empty() {
+            continue;
+        }
+        lineage.push(narrative_lineage(graph, narrative, roles));
+    }
+    for campaign in collections.campaigns() {
+        let roles = membership_roles(campaign.membership(), &claims, &sources, node_id);
+        if roles.is_empty() {
+            continue;
+        }
+        lineage.push(campaign_entry(graph, campaign, roles));
+    }
+    lineage.sort_by(|left, right| {
+        (&left.collection, &left.collection_id).cmp(&(&right.collection, &right.collection_id))
+    });
+    lineage
+}
+
+fn narrative_lineage(
+    graph: &Graph,
+    narrative: &Narrative,
+    membership_roles: Vec<String>,
+) -> FimiCampaignLineage {
+    FimiCampaignLineage {
+        collection: "narrative".to_owned(),
+        collection_id: narrative.id().as_str().to_owned(),
+        membership_roles,
+        themes: narrative.membership().themes.clone(),
+        narratives: Vec::new(),
+        valid_from: narrative.stamp().valid_from.as_str().to_owned(),
+        coordination_signals: coordination_signals(graph, "narrative", narrative.id().as_str()),
+    }
+}
+
+fn campaign_entry(
+    graph: &Graph,
+    campaign: &Campaign,
+    membership_roles: Vec<String>,
+) -> FimiCampaignLineage {
+    FimiCampaignLineage {
+        collection: "campaign".to_owned(),
+        collection_id: campaign.id().as_str().to_owned(),
+        membership_roles,
+        themes: campaign.membership().themes.clone(),
+        narratives: campaign
+            .narratives()
+            .iter()
+            .map(|id| id.as_str().to_owned())
+            .collect(),
+        valid_from: campaign.stamp().valid_from.as_str().to_owned(),
+        coordination_signals: coordination_signals(graph, "campaign", campaign.id().as_str()),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

@@ -394,6 +394,38 @@ The acceptance contracts are `graph-core/tests/narrative_campaign_records.rs`,
 `graph-storage/tests/epistemic_sidecar.rs`. They include reopening a durable store
 and projecting memberships when their referenced canonical nodes are not loaded.
 
+## FIMI export of campaign lineage and misleadingness
+
+`export-fimi` records carry two additive fields beside the epistemic lineage of
+WS-A. `campaign_lineage` lists the neutral collections that reference the record
+and why each one matched: `claim` when one of its claims targets the record,
+`content` when its declared content is the source behind one of the record's
+evidence references, and `actor` or `infrastructure` for a canonical reference.
+Every matched role is reported, because membership is context and never support.
+Each entry carries the collection's themes, its valid-from stamp, the narratives
+a campaign collects, and the coordination signals retained for it, each with an
+explicit `attribution: "not_asserted"` so a consumer cannot read coordination
+evidence as an author.
+
+`misleadingness` carries the assessments the FIMI pack recorded as evidence,
+under the `fimi_misleadingness` payload key. The exporter carries what the pack
+wrote and derives nothing: the assessment policy lives in
+`corrobore-domain-fimi`, so an annotation recorded without its report exports
+its subject, gap, interpretations, declared mechanisms and traced records
+without a band. Every assessment is marked `not_a_factual_determination`. An
+unreadable payload is skipped rather than failing the export, because an export
+is a projection of retained records and not a validator of pack data.
+
+The separation is structural. A verdict state, verdict identity and confidence
+band stay in the lineage entry of their claim; a band, its mechanisms and the
+reader-versus-evidence gap stay in the assessment. Neither field set appears
+inside the other, so "claims mostly supported" and "highly misleading" are
+exported side by side and can never be folded into one score. Both fields are
+omitted when empty, so a graph with no narrative or campaign record and no
+recorded assessment exports the bytes it did before, and a collection that
+references nothing exported leaves the document unchanged. The acceptance
+contract is `export-fimi/tests/campaign_misleadingness_export.rs`.
+
 ## Campaign coordination signals
 
 `detect_campaign_signals` observes production-side patterns across the claims of

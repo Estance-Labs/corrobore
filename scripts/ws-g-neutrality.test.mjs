@@ -15,3 +15,11 @@ test('coordination signals carry provenance vocabulary without pack-specific ass
  assert.match(source,/CoordinationSignalsOnly/);
  assert.match(source,/fn affects_independence/);
 });
+test('the FIMI exporter keeps assessments and verdicts in separate fields',async()=>{
+ const source=await read('crates/export-fimi/src/lib.rs');
+ // An assessment is never a verdict, and coordination evidence is never an author.
+ assert.match(source,/not_a_factual_determination/);
+ assert.match(source,/ATTRIBUTION_NOT_ASSERTED/);
+ // The exporter carries the pack's recorded band; it must not compute one.
+ assert.doesNotMatch(source,/fn\s+\w*band\w*\s*\(/);
+});

@@ -382,7 +382,10 @@ fn a_supported_claim_and_a_high_misleadingness_assessment_export_distinctly() {
     // Separation is structural: no verdict field appears inside an assessment,
     // and no assessment field appears inside a verdict's lineage.
     for key in ["verdict_state", "verdict_id", "confidence_band"] {
-        assert!(assessment[key].is_null(), "{key} must stay out of the assessment");
+        assert!(
+            assessment[key].is_null(),
+            "{key} must stay out of the assessment"
+        );
     }
     for key in ["band", "mechanisms", "gap", "not_a_factual_determination"] {
         assert!(
@@ -447,7 +450,10 @@ fn governed_records_without_collections_carry_no_campaign_or_assessment_keys() {
     let plan = build_deterministic_export_plan(&graph, metadata(), &[]).expect("plan");
     let json = export_fimi_json(&graph, &plan).expect("json");
 
-    assert!(json.contains("\"lineage\""), "governed lineage still exports");
+    assert!(
+        json.contains("\"lineage\""),
+        "governed lineage still exports"
+    );
     assert!(!json.contains("campaign_lineage"));
     assert!(!json.contains("misleadingness"));
     assert!(!json.contains("coordination_signals"));
@@ -520,8 +526,7 @@ fn a_malformed_annotation_is_skipped_without_failing_the_export() {
 
     assert!(exported["misleadingness"].is_null());
     assert_eq!(
-        exported["campaign_lineage"][0]["collection_id"],
-        CAMPAIGN,
+        exported["campaign_lineage"][0]["collection_id"], CAMPAIGN,
         "campaign lineage is unaffected by an unreadable assessment"
     );
 }
