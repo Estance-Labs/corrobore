@@ -19,18 +19,39 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   locking uses the renamed `fs4` operation. CI now rejects future direct
   HMAC/SHA-2 digest-release drift (#175).
 
+### Documentation
+
+- Public documentation, the packaged agent skills, and the MCP bridge now cover
+  every Epic 0029 workstream. New user guides describe verdicts, confidence
+  dimensions and the actionability gate (WS-D), narratives, campaigns,
+  coordination signals and misleadingness export fields (WS-G), and the agentic
+  platform foundations (WS-H: capability catalogue, agent write policy and
+  budgets, why-provenance, corrective routes and the publish gate, memory
+  fusion authority cap, investigation artifacts). The Cypher, claim audit,
+  HTTP, memory operations, exporter, domain and LLM guides gain the matching
+  sections; the OpenAPI contract documents the audit's `falsifiers`,
+  `corrective_routes` and `evidence_risk_assessments` fields and the
+  consolidate `authority_policy` and `revoked_source_ids` fields. The Corrobore
+  skill gains verdict and campaign-provenance references, and the
+  `corrobore_consolidate` MCP schema exposes the fusion fields, held by the
+  capability-adapter contract.
+
 ### Added
 
-- `corrobore-nlq` (epic #82, item #260): the versioned `nlq/v1` action
-  envelope with a validator that refuses trusted runtime context at any depth,
-  invented evidence, unbounded or mutating reads and writes the caller did not
-  allow, and canonicalizes actions through the real Cypher, `INVESTIGATE` and
-  `memory/v1` parsers; a compile-only `NlqCompiler` trait with a deterministic
-  bilingual `TemplateCompiler` baseline (French and English); a reproducible
-  paired dataset generator with adversarial families and leakage-safe splits;
-  and a parser-backed evaluation harness reporting per-language metrics. The
-  contract is committed under `compatibility/nlq/v1` with replayable fixtures.
-  No model ships and the runtime gains no machine-learning dependency.
+- Opt-in Bolt listener for the standalone server (epic #12, item #258):
+  Bolt 4.4 and 5.0 to 5.8 negotiation, PackStream v1, `HELLO`/`LOGON`
+  authentication against the Corrobore bearer token, `RUN`/`PULL`/`DISCARD`
+  with bounded server-side buffering and `has_more` streaming, statement-group
+  transactions over the per-request atomic mutation model, `ROUTE` for
+  `neo4j://` clients, stable failure codes, and TLS through the shared `[tls]`
+  material. Enabled with `interfaces.enabled = ["http", "bolt"]` and a `[bolt]`
+  section (`port`, `max_connections`) or the matching environment variables and
+  CLI flags. Off by default; HTTP and embedded behaviour are unchanged.
+- Typed record values: `ExecutionRecord` and `CypherRecord` carry a `values`
+  twin of the string `fields`, and `ExecutionResult` and `CypherResponse`
+  carry the ordered `columns`, so protocol adapters encode integers, floats,
+  booleans, lists, nodes and relationships without guessing from text. Neither
+  is serialized: the HTTP JSON contract is byte-identical.
 
 - WS-H agentic platform foundations: corrective routes and falsifier records
   with a high-impact publish gate composed onto the WS-D actionability

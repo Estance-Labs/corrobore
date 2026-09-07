@@ -261,6 +261,10 @@ pub enum CypherResponseStatus {
 pub struct CypherRecord {
     /// Fields.
     pub fields: HashMap<String, String>,
+    /// Typed twin of `fields` for protocol adapters. Never serialized: the
+    /// HTTP JSON contract is the string rendering alone.
+    #[serde(skip)]
+    pub values: HashMap<String, RecordValue>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -346,6 +350,10 @@ pub struct CypherFixHint {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 /// Cypher response.
 pub struct CypherResponse {
+    /// Projected column names in RETURN order, for adapters that need a stable
+    /// field order. Never serialized: the HTTP JSON contract is unchanged.
+    #[serde(skip)]
+    pub columns: Vec<String>,
     /// Status.
     pub status: CypherResponseStatus,
     /// Data.

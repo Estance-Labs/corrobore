@@ -126,6 +126,7 @@ fn request_validation_rejects_unsupported_explain_mode_for_execution() {
 #[test]
 fn response_model_carries_mutation_summary_warnings_and_fix_hints() {
     let response = CypherResponse {
+        columns: vec![],
         status: CypherResponseStatus::ValidationFailed,
         data: CypherResponseData::MutationSummary(CypherMutationSummary {
             matched_rows: 0,

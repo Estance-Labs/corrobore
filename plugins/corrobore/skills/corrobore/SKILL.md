@@ -1,6 +1,6 @@
 ---
 name: corrobore
-description: Use Corrobore as external structured working memory for CTI, FIMI, crisis, and cross-domain investigations with focused reads and evidence-backed candidate ingestion.
+description: Use Corrobore as external structured working memory for CTI, FIMI, crisis, and cross-domain investigations with focused reads, evidence-backed candidate ingestion, and audited verdicts.
 license: MIT
 ---
 
@@ -65,9 +65,19 @@ Evidence and confidence remain owned by each assertion.
 
 When Corrobore is exposed as agent tools, preserve the transport boundary:
 
-- health, metrics, seed search, Cypher reads, export, session health, and session logs are read operations;
-- candidate submission, repair, reviewed promotion, reconciliation application/undo, validation with correction persistence, session start, and session stop change durable state;
+- health, metrics, seed search, Cypher reads, claim audit, memory recall and trace, export, session health, and session logs are read operations;
+- candidate submission, repair, reviewed promotion, reconciliation application/undo, validation with correction persistence, memory remember/relate/update/forget/consolidate, session start, and session stop change durable state;
 - never route a mutation through a read tool or retry a policy rejection through a broader endpoint.
+
+The packaged MCP tools are the `mcp` projection of one runtime capability
+catalogue: `corrobore_ready`, `corrobore_claim_audit`, the seven memory tools,
+and the three STIX tools. Raw Cypher execution is HTTP-only and is not a tool.
+Whether a capability writes and what authorization it needs is decided in the
+catalogue, never by a tool description. When the host runs you through the agent
+gateway, write authorization and run budgets (tokens, cost, tool calls, wall
+time) are decided from trusted context before your query is parsed; a refusal
+arrives as `WRITE_PERMISSION_REQUIRED` or a budget rejection. Report it; do not
+rephrase the query or switch route shape.
 
 ### Seed search
 
@@ -140,6 +150,14 @@ return the unsupported relationship as a gap.
 - Nodes: `Actor`, `Narrative`, `Claim`, `Account`, `Outlet`, `Campaign`, `CoordinationCluster`.
 - Relationships: `Amplifies`, `CoordinatesWith`, `OriginatesFrom`, `Targets`, `Repeats`, `Contradicts`.
 
+The core also holds domain-neutral, immutable `Narrative` and `Campaign`
+collections in the epistemic projection, reached through `HAS_MEMBER` edges
+with a `membership_role`. Membership is context: it supports no claim and
+attributes no actor. Coordination signals are provenance, never authorship, and
+attribution rests only on a claim the engine holds `Supported`. A
+misleadingness band and a factual verdict are two findings that never move each
+other. Follow [campaign provenance without attribution](references/campaign-provenance.md).
+
 ### Crisis
 
 - Nodes: `CrisisEvent`, `Location`, `HumanitarianNeed`, `Organization`, `Observation`.
@@ -156,6 +174,8 @@ For reusable task prompts, load only the reference that matches the current job:
 - [FIMI investigation](references/fimi-investigation.md)
 - [STIX from unstructured data](references/stix-from-unstructured.md)
 - [Evidence-first validation](references/evidence-first-validation.md)
+- [Verdicts, dimensions, and corrective routes](references/verdicts-and-actionability.md)
+- [Campaign provenance without attribution](references/campaign-provenance.md)
 
 1. Split the source into stable evidence spans and extract candidate assertions externally.
 2. Start a named session; search and inspect existing identities.
@@ -197,3 +217,20 @@ Before asserting a verdict, call `GET /v1/claims/{id}/audit` and follow the
 [claim audit playbook](references/claim-audit.md). Inspect stored coverage, contradictions,
 dimensions and history; report absent checks explicitly. A human judgment appends
 its own record and never edits the machine verdict.
+
+Report the verdict and the actionability decision as two answers, following
+[verdicts, dimensions, and corrective routes](references/verdicts-and-actionability.md):
+the six named dimensions are never averaged into a score, one independence
+cluster is one source, a blocked or absent `actionability` means the claim may
+not be acted on or exported, and the audit's `falsifiers` and
+`corrective_routes` (or the `no_recorded_falsifier` gap) say what could change
+the verdict. The legacy scalar `confidence` is display metadata, not a verdict.
+
+## Memory consolidation
+
+When you consolidate memories through `corrobore_consolidate` or
+`POST /v1/memory/operations`, name the `authority_policy` that caps the fused
+authority when one is registered and list `revoked_source_ids` explicitly.
+Fused authority is the strongest justified source behind the memory, never the
+number of times it was remembered; a revocation recomputes the interpretation
+and deletes nothing. Propose first, then apply only an approved proposal.

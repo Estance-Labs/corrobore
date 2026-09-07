@@ -12,6 +12,7 @@ use std::{
 use clap::{Args, Parser, Subcommand};
 use corrobore_http_server::{
     AppState, AppStateInitError, DataDirectoryOwnership, ServerConfig, ServerLifecycleError,
+    bolt::serve_bolt,
     build_router, install_shutdown_signal,
     logging::init_logging,
     s3_snapshot_store::{S3SnapshotArtifactStore, S3SnapshotStoreConfig},
@@ -261,6 +262,12 @@ struct ConfigArgs {
     /// Override the directory containing the web interface build.
     #[arg(long)]
     web_dir: Option<PathBuf>,
+    /// Override the Bolt listener port used when the `bolt` interface is enabled.
+    #[arg(long)]
+    bolt_port: Option<u16>,
+    /// Override the maximum number of concurrent Bolt connections.
+    #[arg(long)]
+    bolt_max_connections: Option<usize>,
     /// Override whether maintenance tasks are enabled.
     #[arg(long, action = clap::ArgAction::Set)]
     maintenance_enabled: Option<bool>,
@@ -315,6 +322,8 @@ struct FileConfig {
     operations: FileOperations,
     #[serde(default)]
     tls: FileTls,
+    #[serde(default)]
+    bolt: FileBolt,
 }
 
 #[derive(Default, Deserialize)]
@@ -411,6 +420,15 @@ struct FileTls {
 #[serde(deny_unknown_fields)]
 struct FileOperations {
     endpoint_policy: Option<String>,
+}
+
+/// `[bolt]`: the opt-in Bolt listener. It shares `server.host`, the bearer
+/// token and the `[tls]` material, so only its own knobs live here.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileBolt {
+    port: Option<u16>,
+    max_connections: Option<usize>,
 }
 
 struct OperationalConfig {
@@ -1036,6 +1054,12 @@ fn apply_file(path: &Path, values: &mut HashMap<String, String>) -> Result<(), S
         "CORROBORE_SERVER_INTERFACES",
         Some(config.interfaces.enabled.join(",")),
     );
+    insert_num(values, "CORROBORE_BOLT_PORT", config.bolt.port);
+    insert_num(
+        values,
+        "CORROBORE_BOLT_MAX_CONNECTIONS",
+        config.bolt.max_connections,
+    );
     insert_bool(
         values,
         "CORROBORE_MAINTENANCE_ENABLED",
@@ -1211,6 +1235,12 @@ fn apply_cli(args: &ConfigArgs, values: &mut HashMap<String, String>) {
         );
     }
     insert_path(values, "CORROBORE_HTTP_WEB_DIR", args.web_dir.as_deref());
+    insert_num(values, "CORROBORE_BOLT_PORT", args.bolt_port);
+    insert_num(
+        values,
+        "CORROBORE_BOLT_MAX_CONNECTIONS",
+        args.bolt_max_connections,
+    );
     insert_bool(
         values,
         "CORROBORE_MAINTENANCE_ENABLED",
@@ -1396,11 +1426,19 @@ fn validate_operational(config: &OperationalConfig) -> Result<(), String> {
         return Err("interfaces.enabled: must contain at least one interface".to_owned());
     }
     for interface in &config.interfaces {
-        if !matches!(interface.as_str(), "http" | "web") {
+        if !matches!(interface.as_str(), "http" | "web" | "bolt") {
             return Err(format!(
                 "interfaces.enabled: unsupported interface {interface:?}"
             ));
         }
+    }
+    if config
+        .interfaces
+        .iter()
+        .any(|interface| interface == "bolt")
+        && config.server.bolt_port == config.server.port
+    {
+        return Err("bolt.port: the Bolt listener cannot share the HTTP port".to_owned());
     }
     if config.interfaces.iter().any(|interface| interface == "web")
         && config.server.web_dir.is_none()
@@ -1552,6 +1590,11 @@ fn print_effective(config: &OperationalConfig) {
     if let Some(directory) = &config.server.web_dir {
         println!("interfaces.web_directory = {directory:?}");
     }
+    println!("bolt.port = {}", config.server.bolt_port);
+    println!(
+        "bolt.max_connections = {}",
+        config.server.bolt_max_connections
+    );
     println!("maintenance.enabled = {}", config.maintenance.enabled);
     println!(
         "maintenance.interval_ms = {}",
@@ -1579,6 +1622,10 @@ async fn start_server(config: OperationalConfig) -> Result<(), Box<dyn std::erro
         );
     }
     let web_enabled = config.interfaces.iter().any(|interface| interface == "web");
+    let bolt_enabled = config
+        .interfaces
+        .iter()
+        .any(|interface| interface == "bolt");
     let tls = if config.tls.enabled {
         let paths = TlsMaterialPaths {
             certificate_file: PathBuf::from(
@@ -1612,10 +1659,27 @@ async fn start_server(config: OperationalConfig) -> Result<(), Box<dyn std::erro
     info!(
         %addr,
         scheme = if tls.is_some() { "https" } else { "http" },
+        bolt_enabled,
         maintenance_enabled = config.maintenance.enabled,
         maintenance_interval_ms = config.maintenance.interval_ms,
         "corrobore server listening"
     );
+    if bolt_enabled {
+        // The Bolt listener is one more adapter over the same state: it shares
+        // the engine, the bearer token, the lifecycle and the TLS material, and
+        // stops accepting on its own once the lifecycle drains.
+        let bolt_addr: SocketAddr =
+            format!("{}:{}", state.config.host, state.config.bolt_port).parse()?;
+        let bolt_listener = TcpListener::bind(bolt_addr).await?;
+        let bolt_tls = tls.as_ref().map(|material| material.get_inner());
+        let bolt_state = state.clone();
+        info!(addr = %bolt_addr, tls = bolt_tls.is_some(), "corrobore bolt listener open");
+        tokio::spawn(async move {
+            if let Err(error) = serve_bolt(bolt_listener, bolt_state, bolt_tls).await {
+                tracing::error!(error = %error, "bolt listener stopped with an error");
+            }
+        });
+    }
     if let Some(tls) = tls {
         serve_tls_with_lifecycle(
             addr,

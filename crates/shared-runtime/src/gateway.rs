@@ -427,6 +427,7 @@ pub(crate) fn runtime_error_to_rejected_response(error: RuntimeError) -> CypherR
     };
 
     let mut response = CypherResponse {
+        columns: vec![],
         status,
         data: CypherResponseData::Empty,
         warnings: vec![],
@@ -452,6 +453,7 @@ pub(crate) fn runtime_error_to_rejected_response(error: RuntimeError) -> CypherR
 
 pub(crate) fn map_execution_result_to_response(result: ExecutionResult) -> CypherResponse {
     CypherResponse {
+        columns: result.columns,
         // Status.
         status: match result.status {
             ExecutionStatus::Success => CypherResponseStatus::Success,
@@ -530,6 +532,7 @@ fn records_to_cypher_records(records: Vec<ExecutionRecord>) -> Vec<CypherRecord>
         .into_iter()
         .map(|record| CypherRecord {
             fields: record.fields,
+            values: record.values,
         })
         .collect()
 }

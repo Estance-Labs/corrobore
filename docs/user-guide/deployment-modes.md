@@ -12,6 +12,7 @@ supported operational entry point.
 | **Embedded Engine** | Inside the host Rust process | `corrobore_engine` Rust API | A Rust application should own engine construction, policy, lifecycle, and direct calls without a network service. |
 | **HTTP Server** | Separate server process | Authenticated HTTP/JSON API | You are integrating an agent, service, Python client, or other remote caller and need the route, authentication, limit, and response contracts. |
 | **Standalone Server** | Separate `corrobore` process | HTTP/JSON plus operator CLI | You are deploying Corrobore as a durable service and need validated configuration, lifecycle commands, storage ownership, TLS, monitoring, backup, and upgrades. |
+| **Bolt listener** (opt-in interface of the standalone server) | Same `corrobore` process | Bolt over TCP or TLS for Neo4j drivers | An application already built on a Neo4j driver should reach Corrobore by changing its connection address, within the supported Cypher subset and transaction model. |
 
 All three paths share the same policy, budget, validation, query-planning, and
 execution layers. The choice changes who owns the process and how callers reach
@@ -49,6 +50,9 @@ operator-managed durability.
   fields, environment variables, CLI overrides, and defaults.
 - [Standalone Operations](standalone-operations.md) — native, Docker, systemd,
   observability, backup, restore, upgrade, and rollback runbooks.
+- [Bolt Protocol](bolt-protocol.md) — enabling the `bolt` interface, driver
+  connection, wire behaviour, transaction model, failure codes, and known
+  incompatibilities.
 
 For a first local run, continue with [Getting Started](../getting-started.md).
 For container deployment, use

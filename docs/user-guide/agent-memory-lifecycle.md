@@ -283,11 +283,16 @@ not ordinary validation and is never an excuse to erase dissent.
 4. Apply the exact proposal with `mode: "apply_approved"`, its proposal ID, and
    the named approval policy.
 5. Keep `preserve_disagreements: true`.
-6. Use `trace` to verify the resulting versions and `superseded_by` links.
+6. Name the `authority_policy` that caps the fused authority when one is
+   registered, and list any `revoked_source_ids` explicitly; a revocation
+   recomputes the interpretation and deletes nothing.
+7. Use `trace` to verify the resulting versions and `superseded_by` links.
 
 Approved consolidation versions non-canonical originals as `superseded`; it
 does not make their evidence disappear. Destructive consolidation is rejected
-by the version-one contract.
+by the version-one contract. The fused memory keeps a back-pointer to every
+origin, and its authority is the strongest justified source behind it, never
+the number of times something was remembered.
 
 ## Recall, trace, and forget safely
 

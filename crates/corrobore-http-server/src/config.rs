@@ -51,6 +51,11 @@ impl StorageMode {
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
+    /// Bolt listener port, used only when the `bolt` interface is enabled. The
+    /// listener shares `host`, the bearer token and the TLS material.
+    pub bolt_port: u16,
+    /// Maximum concurrent Bolt connections; excess connections wait for a slot.
+    pub bolt_max_connections: usize,
     pub auth_mode: AuthenticationMode,
     pub auth_token: Option<String>,
     pub auth_token_source: Option<SecretSource>,
@@ -130,6 +135,8 @@ impl fmt::Debug for ServerConfig {
             .debug_struct("ServerConfig")
             .field("host", &self.host)
             .field("port", &self.port)
+            .field("bolt_port", &self.bolt_port)
+            .field("bolt_max_connections", &self.bolt_max_connections)
             .field("auth_mode", &self.auth_mode.as_str())
             .field("auth_token", &"<redacted>")
             .field(
@@ -409,6 +416,19 @@ impl ServerConfig {
             vars.get("CORROBORE_HTTP_PORT")
                 .map(String::as_str)
                 .unwrap_or("8080"),
+        )?;
+
+        let bolt_port = parse_u16(
+            "CORROBORE_BOLT_PORT",
+            vars.get("CORROBORE_BOLT_PORT")
+                .map(String::as_str)
+                .unwrap_or("7687"),
+        )?;
+        let bolt_max_connections = parse_positive_usize(
+            "CORROBORE_BOLT_MAX_CONNECTIONS",
+            vars.get("CORROBORE_BOLT_MAX_CONNECTIONS")
+                .map(String::as_str)
+                .unwrap_or("64"),
         )?;
 
         let auth_mode = parse_auth_mode(vars)?;
@@ -730,6 +750,8 @@ impl ServerConfig {
         Ok(Self {
             host,
             port,
+            bolt_port,
+            bolt_max_connections,
             auth_mode,
             auth_token,
             auth_token_source,

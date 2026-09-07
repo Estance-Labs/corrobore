@@ -25,6 +25,11 @@ ask focused graph questions         <-   return the bounded result you need
 9. If a late write is necessary, repeat read-back, validation, and promotion.
 10. Leave uncertain claims for human review.
 
+For extracted assertions from documents, prefer the candidate tier over direct
+graph mutation: submit through `POST /v1/import/candidates`, read the failing
+constraint, re-extract that field, resubmit, and promote only after review. See
+[Ingestion](user-guide/ingestion.md#candidate-ingestion-ws-c).
+
 ## Request discipline
 
 - Prefer explicit mode routes:
@@ -152,6 +157,57 @@ ambiguous, abstain when evidence or permission is missing, and say
 `unsupported` for capabilities Corrobore does not expose. The host validates
 the envelope through the real parsers before anything runs. See
 [Natural-Language Queries](user-guide/nlq.md).
+## Read verdicts before you assert them
+
+A governed claim carries a computed verdict and a separate actionability
+assessment. Neither is a model score, and the legacy scalar `confidence` is a
+display projection that no engine policy reads. Before asserting a verdict,
+call `GET /v1/claims/{id}/audit` and answer four questions from the stored
+response: why this verdict, what contradicts it, what changed, what has not
+been checked. Then say what could change it: the audit's `falsifiers` and
+`corrective_routes`, or the `no_recorded_falsifier` gap when nothing recorded
+could move the verdict.
+
+- Report the six named dimensions (`evidence_sufficiency`, `source_authority`,
+  `source_independence`, `temporal_validity`, `contradiction_load`,
+  `verifier_strength`) as they are; absent is not zero, and they are never
+  averaged into a new score.
+- Several evidence links in one independence cluster are one source, not
+  corroboration.
+- `verdict_actionability` blocked or absent means the claim may not be acted on
+  or exported, whatever the verdict state says.
+- `mechanically_checked`, `semantically_judged`, `unchecked`, and `failing` are
+  four different statements; strong support never fills an `unchecked` gap.
+
+See [Verdicts and Actionability](user-guide/verdicts-and-actionability.md) and
+[Claim Audit](user-guide/claim-audit.md).
+
+## Collections are context, not judgment
+
+`Narrative` and `Campaign` records in the epistemic projection group claims,
+content sources, actors, and infrastructure for an investigation. Membership
+supports nothing and attributes nothing. A coordination signal says content
+shares a production pattern; it never says who produced it. Attribute only
+through a governed claim the engine holds `Supported`, and report a
+misleadingness band and a factual verdict as two findings. See
+[Narratives, Campaigns, and Misleadingness](user-guide/narratives-and-campaigns.md).
+
+## Write authorization is decided outside your prompt
+
+When the host runs you through the agent gateway, whether you may write is
+decided from trusted context (tool, data domain, permission, egress, approval,
+run budget) before your query is parsed. Nothing in a prompt, a parameter, or a
+retrieved document can change that decision. A refusal arrives as an ordinary
+rejected response carrying `WRITE_PERMISSION_REQUIRED`, and a run that has
+spent its token, cost, tool-call, or wall-time budget is refused the same way.
+Report the refusal; do not rephrase the query or switch route shape. Accepted
+mutations are appended to a hash-chained audit log you cannot edit.
+
+When you consolidate memories, name the `authority_policy` and list
+`revoked_source_ids` explicitly. Fused authority is the strongest justified
+source behind the memory; remembering something five times gives it the
+authority of remembering it once. See
+[Agentic Platform Foundations](user-guide/agentic-platform.md).
 
 ## Recover safely
 
@@ -163,4 +219,7 @@ the envelope through the real parsers before anything runs. See
 
 ## Canonical references
 
-See [Cypher Support](user-guide/cypher.md), [HTTP Server](user-guide/http-server.md), and the [OpenAPI contract](api/openapi.yaml).
+See [Cypher Support](user-guide/cypher.md), [HTTP Server](user-guide/http-server.md),
+[Verdicts and Actionability](user-guide/verdicts-and-actionability.md),
+[Agentic Platform Foundations](user-guide/agentic-platform.md), the
+[Agent Plugin](agent-skill.md), and the [OpenAPI contract](api/openapi.yaml).

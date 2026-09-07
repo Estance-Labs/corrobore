@@ -194,6 +194,7 @@ fn attach_audit_references_to_cypher_response_includes_audit_context() {
     .expect("audit event should be created");
 
     let mut response = CypherResponse {
+        columns: vec![],
         status: CypherResponseStatus::Rejected,
         data: CypherResponseData::Empty,
         warnings: vec![],

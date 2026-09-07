@@ -71,6 +71,7 @@ nav:
     - Standalone Server CLI: user-guide/standalone-server.md
     - Standalone Configuration: user-guide/standalone-configuration.md
     - Standalone Operations: user-guide/standalone-operations.md
+    - Bolt Protocol: user-guide/bolt-protocol.md
     - Database Operations: user-guide/database-operations.md
     - Elastic-free OpenCTI Operations: user-guide/opencti-elastic-free-operations.md
   - Ingestion: user-guide/ingestion.md
@@ -87,6 +88,9 @@ nav:
     - Cypher Support: user-guide/cypher.md
     - Intelligence Domains: user-guide/domains.md
     - Domain Provider Operations: user-guide/domain-provider-operations.md
+    - Verdicts and Actionability: user-guide/verdicts-and-actionability.md
+    - Narratives, Campaigns and Misleadingness: user-guide/narratives-and-campaigns.md
+    - Agentic Platform Foundations: user-guide/agentic-platform.md
     - Evidence Risk and Quarantine: user-guide/evidence-risk.md
     - Evidence Access Metrics: user-guide/evidence-access-metrics.md
     - Pipeline Stage Metrics: user-guide/stage-metrics.md
