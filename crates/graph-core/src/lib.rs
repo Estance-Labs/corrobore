@@ -120,6 +120,11 @@ pub use reconciliation::{
     ReconciliationInput, ReconciliationOutcome, ReconciliationRecord, ReconciliationSimilarity,
     ReconciliationSimilarityKind, ReconciliationStore,
 };
+mod artifact;
+pub use artifact::{
+    Artifact, ArtifactAnnotation, ArtifactBinding, ArtifactInput, ArtifactKind, ArtifactStore,
+    ArtifactVersion, PublicationState,
+};
 mod corrective_routes;
 pub use corrective_routes::{
     ClaimImpact, CorrectiveRoute, CorrectiveRouteCatalogue, CorrectiveRouteInput,

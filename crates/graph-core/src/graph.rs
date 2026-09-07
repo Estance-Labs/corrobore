@@ -133,6 +133,10 @@ impl Graph {
             .validate_bindings(&snapshot.epistemic)?;
         snapshot
             .epistemic
+            .artifacts
+            .validate_bindings(&snapshot.epistemic)?;
+        snapshot
+            .epistemic
             .mentions
             .validate_bindings(&snapshot.epistemic.observations)?;
         snapshot.epistemic.reconciliations.validate_bindings(
