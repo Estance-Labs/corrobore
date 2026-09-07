@@ -164,7 +164,10 @@ fn each_signal_has_an_isolated_fixture_and_explanation() {
         let findings =
             detect_campaign_signals(&fixture.graph, &narrative_scope(), &fixture.features).unwrap();
         assert_eq!(
-            findings.iter().map(CampaignSignalFinding::signal).collect::<Vec<_>>(),
+            findings
+                .iter()
+                .map(CampaignSignalFinding::signal)
+                .collect::<Vec<_>>(),
             vec![signal],
             "{signal:?} fixture must detect exactly its own signal"
         );
@@ -220,8 +223,10 @@ fn detection_spans_a_collection_where_a_single_claim_assessment_cannot() {
                 })
             })
             .map(|feature| {
-                let mut risk =
-                    EvidenceRiskFeatures::new(feature.evidence_id.clone(), "coordination-review-v1");
+                let mut risk = EvidenceRiskFeatures::new(
+                    feature.evidence_id.clone(),
+                    "coordination-review-v1",
+                );
                 risk.generation_fingerprint = feature.generation_style_fingerprint.clone();
                 risk
             })
@@ -560,7 +565,7 @@ fn support_claim(graph: &mut Graph, target: &ClaimId) {
         &inputs,
         target,
         stamp(),
-        "campaign-signal-test-v1",
+        "ws-a-minimal-v1",
     )
     .unwrap();
     assert_eq!(

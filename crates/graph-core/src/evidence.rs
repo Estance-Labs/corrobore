@@ -939,7 +939,10 @@ impl EvidenceRecordStore {
     }
 
     /// One retained coordination annotation by its finding identity.
-    pub fn campaign_signal_by_group(&self, group_id: &str) -> Option<&crate::CampaignSignalAnnotation> {
+    pub fn campaign_signal_by_group(
+        &self,
+        group_id: &str,
+    ) -> Option<&crate::CampaignSignalAnnotation> {
         self.campaign_signals
             .iter()
             .map(|stored| &stored.annotation)
@@ -952,11 +955,10 @@ impl EvidenceRecordStore {
     ) -> String {
         let id = campaign_signal_receipt_id(&annotation);
         if !self.campaign_signals.iter().any(|stored| stored.id == id) {
-            self.campaign_signals
-                .push(crate::StoredCampaignSignal {
-                    id: id.clone(),
-                    annotation,
-                });
+            self.campaign_signals.push(crate::StoredCampaignSignal {
+                id: id.clone(),
+                annotation,
+            });
             self.campaign_signals.sort_by(|a, b| a.id.cmp(&b.id));
         }
         id
@@ -1065,8 +1067,8 @@ impl EvidenceRecordStore {
 }
 fn campaign_signal_receipt_id(annotation: &crate::CampaignSignalAnnotation) -> String {
     use sha2::{Digest, Sha256};
-    let bytes =
-        serde_json::to_vec(annotation).expect("coordination annotation contains serializable values");
+    let bytes = serde_json::to_vec(annotation)
+        .expect("coordination annotation contains serializable values");
     format!(
         "campaign-signal-receipt--{}",
         Sha256::digest(bytes)

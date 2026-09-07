@@ -157,6 +157,15 @@ pub enum AttributionAdmissibility {
     },
 }
 
+/// Records a single assessment may examine together.
+const MAX_ASSESSED_RECORDS: usize = 64;
+/// Bound on one attributed metadata value.
+const MAX_METADATA_LENGTH: usize = 1024;
+/// Bound on one attributed metadata list.
+const MAX_METADATA_ITEMS: usize = 64;
+/// Tokens a record needs before its content overlap means anything.
+const MIN_REDUNDANCY_TOKENS: usize = 4;
+
 impl CampaignSignal {
     /// Closed vocabulary in canonical order.
     pub const ALL: [Self; 5] = [
@@ -169,7 +178,13 @@ impl CampaignSignal {
 
     /// Canonical snake_case token used in reasons and dependency explanations.
     pub fn as_str(self) -> &'static str {
-        unimplemented!("phase 3")
+        match self {
+            Self::RepeatedPromptArtifact => "repeated_prompt_artifact",
+            Self::GenerationStyleFingerprint => "generation_style_fingerprint",
+            Self::CrossContentRedundancy => "cross_content_redundancy",
+            Self::SharedInfrastructure => "shared_infrastructure",
+            Self::NarrativeCoMembership => "narrative_co_membership",
+        }
     }
 
     /// Whether the signal is production-side evidence of a shared pipeline and
@@ -178,19 +193,25 @@ impl CampaignSignal {
     /// Co-membership is curation. Letting it collapse independence would mean an
     /// analyst grouping content could reduce the support of its own claims.
     pub fn affects_independence(self) -> bool {
-        unimplemented!("phase 3")
+        !matches!(self, Self::NarrativeCoMembership)
     }
 }
 
 impl SignalScope {
     /// Identity of the collection, exactly as recorded.
     pub fn id(&self) -> &str {
-        unimplemented!("phase 3")
+        match self {
+            Self::Narrative(id) => id.as_str(),
+            Self::Campaign(id) => id.as_str(),
+        }
     }
 
     /// Canonical snake_case collection kind.
     pub fn kind(&self) -> &'static str {
-        unimplemented!("phase 3")
+        match self {
+            Self::Narrative(_) => "narrative",
+            Self::Campaign(_) => "campaign",
+        }
     }
 }
 
@@ -210,37 +231,37 @@ impl CampaignSignalFeatures {
 impl CampaignSignalFinding {
     /// Detected pattern.
     pub fn signal(&self) -> CampaignSignal {
-        unimplemented!("phase 3")
+        self.signal
     }
 
     /// Stable content-derived identity used for grouping and idempotency.
     pub fn group_id(&self) -> &str {
-        unimplemented!("phase 3")
+        &self.group_id
     }
 
     /// Collection the detection covered.
     pub fn scope(&self) -> &SignalScope {
-        unimplemented!("phase 3")
+        &self.scope
     }
 
     /// Exact records carrying the pattern, in identity order.
     pub fn evidence_ids(&self) -> &[EvidenceId] {
-        unimplemented!("phase 3")
+        &self.evidence_ids
     }
 
     /// Distinct sources behind those records, in identity order.
     pub fn source_ids(&self) -> &[SourceId] {
-        unimplemented!("phase 3")
+        &self.source_ids
     }
 
     /// Measurement, threshold and attribution explaining the detection.
     pub fn reason(&self) -> &str {
-        unimplemented!("phase 3")
+        &self.reason
     }
 
     /// Whether this finding may join dependent links into one cluster.
     pub fn affects_independence(&self) -> bool {
-        unimplemented!("phase 3")
+        self.signal.affects_independence()
     }
 }
 
@@ -265,23 +286,183 @@ impl AttributionRequest {
 
     /// Actor the attribution would name.
     pub fn actor(&self) -> &NodeId {
-        unimplemented!("phase 3")
+        &self.actor
     }
 
     /// Collection under assessment.
     pub fn scope(&self) -> &SignalScope {
-        unimplemented!("phase 3")
+        &self.scope
     }
 
     /// Cited coordination signal identities.
     pub fn cited_signals(&self) -> &[String] {
-        unimplemented!("phase 3")
+        &self.cited_signals
     }
 
     /// Cited corroborating claims.
     pub fn corroborating_claims(&self) -> &[ClaimId] {
-        unimplemented!("phase 3")
+        &self.corroborating_claims
     }
+}
+
+/// Claims and declared content of a resolved collection.
+struct ScopedCollection {
+    claims: BTreeSet<String>,
+    content: BTreeSet<String>,
+}
+
+/// One assessed record with its resolved source and content tokens.
+struct AssessedRecord<'a> {
+    feature: &'a CampaignSignalFeatures,
+    source: SourceId,
+    tokens: BTreeSet<String>,
+}
+
+fn signal_error(message: &str) -> GraphError {
+    GraphError::InvalidPropertyValue(message.into())
+}
+
+/// Resolve the claims and content a collection collects. A campaign covers its
+/// own membership and that of every narrative it collects.
+fn resolve_scope(graph: &Graph, scope: &SignalScope) -> Result<ScopedCollection, GraphError> {
+    let store = &graph.epistemic_stores().narrative_campaigns;
+    let mut collection = ScopedCollection {
+        claims: BTreeSet::new(),
+        content: BTreeSet::new(),
+    };
+    let mut absorb = |membership: &ContextMembership| {
+        collection
+            .claims
+            .extend(membership.claims.iter().map(|id| id.as_str().to_owned()));
+        collection
+            .content
+            .extend(membership.content.iter().map(|id| id.as_str().to_owned()));
+    };
+    match scope {
+        SignalScope::Narrative(id) => {
+            let record = store
+                .narrative_by_id(id)
+                .ok_or_else(|| signal_error("coordination scope narrative is missing"))?;
+            absorb(record.membership());
+        }
+        SignalScope::Campaign(id) => {
+            let record = store
+                .campaign_by_id(id)
+                .ok_or_else(|| signal_error("coordination scope campaign is missing"))?;
+            absorb(record.membership());
+            for narrative in record.narratives() {
+                let narrative = store
+                    .narrative_by_id(narrative)
+                    .ok_or_else(|| signal_error("coordination scope narrative is missing"))?;
+                absorb(narrative.membership());
+            }
+        }
+    }
+    Ok(collection)
+}
+
+/// The source behind a record: its bound source, its observation's source, or
+/// its own reference. Coordination is a statement about sources, so a record
+/// that resolves to none cannot take part.
+fn resolve_source(graph: &Graph, record: &EvidenceRecord) -> Result<SourceId, GraphError> {
+    record
+        .source_id()
+        .cloned()
+        .or_else(|| {
+            record
+                .observation_id()
+                .and_then(|id| graph.epistemic_stores().observations.observation_by_id(id))
+                .map(|observation| observation.source_id().clone())
+        })
+        .or_else(|| SourceId::new(record.source_ref()).ok())
+        .ok_or_else(|| signal_error("assessed record does not resolve to a source"))
+}
+
+fn normalize(value: &str) -> String {
+    value
+        .split_whitespace()
+        .map(str::to_lowercase)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn tokens(value: &str) -> BTreeSet<String> {
+    value
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(str::to_lowercase)
+        .collect()
+}
+
+/// Build one finding with its records, their distinct sources, the measurement,
+/// and the attribution of every instrument that reported it.
+fn build_finding(
+    signal: CampaignSignal,
+    scope: &SignalScope,
+    members: &[&AssessedRecord<'_>],
+    measurement: &str,
+) -> CampaignSignalFinding {
+    use sha2::{Digest, Sha256};
+    let evidence_ids: Vec<_> = members
+        .iter()
+        .map(|member| member.feature.evidence_id.clone())
+        .collect();
+    let mut source_ids: Vec<_> = members
+        .iter()
+        .map(|member| member.source.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    source_ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    let attributions: Vec<_> = members
+        .iter()
+        .map(|member| {
+            (
+                member.feature.evidence_id.as_str(),
+                member.feature.attribution.as_str(),
+            )
+        })
+        .collect();
+    let reason = format!(
+        "{CAMPAIGN_SIGNAL_REASON_PREFIX}: {measurement}; attribution={}",
+        serde_json::to_string(&attributions).expect("attributed strings")
+    );
+    let bytes = serde_json::to_vec(&(signal, scope, &evidence_ids, &reason))
+        .expect("coordination signal identity");
+    let group_id = format!(
+        "campaign-signal--{}",
+        Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    );
+    CampaignSignalFinding {
+        signal,
+        group_id,
+        scope: scope.clone(),
+        evidence_ids,
+        source_ids,
+        reason,
+    }
+}
+
+/// Distinct sources behind a member set. Coordination needs at least two: one
+/// source repeating itself is not several sources agreeing.
+fn distinct_sources(members: &[&AssessedRecord<'_>]) -> usize {
+    members
+        .iter()
+        .map(|member| member.source.as_str())
+        .collect::<BTreeSet<_>>()
+        .len()
+}
+
+fn root(parents: &mut [usize], index: usize) -> usize {
+    let mut current = index;
+    while parents[current] != current {
+        parents[current] = parents[parents[current]];
+        current = parents[current];
+    }
+    current
 }
 
 /// Detect coordination signals over the claims of one collection.
@@ -310,7 +491,209 @@ pub fn detect_campaign_signals(
     scope: &SignalScope,
     features: &[CampaignSignalFeatures],
 ) -> Result<Vec<CampaignSignalFinding>, GraphError> {
-    unimplemented!("phase 3")
+    let collection = resolve_scope(graph, scope)?;
+    if features.len() > MAX_ASSESSED_RECORDS {
+        return Err(signal_error(
+            "at most 64 records per coordination assessment",
+        ));
+    }
+    let mut ordered: Vec<&CampaignSignalFeatures> = features.iter().collect();
+    ordered.sort_by(|left, right| left.evidence_id.as_str().cmp(right.evidence_id.as_str()));
+    let mut seen = BTreeSet::new();
+    let mut assessed = Vec::new();
+    for feature in ordered {
+        if !seen.insert(feature.evidence_id.as_str()) {
+            return Err(signal_error("duplicate evidence ID"));
+        }
+        if feature.prompt_artifacts.len() > MAX_METADATA_ITEMS
+            || feature.infrastructure.len() > MAX_METADATA_ITEMS
+        {
+            return Err(signal_error("coordination feature size limit exceeded"));
+        }
+        for text in std::iter::once(&feature.attribution)
+            .chain(feature.prompt_artifacts.iter())
+            .chain(feature.infrastructure.iter())
+            .chain(feature.generation_style_fingerprint.iter())
+        {
+            if text.trim().is_empty()
+                || text.len() > MAX_METADATA_LENGTH
+                || text.chars().any(char::is_control)
+            {
+                return Err(signal_error(
+                    "metadata needs nonblank bounded attributed identities",
+                ));
+            }
+        }
+        let record = graph
+            .evidence_by_id(&feature.evidence_id)
+            .ok_or_else(|| signal_error("unknown evidence"))?;
+        // Scope is the collection, not one claim: a record takes part when any
+        // claim of the collection uses it.
+        if !graph
+            .epistemic_stores()
+            .claims
+            .claim_links()
+            .iter()
+            .any(|link| {
+                collection.claims.contains(link.target_claim_id().as_str())
+                    && link_uses_record(link, record)
+            })
+        {
+            return Err(signal_error(
+                "assessed evidence must be linked to a claim of the collection",
+            ));
+        }
+        assessed.push(AssessedRecord {
+            feature,
+            source: resolve_source(graph, record)?,
+            tokens: tokens(record.payload()),
+        });
+    }
+
+    let mut findings = Vec::new();
+
+    // Shared attributed metadata: one key per artifact, fingerprint or
+    // infrastructure identity, joined across the records that reported it.
+    let mut keyed: BTreeMap<(CampaignSignal, String), Vec<usize>> = BTreeMap::new();
+    for (index, member) in assessed.iter().enumerate() {
+        for artifact in &member.feature.prompt_artifacts {
+            keyed
+                .entry((CampaignSignal::RepeatedPromptArtifact, normalize(artifact)))
+                .or_default()
+                .push(index);
+        }
+        if let Some(fingerprint) = &member.feature.generation_style_fingerprint {
+            keyed
+                .entry((
+                    CampaignSignal::GenerationStyleFingerprint,
+                    normalize(fingerprint),
+                ))
+                .or_default()
+                .push(index);
+        }
+        for infrastructure in &member.feature.infrastructure {
+            keyed
+                .entry((
+                    CampaignSignal::SharedInfrastructure,
+                    normalize(infrastructure),
+                ))
+                .or_default()
+                .push(index);
+        }
+    }
+    for ((signal, key), indices) in keyed {
+        let members: Vec<_> = indices.iter().map(|&index| &assessed[index]).collect();
+        let sources = distinct_sources(&members);
+        if members.len() >= 2 && sources >= 2 {
+            findings.push(build_finding(
+                signal,
+                scope,
+                &members,
+                &format!(
+                    "shared attributed {} \"{key}\" in {} records from {sources} distinct sources",
+                    signal.as_str(),
+                    members.len()
+                ),
+            ));
+        }
+    }
+
+    // Recycled material: measure every cross-source pair, then report one
+    // finding per connected group instead of one per pair.
+    let mut parents: Vec<usize> = (0..assessed.len()).collect();
+    let mut witnesses = Vec::new();
+    for (left, right) in (0..assessed.len())
+        .flat_map(|left| ((left + 1)..assessed.len()).map(move |right| (left, right)))
+    {
+        if assessed[left].source == assessed[right].source
+            || assessed[left].tokens.len() < MIN_REDUNDANCY_TOKENS
+            || assessed[right].tokens.len() < MIN_REDUNDANCY_TOKENS
+        {
+            continue;
+        }
+        let shared = assessed[left]
+            .tokens
+            .intersection(&assessed[right].tokens)
+            .count() as f64;
+        let total = assessed[left].tokens.union(&assessed[right].tokens).count() as f64;
+        let jaccard = shared / total;
+        if jaccard >= CROSS_CONTENT_REDUNDANCY_JACCARD {
+            let (a, b) = (root(&mut parents, left), root(&mut parents, right));
+            parents[b] = a;
+            witnesses.push((left, right, jaccard));
+        }
+    }
+    let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for index in 0..assessed.len() {
+        if witnesses
+            .iter()
+            .any(|(left, right, _)| *left == index || *right == index)
+        {
+            groups
+                .entry(root(&mut parents, index))
+                .or_default()
+                .push(index);
+        }
+    }
+    for indices in groups.into_values() {
+        let members: Vec<_> = indices.iter().map(|&index| &assessed[index]).collect();
+        let sources = distinct_sources(&members);
+        if members.len() < 2 || sources < 2 {
+            continue;
+        }
+        let measured: Vec<_> = witnesses
+            .iter()
+            .filter(|(left, right, _)| indices.contains(left) && indices.contains(right))
+            .map(|(left, right, jaccard)| {
+                format!(
+                    "{}~{}={jaccard:.6}",
+                    assessed[*left].feature.evidence_id.as_str(),
+                    assessed[*right].feature.evidence_id.as_str()
+                )
+            })
+            .collect();
+        findings.push(build_finding(
+            CampaignSignal::CrossContentRedundancy,
+            scope,
+            &members,
+            &format!(
+                "token Jaccard >= {CROSS_CONTENT_REDUNDANCY_JACCARD} across {sources} distinct sources: {}",
+                measured.join(", ")
+            ),
+        ));
+    }
+
+    // Co-membership is recorded as context and excluded from clustering by the
+    // signal itself, so curation can never collapse independence.
+    let co_members: Vec<_> = assessed
+        .iter()
+        .filter(|member| collection.content.contains(member.source.as_str()))
+        .collect();
+    if co_members.len() >= 2 && distinct_sources(&co_members) >= 2 {
+        let sources = distinct_sources(&co_members);
+        findings.push(build_finding(
+            CampaignSignal::NarrativeCoMembership,
+            scope,
+            &co_members,
+            &format!(
+                "{sources} declared content sources of {} {}",
+                scope.kind(),
+                scope.id()
+            ),
+        ));
+    }
+
+    findings.sort_by(|left, right| left.group_id.cmp(&right.group_id));
+    Ok(findings)
+}
+
+/// Whether a link draws on this record, directly or through its observation.
+fn link_uses_record(link: &ClaimLink, record: &EvidenceRecord) -> bool {
+    match link.source() {
+        ClaimLinkSource::Evidence(id) => id == record.id(),
+        ClaimLinkSource::Observation(id) => record.observation_id() == Some(id),
+        ClaimLinkSource::Claim(_) => false,
+    }
 }
 
 impl Graph {
@@ -330,7 +713,31 @@ impl Graph {
         features: &[CampaignSignalFeatures],
         stamp: BitemporalStamp,
     ) -> Result<Vec<CampaignSignalFinding>, GraphError> {
-        unimplemented!("phase 3")
+        // Validate temporal input even when built through permissive deserialization.
+        let validated =
+            BitemporalStamp::new(stamp.valid_from.clone(), stamp.transaction_time.clone())?;
+        if stamp.valid_to.is_some()
+            || stamp.observation_time.is_some()
+            || stamp.publication_time.is_some()
+        {
+            return Err(signal_error(
+                "coordination signals require an open-ended knowledge stamp",
+            ));
+        }
+        let findings = detect_campaign_signals(self, scope, features)?;
+        if findings.is_empty() {
+            return Ok(findings);
+        }
+        let mut evidence = self.evidence_store().clone();
+        for finding in &findings {
+            evidence.retain_campaign_signal(CampaignSignalAnnotation {
+                finding: finding.clone(),
+                stamp: validated.clone(),
+            });
+        }
+        evidence.validate_risk_references()?;
+        self.replace_evidence_store(evidence);
+        Ok(findings)
     }
 
     /// Decide whether an attribution may rest on the cited support.
@@ -351,6 +758,45 @@ impl Graph {
         request: &AttributionRequest,
         as_of: &VerdictAsOf,
     ) -> Result<AttributionAdmissibility, GraphError> {
-        unimplemented!("phase 3")
+        resolve_scope(self, &request.scope)?;
+        if request.cited_signals.is_empty() && request.corroborating_claims.is_empty() {
+            return Ok(AttributionAdmissibility::Refused(
+                AttributionRefusal::NoSupportCited,
+            ));
+        }
+        for cited in &request.cited_signals {
+            let retained = self
+                .evidence_store()
+                .campaign_signal_by_group(cited)
+                .is_some_and(|annotation| annotation.finding.scope() == &request.scope);
+            if !retained {
+                return Ok(AttributionAdmissibility::Refused(
+                    AttributionRefusal::UnknownSignal(cited.clone()),
+                ));
+            }
+        }
+        // A shared production pattern is not authorship. Coordination evidence
+        // can accompany an attribution; it can never carry one.
+        if request.corroborating_claims.is_empty() {
+            return Ok(AttributionAdmissibility::Refused(
+                AttributionRefusal::CoordinationSignalsOnly,
+            ));
+        }
+        for claim in &request.corroborating_claims {
+            self.epistemic_stores().claims.claim_by_id(claim)?;
+            let supported = self
+                .epistemic_stores()
+                .verdicts
+                .verdict_as_of(claim, as_of)
+                .is_some_and(|verdict| verdict.state() == VerdictState::Supported);
+            if !supported {
+                return Ok(AttributionAdmissibility::Refused(
+                    AttributionRefusal::CorroborationNotSupported(claim.clone()),
+                ));
+            }
+        }
+        Ok(AttributionAdmissibility::Admissible {
+            corroborating: request.corroborating_claims.clone(),
+        })
     }
 }
