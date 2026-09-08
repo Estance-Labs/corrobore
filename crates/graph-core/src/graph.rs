@@ -373,6 +373,23 @@ impl Graph {
     ///
     /// Propagates graph construction errors.
     pub fn epistemic_projection(&self) -> Result<Graph, GraphError> {
+        self.project_epistemic_records(false)
+    }
+
+    /// Build the epistemic projection with observation payloads materialized.
+    ///
+    /// Reserved for callers that genuinely need the bytes of every observation.
+    /// Projecting N observations copies N payloads, so a traversal that only
+    /// reads structure should use [`Graph::epistemic_projection`].
+    ///
+    /// # Errors
+    ///
+    /// Propagates graph construction errors.
+    pub fn epistemic_projection_hydrated(&self) -> Result<Graph, GraphError> {
+        self.project_epistemic_records(true)
+    }
+
+    fn project_epistemic_records(&self, hydrate_content: bool) -> Result<Graph, GraphError> {
         use std::collections::HashMap;
 
         use crate::{
@@ -419,14 +436,30 @@ impl Graph {
             }
         }
 
-        // Observations, with the verbatim payload available to reads.
+        // Observations, described by their content rather than carrying it.
         let mut observation_nodes: HashMap<String, NodeId> = HashMap::new();
         for observation in stores.observations.observations() {
             let mut properties = observation.to_property_map();
+            let payload = observation.payload();
             properties.insert(
-                "observation_payload".to_owned(),
-                PropertyValue::String(observation.payload().to_owned()),
+                "observation_content_size".to_owned(),
+                PropertyValue::Integer(i64::try_from(payload.len()).unwrap_or(i64::MAX)),
             );
+            let preview = content_preview(payload);
+            properties.insert(
+                "observation_preview_truncated".to_owned(),
+                PropertyValue::Bool(preview.len() < payload.len()),
+            );
+            properties.insert(
+                "observation_preview".to_owned(),
+                PropertyValue::String(preview.to_owned()),
+            );
+            if hydrate_content {
+                properties.insert(
+                    "observation_payload".to_owned(),
+                    PropertyValue::String(payload.to_owned()),
+                );
+            }
             let node_id = projection.create_node(with_properties(
                 &[EpistemicNodeKind::Observation.canonical_label()],
                 properties,
@@ -1354,6 +1387,25 @@ fn validate_exportable_transition(
         ));
     }
     Ok(())
+}
+
+/// Longest projected preview, in bytes, before truncation.
+const CONTENT_PREVIEW_BYTES: usize = 256;
+
+/// Bounded prefix of projected content, cut on a character boundary.
+///
+/// The preview lets a reader recognize a passage without loading it. It is a
+/// convenience, never evidence: `observation_payload_sha256` remains the
+/// identity of the content.
+fn content_preview(payload: &str) -> &str {
+    if payload.len() <= CONTENT_PREVIEW_BYTES {
+        return payload;
+    }
+    let mut end = CONTENT_PREVIEW_BYTES;
+    while end > 0 && !payload.is_char_boundary(end) {
+        end -= 1;
+    }
+    &payload[..end]
 }
 
 impl Graph {
