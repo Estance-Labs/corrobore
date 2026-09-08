@@ -72,6 +72,10 @@ fn ingest(graph: &mut Graph, documents: &[Document]) -> Result<(), Error> {
     Ok(())
 }
 
+fn counters(inputs: usize, outputs: usize, failures: usize) -> Value {
+    json!({"inputs": inputs, "outputs": outputs, "failures": failures})
+}
+
 fn retrieve(request: &Request) -> Result<Value, Error> {
     let mut graph = Graph::new();
     ingest(&mut graph, &request.corpus)?;
@@ -99,7 +103,10 @@ fn retrieve(request: &Request) -> Result<Value, Error> {
     Ok(json!({
         "schemaVersion": "corrobore-evidence-suite-response-v1",
         "engine": "graph-core",
-        "evidenceIds": ids
+        "evidenceIds": ids,
+        "instrumentation": {
+            "retrieval": counters(1, ids.len(), 0)
+        }
     }))
 }
 
@@ -239,16 +246,34 @@ fn evaluate_claim(request: &Request) -> Result<Value, Error> {
         "sufficient"
     };
 
+    // A document that attached no signal link produced no assertion, so it
+    // counts as an input the extraction stage did not turn into an output.
+    let documents = request.evidence.len();
+    let stanced = request
+        .evidence
+        .iter()
+        .filter(|document| link_kind(&document.stance).is_some())
+        .count();
+    let entities: Vec<String> = entities.into_iter().collect();
+
     Ok(json!({
         "schemaVersion": "corrobore-evidence-suite-response-v1",
         "engine": "graph-core",
         "stages": {
             "extraction": extraction,
-            "entity_resolution": entities.into_iter().collect::<Vec<_>>(),
-            "subgraph_construction": subgraph,
+            "entity_resolution": entities.clone(),
+            "subgraph_construction": subgraph.clone(),
             "evidence_sufficiency": [sufficiency],
             "verifier": [state.clone()],
             "verdict": [state]
+        },
+        "instrumentation": {
+            "extraction": counters(documents, stanced, documents - stanced),
+            "entity_resolution": counters(documents, entities.len(), 0),
+            "subgraph_construction": counters(1, subgraph.len(), 0),
+            "evidence_sufficiency": counters(1, 1, 0),
+            "verifier": counters(1, 1, 0),
+            "verdict": counters(1, 1, 0)
         }
     }))
 }
