@@ -61,6 +61,8 @@ pub struct SourceInput {
     authority_domain: Option<String>,
     acquired_at: Option<TemporalTimestamp>,
     artifact_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    artifact_content: Option<crate::ContentRef>,
     signature: Option<String>,
     parent_source: Option<SourceId>,
     #[serde(
@@ -81,6 +83,7 @@ impl SourceInput {
             authority_domain: None,
             acquired_at: None,
             artifact_sha256: None,
+            artifact_content: None,
             signature: None,
             parent_source: None,
             dependency_signals: crate::SourceDependencySignals::default(),
@@ -114,6 +117,15 @@ impl SourceInput {
     /// Set the SHA-256 digest of the acquired artifact.
     pub fn with_artifact_sha256(mut self, artifact_sha256: impl Into<String>) -> Self {
         self.artifact_sha256 = Some(artifact_sha256.into());
+        self
+    }
+
+    /// Retain the acquired artifact through the content plane.
+    ///
+    /// The digest proves an artifact has not changed; it cannot reproduce it.
+    /// Retention is what survives a URI that rots or later serves other bytes.
+    pub fn with_artifact_content(mut self, artifact_content: crate::ContentRef) -> Self {
+        self.artifact_content = Some(artifact_content);
         self
     }
 
@@ -164,6 +176,17 @@ impl SourceInput {
             ));
         }
 
+        // Retained bytes that are not the declared artifact would misrepresent
+        // what was ingested.
+        if let (Some(digest), Some(content)) =
+            (self.artifact_sha256.as_deref(), &self.artifact_content)
+            && content.sha256() != digest
+        {
+            return Err(GraphError::InvalidPropertyValue(
+                "source artifact_content must match the declared artifact_sha256".to_owned(),
+            ));
+        }
+
         if self.parent_source.as_ref() == Some(&self.id) {
             return Err(GraphError::InvalidPropertyValue(
                 "source parent_source must not reference the source itself".to_owned(),
@@ -186,6 +209,8 @@ pub struct Source {
     authority_domain: Option<String>,
     acquired_at: Option<TemporalTimestamp>,
     artifact_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    artifact_content: Option<crate::ContentRef>,
     signature: Option<String>,
     parent_source: Option<SourceId>,
     #[serde(
@@ -241,6 +266,14 @@ impl Source {
     /// Artifact digest, when known.
     pub fn artifact_sha256(&self) -> Option<&str> {
         self.artifact_sha256.as_deref()
+    }
+
+    /// Reference to the retained artifact, when this source kept one.
+    ///
+    /// Absent is a valid state: retention is not always possible, and claiming
+    /// otherwise would misrepresent what can be audited.
+    pub fn artifact_content(&self) -> Option<&crate::ContentRef> {
+        self.artifact_content.as_ref()
     }
 
     /// Signature reference, when present.
@@ -312,6 +345,23 @@ impl Source {
                 PropertyValue::String(digest.clone()),
             );
         }
+        // The retained artifact is described, never carried.
+        if let Some(content) = &self.artifact_content {
+            put(
+                "source_artifact_content_id",
+                PropertyValue::String(content.content_id().to_owned()),
+            );
+            put(
+                "source_artifact_content_size",
+                PropertyValue::Integer(i64::try_from(content.byte_length()).unwrap_or(i64::MAX)),
+            );
+            if let Some(media_type) = content.media_type() {
+                put(
+                    "source_artifact_media_type",
+                    PropertyValue::String(media_type.to_owned()),
+                );
+            }
+        }
         if let Some(signature) = &self.signature {
             put("source_signature", PropertyValue::String(signature.clone()));
         }
@@ -350,6 +400,7 @@ impl Source {
             && self.authority_domain == input.authority_domain
             && self.acquired_at == input.acquired_at
             && self.artifact_sha256 == input.artifact_sha256
+            && self.artifact_content == input.artifact_content
             && self.signature == input.signature
             && self.parent_source == input.parent_source
             && self.dependency_signals == input.dependency_signals
@@ -608,6 +659,7 @@ impl SourceStore {
             authority_domain: input.authority_domain,
             acquired_at: input.acquired_at,
             artifact_sha256: input.artifact_sha256,
+            artifact_content: input.artifact_content,
             signature: input.signature,
             parent_source: input.parent_source,
             dependency_signals: input.dependency_signals,
