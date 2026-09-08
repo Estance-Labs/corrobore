@@ -127,3 +127,42 @@ fn an_unsupported_operation_or_version_fails() {
     operation["operation"] = json!("guess");
     assert!(evaluate(operation).is_err());
 }
+
+#[test]
+fn retrieval_reports_the_items_it_returned() {
+    let result = evaluate(retrieve_request("Aster operator north relay")).expect("evaluate");
+    let retrieval = &result["instrumentation"]["retrieval"];
+
+    assert_eq!(retrieval["inputs"], 1);
+    assert_eq!(
+        retrieval["outputs"],
+        result["evidenceIds"].as_array().unwrap().len()
+    );
+}
+
+#[test]
+fn extraction_counters_follow_the_workload_rather_than_a_constant() {
+    let one = evaluate(evaluate_request(json!([corpus()[0]]))).expect("evaluate");
+    let two = evaluate(evaluate_request(json!([corpus()[0], corpus()[1]]))).expect("evaluate");
+
+    assert_eq!(one["instrumentation"]["extraction"]["inputs"], 1);
+    assert_eq!(two["instrumentation"]["extraction"]["inputs"], 2);
+}
+
+#[test]
+fn a_document_that_produced_no_assertion_counts_as_a_failed_input() {
+    // The neutral document is ingested but attaches no signal link.
+    let result = evaluate(evaluate_request(json!([corpus()[0], corpus()[2]]))).expect("evaluate");
+    let extraction = &result["instrumentation"]["extraction"];
+
+    assert_eq!(extraction["inputs"], 2);
+    assert_eq!(extraction["outputs"], 1);
+    assert_eq!(extraction["failures"], 1);
+}
+
+#[test]
+fn evaluation_never_reports_the_retrieval_stage_counters() {
+    let result = evaluate(evaluate_request(json!([corpus()[0]]))).expect("evaluate");
+
+    assert!(result["instrumentation"].get("retrieval").is_none());
+}
