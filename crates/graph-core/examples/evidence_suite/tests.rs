@@ -166,11 +166,16 @@ fn a_document_that_legitimately_produced_no_assertion_is_not_a_failure() {
 #[test]
 fn every_stage_reports_a_zero_failure_rate_when_nothing_failed() {
     let result = evaluate(evaluate_request(json!([corpus()[0], corpus()[2]]))).expect("evaluate");
-    let instrumentation = result["instrumentation"].as_object().expect("instrumentation");
+    let instrumentation = result["instrumentation"]
+        .as_object()
+        .expect("instrumentation");
 
     assert!(!instrumentation.is_empty());
     for (stage, counters) in instrumentation {
-        assert_eq!(counters["failures"], 0, "{stage} reported a phantom failure");
+        assert_eq!(
+            counters["failures"], 0,
+            "{stage} reported a phantom failure"
+        );
     }
 }
 

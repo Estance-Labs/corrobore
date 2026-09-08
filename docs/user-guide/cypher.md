@@ -87,7 +87,7 @@ read-only graph in the epistemic vocabulary that any read query can traverse:
 | Label(s) | Record | Key properties |
 | :--- | :--- | :--- |
 | `Source` | `Source` version | `source_id`, `source_version`, `source_uri`, `source_type`, `source_artifact_sha256`, `source_derived_from_legacy` |
-| `Observation` | `Observation` | `observation_id`, `observation_source`, `observation_selector`, `observation_payload`, `observation_modality` |
+| `Observation` | `Observation` | `observation_id`, `observation_source`, `observation_selector`, `observation_modality`, `observation_payload_sha256`, `observation_content_size`, `observation_preview`, `observation_preview_truncated` |
 | `EntityMention` | `EntityMention` | `mention_id`, `mention_observation`, `mention_surface_form`, `mention_offset_start`, `mention_offset_end`, `mention_candidate_entities`, `mention_*` evidence features |
 | `Evidence` | `EvidenceRecord` | `evidence_id`, `evidence_source_ref`, `evidence_source`, `evidence_observation` |
 | `Claim` | `Claim` | `claim_id`, `claim_status`, `claim_statement`, `proposition_*`, `verdict_state`, `verdict_lifecycle_projection`, `verdict_id`, `verification_coverage*` |
@@ -115,9 +115,19 @@ epistemic collection, not a canonical CTI `Campaign` node. See
 ```cypher
 MATCH (c:Claim) RETURN c.claim_id, c.verdict_state, c.claim_status ORDER BY c.claim_id ASC
 MATCH (c:Claim) RETURN c.claim_id, c.verification_coverage, c.verification_coverage_unchecked
-MATCH (o:Observation)-[:SUPPORTS]->(c:Claim) RETURN c.claim_id, o.observation_payload
+MATCH (o:Observation)-[:SUPPORTS]->(c:Claim) RETURN c.claim_id, o.observation_preview
 MATCH (t:StateTransition) RETURN t.transition_claim, t.transition_from_state, t.transition_to_state
 ```
+
+The projection describes observation content instead of carrying it, so
+traversing an observation never costs its payload. `observation_preview` is a
+bounded prefix and `observation_preview_truncated` says whether it was cut; the
+preview is a convenience for recognizing a passage, never evidence.
+`observation_payload_sha256` remains the identity of the content.
+
+`Graph::epistemic_projection_hydrated()` materializes `observation_payload` on
+every observation node. It is reserved for callers that genuinely need the bytes,
+because projecting N observations then copies N payloads.
 
 ### Observation-bound entity mentions (WS-C)
 
