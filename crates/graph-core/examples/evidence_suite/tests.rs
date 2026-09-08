@@ -150,14 +150,28 @@ fn extraction_counters_follow_the_workload_rather_than_a_constant() {
 }
 
 #[test]
-fn a_document_that_produced_no_assertion_counts_as_a_failed_input() {
-    // The neutral document is ingested but attaches no signal link.
+fn a_document_that_legitimately_produced_no_assertion_is_not_a_failure() {
+    // The neutral document is ingested and attaches no signal link, which the
+    // shortfall between inputs and outputs already states. Reporting it as a
+    // failure would let the gate treat a false failure rate as the allowance a
+    // candidate may regress into.
     let result = evaluate(evaluate_request(json!([corpus()[0], corpus()[2]]))).expect("evaluate");
     let extraction = &result["instrumentation"]["extraction"];
 
     assert_eq!(extraction["inputs"], 2);
     assert_eq!(extraction["outputs"], 1);
-    assert_eq!(extraction["failures"], 1);
+    assert_eq!(extraction["failures"], 0);
+}
+
+#[test]
+fn every_stage_reports_a_zero_failure_rate_when_nothing_failed() {
+    let result = evaluate(evaluate_request(json!([corpus()[0], corpus()[2]]))).expect("evaluate");
+    let instrumentation = result["instrumentation"].as_object().expect("instrumentation");
+
+    assert!(!instrumentation.is_empty());
+    for (stage, counters) in instrumentation {
+        assert_eq!(counters["failures"], 0, "{stage} reported a phantom failure");
+    }
 }
 
 #[test]
