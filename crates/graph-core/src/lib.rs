@@ -175,6 +175,10 @@ pub use derived_content::{
     DerivedContent, DerivedContentKind, DerivedContentStore, ExtractorIdentity,
     SpanResolutionError, resolve_derived_span,
 };
+mod hydration;
+pub use hydration::{
+    ContentDisclosure, HydrationError, describe_handle, hydrate_handle, hydrate_handle_range,
+};
 mod cross_branch_scoring;
 mod deterministic_verifiers;
 mod epistemic_stores;
