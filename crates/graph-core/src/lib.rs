@@ -165,6 +165,11 @@ mod content;
 pub use content::{
     ContentHandle, ContentPlacement, ContentRef, ContentStoragePolicy, InlineContent,
 };
+mod content_store;
+pub use content_store::{
+    ContentStatus, ContentStore, ContentStoreError, MemoryObjectStore, ObjectContentStore,
+    ObjectStore,
+};
 mod cross_branch_scoring;
 mod deterministic_verifiers;
 mod epistemic_stores;
