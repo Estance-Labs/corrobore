@@ -170,6 +170,11 @@ pub use content_store::{
     ContentStatus, ContentStore, ContentStoreError, MemoryObjectStore, ObjectContentStore,
     ObjectStore,
 };
+mod derived_content;
+pub use derived_content::{
+    DerivedContent, DerivedContentKind, DerivedContentStore, ExtractorIdentity,
+    SpanResolutionError, resolve_derived_span,
+};
 mod cross_branch_scoring;
 mod deterministic_verifiers;
 mod epistemic_stores;

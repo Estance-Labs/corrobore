@@ -613,6 +613,8 @@ pub enum ImmutableRecordKind {
     EntityMention,
     /// `Source` version.
     Source,
+    /// Content derived from a source artifact by a named extractor.
+    DerivedContent,
     /// `Observation`.
     Observation,
     /// `Verdict`.
@@ -632,6 +634,7 @@ impl ImmutableRecordKind {
             Self::ReconciliationRecord => "reconciliation_record",
             Self::EntityMention => "entity_mention",
             Self::Source => "source",
+            Self::DerivedContent => "derived_content",
             Self::Observation => "observation",
             Self::Verdict => "verdict",
             Self::StateTransition => "state_transition",
