@@ -859,11 +859,15 @@ impl Verifier for ContentHashVerifier {
         let mut comparisons = Vec::new();
         for observation in request.observations() {
             if let Some(recorded) = observation.payload_sha256() {
-                comparisons.push(HashComparison::new(
-                    format!("observation:{}", observation.id().as_str()),
-                    recorded,
-                    observation.payload(),
-                ));
+                let reference = format!("observation:{}", observation.id().as_str());
+                comparisons.push(match observation.payload_text() {
+                    Some(text) => HashComparison::new(reference, recorded, text),
+                    None => HashComparison::from_digest(
+                        reference,
+                        recorded,
+                        observation.content().sha256(),
+                    ),
+                });
             }
         }
         for evidence in request.evidence_records() {
@@ -1088,7 +1092,12 @@ fn identifier_candidates(request: &VerificationRequest<'_>) -> Vec<IdentifierCan
         let EvidenceLocator::RecordPath { path } = selector else {
             continue;
         };
-        let value = selected_payload(observation.payload(), path);
+        // A record path addresses structured text, which offloaded content does
+        // not offer here; the check is skipped rather than passed.
+        let Some(payload) = observation.payload_text() else {
+            continue;
+        };
+        let value = selected_payload(payload, path);
         let Some(kind) = IdentifierKind::from_hint(path).or_else(|| IdentifierKind::infer(&value))
         else {
             continue;
@@ -1371,13 +1380,27 @@ struct HashComparison {
 
 impl HashComparison {
     fn new(reference: String, recorded: &str, payload: &str) -> Self {
-        Self {
+        Self::from_digest(
             reference,
-            recorded: recorded.to_owned(),
-            computed: Sha256::digest(payload.as_bytes())
+            recorded,
+            Sha256::digest(payload.as_bytes())
                 .iter()
                 .map(|byte| format!("{byte:02x}"))
                 .collect(),
+        )
+    }
+
+    /// Compare against a digest that was computed elsewhere.
+    ///
+    /// Offloaded content cannot be hashed by a verifier that does not hold the
+    /// bytes; the content store verifies those on retrieval. What remains
+    /// checkable here is whether the declared digest agrees with the reference
+    /// that names the content.
+    fn from_digest(reference: String, recorded: &str, computed: String) -> Self {
+        Self {
+            reference,
+            recorded: recorded.to_owned(),
+            computed,
         }
     }
 

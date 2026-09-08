@@ -440,25 +440,31 @@ impl Graph {
         let mut observation_nodes: HashMap<String, NodeId> = HashMap::new();
         for observation in stores.observations.observations() {
             let mut properties = observation.to_property_map();
-            let payload = observation.payload();
             properties.insert(
                 "observation_content_size".to_owned(),
-                PropertyValue::Integer(i64::try_from(payload.len()).unwrap_or(i64::MAX)),
+                PropertyValue::Integer(
+                    i64::try_from(observation.content().byte_length()).unwrap_or(i64::MAX),
+                ),
             );
-            let preview = content_preview(payload);
-            properties.insert(
-                "observation_preview_truncated".to_owned(),
-                PropertyValue::Bool(preview.len() < payload.len()),
-            );
-            properties.insert(
-                "observation_preview".to_owned(),
-                PropertyValue::String(preview.to_owned()),
-            );
-            if hydrate_content {
+            // A preview needs the bytes, so offloaded content has none. Its
+            // absence is the honest answer; an empty string would read as
+            // empty content.
+            if let Some(payload) = observation.payload_text() {
+                let preview = content_preview(payload);
                 properties.insert(
-                    "observation_payload".to_owned(),
-                    PropertyValue::String(payload.to_owned()),
+                    "observation_preview_truncated".to_owned(),
+                    PropertyValue::Bool(preview.len() < payload.len()),
                 );
+                properties.insert(
+                    "observation_preview".to_owned(),
+                    PropertyValue::String(preview.to_owned()),
+                );
+                if hydrate_content {
+                    properties.insert(
+                        "observation_payload".to_owned(),
+                        PropertyValue::String(payload.to_owned()),
+                    );
+                }
             }
             let node_id = projection.create_node(with_properties(
                 &[EpistemicNodeKind::Observation.canonical_label()],

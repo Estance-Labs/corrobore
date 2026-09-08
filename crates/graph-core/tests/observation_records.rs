@@ -108,8 +108,8 @@ fn observation_store_creates_record_bound_to_source() {
         })
     );
     assert_eq!(
-        observation.payload(),
-        "APT-K-47 operated the Winter Lantern campaign between January and June."
+        observation.payload_text(),
+        Some("APT-K-47 operated the Winter Lantern campaign between January and June.")
     );
     assert_eq!(observation.modality(), ObservationModality::Text);
     assert_eq!(
@@ -386,7 +386,10 @@ fn evidence_records_lift_into_observations_idempotently() {
         by_offsets.source_id(),
         &source_id("source://report/2026-07-06")
     );
-    assert_eq!(by_offsets.payload(), "span located by byte offsets");
+    assert_eq!(
+        by_offsets.payload_text(),
+        Some("span located by byte offsets")
+    );
     assert_eq!(
         by_offsets.selector(),
         Some(&EvidenceLocator::ByteRange {
