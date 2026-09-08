@@ -161,6 +161,10 @@ pub use candidate_ingestion::{
 };
 mod confidence;
 mod confidence_dimensions;
+mod content;
+pub use content::{
+    ContentHandle, ContentPlacement, ContentRef, ContentStoragePolicy, InlineContent,
+};
 mod cross_branch_scoring;
 mod deterministic_verifiers;
 mod epistemic_stores;
