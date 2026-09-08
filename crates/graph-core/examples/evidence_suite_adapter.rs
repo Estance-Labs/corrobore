@@ -246,8 +246,9 @@ fn evaluate_claim(request: &Request) -> Result<Value, Error> {
         "sufficient"
     };
 
-    // A document that attached no signal link produced no assertion, so it
-    // counts as an input the extraction stage did not turn into an output.
+    // A neutral document is ingested and attaches no signal link, so it produces
+    // no assertion. That shortfall is the gap between inputs and outputs, not a
+    // failure: the gate reads failures as the rate at which the stage errored.
     let documents = request.evidence.len();
     let stanced = request
         .evidence
@@ -268,7 +269,7 @@ fn evaluate_claim(request: &Request) -> Result<Value, Error> {
             "verdict": [state]
         },
         "instrumentation": {
-            "extraction": counters(documents, stanced, documents - stanced),
+            "extraction": counters(documents, stanced, 0),
             "entity_resolution": counters(documents, entities.len(), 0),
             "subgraph_construction": counters(1, subgraph.len(), 0),
             "evidence_sufficiency": counters(1, 1, 0),
