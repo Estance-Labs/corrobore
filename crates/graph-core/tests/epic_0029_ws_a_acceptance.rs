@@ -450,10 +450,10 @@ fn twenty_proposition_report_renders_claim_by_claim_verdicts_and_spans() {
             .observations
             .observation_by_id(links[0].source().observation_id().expect("observation"))
             .expect("observation");
+        let payload = observation.payload_text().expect("inline span");
         assert!(
-            observation.payload().starts_with("Paragraph "),
-            "verbatim span renders: {}",
-            observation.payload()
+            payload.starts_with("Paragraph "),
+            "verbatim span renders: {payload}"
         );
         assert!(
             stores

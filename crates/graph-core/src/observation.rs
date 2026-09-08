@@ -81,7 +81,7 @@ pub struct ObservationInput {
     id: ObservationId,
     source_id: SourceId,
     selector: Option<EvidenceLocator>,
-    payload: String,
+    content: crate::ContentHandle,
     modality: ObservationModality,
     observed_at: Option<TemporalTimestamp>,
     payload_sha256: Option<String>,
@@ -95,11 +95,26 @@ impl ObservationInput {
         payload: impl Into<String>,
         modality: ObservationModality,
     ) -> Self {
+        Self::with_content(
+            id,
+            source_id,
+            crate::ContentHandle::inline(crate::InlineContent::Text(payload.into())),
+            modality,
+        )
+    }
+
+    /// Start an input whose content is held behind a handle.
+    pub fn with_content(
+        id: ObservationId,
+        source_id: SourceId,
+        content: crate::ContentHandle,
+        modality: ObservationModality,
+    ) -> Self {
         Self {
             id,
             source_id,
             selector: None,
-            payload: payload.into(),
+            content,
             modality,
             observed_at: None,
             payload_sha256: None,
@@ -130,7 +145,15 @@ impl ObservationInput {
     ///
     /// [`GraphError::InvalidPropertyValue`] naming the offending field.
     fn validate(&self) -> Result<(), GraphError> {
-        if self.payload.trim().is_empty() {
+        // Content that is nothing is the absence of content, and storing it
+        // would make an empty read indistinguishable from a missing one.
+        let empty = match &self.content {
+            crate::ContentHandle::Inline(crate::InlineContent::Text(text)) => {
+                text.trim().is_empty()
+            }
+            handle => handle.byte_length() == 0,
+        };
+        if empty {
             return Err(GraphError::InvalidPropertyValue(
                 "observation payload must not be empty".to_owned(),
             ));
@@ -157,16 +180,87 @@ impl ObservationInput {
 
 /// One immutable observation.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "ObservationWire", into = "ObservationWire")]
 pub struct Observation {
     id: ObservationId,
     source_id: SourceId,
     selector: Option<EvidenceLocator>,
-    payload: String,
+    content: crate::ContentHandle,
     modality: ObservationModality,
     observed_at: Option<TemporalTimestamp>,
     payload_sha256: Option<String>,
     supersedes: Option<ObservationId>,
     derived_from_legacy: bool,
+}
+
+/// On-disk and on-the-wire shape of an observation.
+///
+/// Inline text is written as `payload`, which is what every store, archive and
+/// audit response written before content handles contains, and what their
+/// readers still expect. Anything else is written as `content`. Reading accepts
+/// either and normalizes, so the engine never holds two representations of the
+/// same thing.
+#[derive(Serialize, Deserialize)]
+struct ObservationWire {
+    id: ObservationId,
+    source_id: SourceId,
+    #[serde(default)]
+    selector: Option<EvidenceLocator>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    content: Option<crate::ContentHandle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    payload: Option<String>,
+    modality: ObservationModality,
+    #[serde(default)]
+    observed_at: Option<TemporalTimestamp>,
+    #[serde(default)]
+    payload_sha256: Option<String>,
+    #[serde(default)]
+    supersedes: Option<ObservationId>,
+    #[serde(default)]
+    derived_from_legacy: bool,
+}
+
+impl From<ObservationWire> for Observation {
+    fn from(wire: ObservationWire) -> Self {
+        let content = wire.content.unwrap_or_else(|| {
+            crate::ContentHandle::inline(crate::InlineContent::Text(
+                wire.payload.unwrap_or_default(),
+            ))
+        });
+        Self {
+            id: wire.id,
+            source_id: wire.source_id,
+            selector: wire.selector,
+            content,
+            modality: wire.modality,
+            observed_at: wire.observed_at,
+            payload_sha256: wire.payload_sha256,
+            supersedes: wire.supersedes,
+            derived_from_legacy: wire.derived_from_legacy,
+        }
+    }
+}
+
+impl From<Observation> for ObservationWire {
+    fn from(observation: Observation) -> Self {
+        let (content, payload) = match observation.content {
+            crate::ContentHandle::Inline(crate::InlineContent::Text(text)) => (None, Some(text)),
+            handle => (Some(handle), None),
+        };
+        Self {
+            id: observation.id,
+            source_id: observation.source_id,
+            selector: observation.selector,
+            content,
+            payload,
+            modality: observation.modality,
+            observed_at: observation.observed_at,
+            payload_sha256: observation.payload_sha256,
+            supersedes: observation.supersedes,
+            derived_from_legacy: observation.derived_from_legacy,
+        }
+    }
 }
 
 impl Observation {
@@ -185,9 +279,20 @@ impl Observation {
         self.selector.as_ref()
     }
 
-    /// Verbatim payload.
-    pub fn payload(&self) -> &str {
-        self.payload.as_str()
+    /// Content of the observation, inline or offloaded.
+    pub fn content(&self) -> &crate::ContentHandle {
+        &self.content
+    }
+
+    /// Verbatim text, when the content travels with the record.
+    ///
+    /// Absent for offloaded content: reading an observation must never
+    /// transfer content, so the text is reached through hydration instead.
+    pub fn payload_text(&self) -> Option<&str> {
+        match &self.content {
+            crate::ContentHandle::Inline(crate::InlineContent::Text(text)) => Some(text.as_str()),
+            _ => None,
+        }
     }
 
     /// Modality.
@@ -272,7 +377,7 @@ impl Observation {
         self.id == input.id
             && self.source_id == input.source_id
             && self.selector == input.selector
-            && self.payload == input.payload
+            && self.content == input.content
             && self.modality == input.modality
             && self.observed_at == input.observed_at
             && self.payload_sha256 == input.payload_sha256
@@ -418,7 +523,7 @@ impl ObservationStore {
             id: input.id,
             source_id: input.source_id,
             selector: input.selector,
-            payload: input.payload,
+            content: input.content,
             modality: input.modality,
             observed_at: input.observed_at,
             payload_sha256: input.payload_sha256,

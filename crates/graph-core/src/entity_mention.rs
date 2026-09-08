@@ -321,7 +321,13 @@ impl EntityMentionInput {
             .map_err(|_| invalid("mention start out of range"))?;
         let end =
             usize::try_from(self.offsets.end).map_err(|_| invalid("mention end out of range"))?;
-        if observation.payload().get(start..end) != Some(self.surface_form.as_str()) {
+        // The surface form is checked against the observation text, so a
+        // mention over offloaded content cannot be validated here and must not
+        // pass by default.
+        let payload = observation.payload_text().ok_or_else(|| {
+            invalid("mention cannot be validated against offloaded observation content")
+        })?;
+        if payload.get(start..end) != Some(self.surface_form.as_str()) {
             return Err(invalid(
                 "mention surface must equal its UTF-8 byte span in the observation payload",
             ));

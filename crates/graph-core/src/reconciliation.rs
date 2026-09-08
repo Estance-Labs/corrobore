@@ -493,13 +493,18 @@ fn resolve(
             let observation = observations
                 .observation_by_id(observation_id)
                 .ok_or_else(|| GraphError::ObservationNotFound(observation_id.clone()))?;
-            if observation.payload().trim().is_empty() {
+            // A cited observation must be readable here, so offloaded content
+            // is refused rather than cited as an empty context.
+            let payload = observation
+                .payload_text()
+                .ok_or_else(|| invalid("cited observation content is not available inline"))?;
+            if payload.trim().is_empty() {
                 return Err(invalid("cited observation is empty"));
             }
             (
                 ReconciliationFeature::SourceContext,
                 observation_id.clone(),
-                Value::String(observation.payload().into()),
+                Value::String(payload.into()),
             )
         }
     };
