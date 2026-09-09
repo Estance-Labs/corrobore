@@ -109,14 +109,17 @@ impl EpistemicStores {
     /// byte for byte what stores written before the content plane contain, so
     /// they must not start announcing a shape they do not hold.
     pub fn declared_schema(&self) -> Option<&'static str> {
-        self.observations
-            .observations()
-            .iter()
-            .any(|observation| {
-                observation.content_policy().is_some()
-                    || matches!(observation.content(), crate::ContentHandle::External(_))
-            })
-            .then_some(EPISTEMIC_SCHEMA_V2)
+        let observation_holds_new = self.observations.observations().iter().any(|observation| {
+            observation.content_policy().is_some()
+                || matches!(observation.content(), crate::ContentHandle::External(_))
+        });
+        let source_holds_new = self.sources.source_ids().into_iter().any(|id| {
+            self.sources
+                .source_versions(id)
+                .iter()
+                .any(|source| source.artifact_content_policy().is_some())
+        });
+        (observation_holds_new || source_holds_new).then_some(EPISTEMIC_SCHEMA_V2)
     }
 
     /// Whether every store is empty.
