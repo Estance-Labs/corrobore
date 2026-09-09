@@ -329,7 +329,10 @@ impl ContentStoragePolicy {
 /// The policy identity travels with the outcome: a configurable threshold that
 /// is not recorded makes a store's layout irreproducible, so a caller can
 /// retain why this content sits where it does.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Deliberately not deserializable: a decision is what [`ingest_content`]
+/// returned, not a shape a caller can assemble to claim a policy it never ran.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContentPlacementDecision {
     handle: ContentHandle,
     placement: ContentPlacement,

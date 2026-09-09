@@ -85,6 +85,7 @@ pub struct ObservationInput {
     modality: ObservationModality,
     observed_at: Option<TemporalTimestamp>,
     payload_sha256: Option<String>,
+    content_policy: Option<String>,
 }
 
 impl ObservationInput {
@@ -104,6 +105,9 @@ impl ObservationInput {
     }
 
     /// Start an input whose content is held behind a handle.
+    ///
+    /// Offloaded content additionally needs the policy that placed it, so use
+    /// [`ObservationInput::with_placement`] for anything a store holds.
     pub fn with_content(
         id: ObservationId,
         source_id: SourceId,
@@ -118,6 +122,25 @@ impl ObservationInput {
             modality,
             observed_at: None,
             payload_sha256: None,
+            content_policy: None,
+        }
+    }
+
+    /// Start an input from content the engine has just placed.
+    ///
+    /// The decision carries the policy version, so the record keeps what
+    /// explains its own layout rather than leaving it to be re-derived from
+    /// whichever threshold is current when the graph is read.
+    pub fn with_placement(
+        id: ObservationId,
+        source_id: SourceId,
+        placement: crate::ContentPlacementDecision,
+        modality: ObservationModality,
+    ) -> Self {
+        let content_policy = placement.policy_version().to_owned();
+        Self {
+            content_policy: Some(content_policy),
+            ..Self::with_content(id, source_id, placement.into_handle(), modality)
         }
     }
 
@@ -159,6 +182,17 @@ impl ObservationInput {
             ));
         }
 
+        // Content in a store that no policy was asked about leaves the record
+        // unable to say why it lives there.
+        if matches!(self.content, crate::ContentHandle::External(_))
+            && self.content_policy.is_none()
+        {
+            return Err(GraphError::InvalidPropertyValue(
+                "observation with offloaded content must retain the storage policy that placed it"
+                    .to_owned(),
+            ));
+        }
+
         if let Some(digest) = self.payload_sha256.as_deref()
             && !(digest.len() == 64
                 && digest
@@ -191,6 +225,7 @@ pub struct Observation {
     payload_sha256: Option<String>,
     supersedes: Option<ObservationId>,
     derived_from_legacy: bool,
+    content_policy: Option<String>,
 }
 
 /// On-disk and on-the-wire shape of an observation.
@@ -219,6 +254,8 @@ struct ObservationWire {
     supersedes: Option<ObservationId>,
     #[serde(default)]
     derived_from_legacy: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    content_policy: Option<String>,
 }
 
 impl From<ObservationWire> for Observation {
@@ -238,6 +275,7 @@ impl From<ObservationWire> for Observation {
             payload_sha256: wire.payload_sha256,
             supersedes: wire.supersedes,
             derived_from_legacy: wire.derived_from_legacy,
+            content_policy: wire.content_policy,
         }
     }
 }
@@ -259,6 +297,7 @@ impl From<Observation> for ObservationWire {
             payload_sha256: observation.payload_sha256,
             supersedes: observation.supersedes,
             derived_from_legacy: observation.derived_from_legacy,
+            content_policy: observation.content_policy,
         }
     }
 }
@@ -282,6 +321,11 @@ impl Observation {
     /// Content of the observation, inline or offloaded.
     pub fn content(&self) -> &crate::ContentHandle {
         &self.content
+    }
+
+    /// Version of the storage policy that placed this content, when one did.
+    pub fn content_policy(&self) -> Option<&str> {
+        self.content_policy.as_deref()
     }
 
     /// Verbatim text, when the content travels with the record.
@@ -381,6 +425,7 @@ impl Observation {
             && self.modality == input.modality
             && self.observed_at == input.observed_at
             && self.payload_sha256 == input.payload_sha256
+            && self.content_policy == input.content_policy
     }
 }
 
@@ -529,6 +574,7 @@ impl ObservationStore {
             payload_sha256: input.payload_sha256,
             supersedes,
             derived_from_legacy,
+            content_policy: input.content_policy,
         });
 
         Ok(id)
