@@ -183,7 +183,10 @@ See [HTTP Server](http-server.md#post-v1stixvalidate) for payloads and status be
 STIX and FIMI documents include `x_corrobore_audit_archive` when an emitted record
 has a governed claim. The extension uses schema `corrobore-claim-audit-v1` and
 contains selected `claim_ids`, their complete `audits`, and a version-preserving
-`snapshot` of the records needed to reconstruct those audits. The snapshot is the
+`snapshot` of the records needed to reconstruct those audits. An archive whose
+observations carry offloaded content or a retained storage policy declares
+`corrobore-claim-audit-v2` instead, because it holds fields v1 never described;
+both versions import. The snapshot is the
 source of truth; the included views make the trace readable without running
 Corrobore and are checked against the restored records on import.
 

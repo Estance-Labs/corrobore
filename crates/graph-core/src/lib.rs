@@ -304,7 +304,7 @@ pub use deterministic_verifiers::{
     SchemaConstraintVerifier, TEMPORAL_ORDERING_VERIFIER_ID, TEMPORAL_ORDERING_VERIFIER_VERSION,
     TemporalOrderingVerifier,
 };
-pub use epistemic_stores::EpistemicStores;
+pub use epistemic_stores::{EPISTEMIC_SCHEMA_V2, EpistemicStores};
 pub use epistemic_validators::{
     CLAIM_LIFECYCLE_WITHOUT_OBSERVATION_PATH_CODE, EpistemicValidationInputs,
     validate_claim_reachability, validate_graph_epistemics,
