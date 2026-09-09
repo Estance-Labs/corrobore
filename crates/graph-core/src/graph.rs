@@ -446,6 +446,12 @@ impl Graph {
                     i64::try_from(observation.content().byte_length()).unwrap_or(i64::MAX),
                 ),
             );
+            if let Some(policy) = observation.content_policy() {
+                properties.insert(
+                    "observation_content_policy".to_owned(),
+                    PropertyValue::String(policy.to_owned()),
+                );
+            }
             // A preview needs the bytes, so offloaded content has none. Its
             // absence is the honest answer; an empty string would read as
             // empty content.

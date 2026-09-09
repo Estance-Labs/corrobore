@@ -25,13 +25,21 @@
 //! with `payload: String` must still read, and its observations must behave
 //! exactly as before.
 use graph_core::{
-    ContentHandle, ContentStore, EpistemicStores, EvidenceSourceType, Graph, InlineContent,
-    MemoryObjectStore, ObjectContentStore, Observation, ObservationId, ObservationInput,
-    ObservationModality, ObservationStore, PropertyValue, SourceId, SourceInput, SourceStore,
+    ContentHandle, ContentPlacementDecision, ContentStoragePolicy, EpistemicStores,
+    EvidenceSourceType, Graph, InlineContent, MemoryObjectStore, ObjectContentStore, Observation,
+    ObservationId, ObservationInput, ObservationModality, ObservationStore, PropertyValue,
+    SourceId, SourceInput, SourceStore, ingest_content,
 };
 use sha2::{Digest, Sha256};
 
 const SPAN: &str = "Aster operates the North Relay.";
+
+/// Place `bytes` under a policy narrow enough that anything is offloaded.
+fn offloaded(bytes: &[u8]) -> ContentPlacementDecision {
+    let policy = ContentStoragePolicy::new("content-policy-test", 1).expect("policy");
+    let mut content = ObjectContentStore::new("memory", MemoryObjectStore::default());
+    ingest_content(bytes, Some("text/plain"), &policy, &mut content).expect("ingest")
+}
 
 fn digest(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
@@ -161,16 +169,11 @@ fn a_text_observation_is_still_created_from_a_string() {
 
 #[test]
 fn an_observation_can_hold_offloaded_content() {
-    let mut content = ObjectContentStore::new("memory", MemoryObjectStore::default());
-    let reference = content
-        .store(SPAN.as_bytes(), Some("text/plain"))
-        .expect("store");
-
     let store = store_with(
-        ObservationInput::with_content(
+        ObservationInput::with_placement(
             observation_id("observation--span"),
             source_id(),
-            ContentHandle::External(reference.clone()),
+            offloaded(SPAN.as_bytes()),
             ObservationModality::Text,
         )
         .with_payload_sha256(digest(SPAN.as_bytes())),
@@ -180,31 +183,34 @@ fn an_observation_can_hold_offloaded_content() {
     // Reading metadata must never transfer offloaded content.
     assert!(observation.payload_text().is_none());
     assert_eq!(observation.content().byte_length(), SPAN.len() as u64);
-    assert_eq!(observation.content().sha256(), reference.sha256());
+    assert_eq!(observation.content().sha256(), digest(SPAN.as_bytes()));
 }
 
 #[test]
 fn a_round_trip_preserves_whether_content_was_inline_or_offloaded() {
-    let mut content = ObjectContentStore::new("memory", MemoryObjectStore::default());
-    let reference = content
-        .store(SPAN.as_bytes(), Some("text/plain"))
-        .expect("store");
-
-    for handle in [
-        ContentHandle::inline(InlineContent::Text(SPAN.to_owned())),
-        ContentHandle::External(reference),
-    ] {
-        let store = store_with(ObservationInput::with_content(
+    let inputs = [
+        ObservationInput::with_content(
             observation_id("observation--span"),
             source_id(),
-            handle.clone(),
+            ContentHandle::inline(InlineContent::Text(SPAN.to_owned())),
             ObservationModality::Text,
-        ));
+        ),
+        ObservationInput::with_placement(
+            observation_id("observation--span"),
+            source_id(),
+            offloaded(SPAN.as_bytes()),
+            ObservationModality::Text,
+        ),
+    ];
+
+    for input in inputs {
+        let store = store_with(input);
+        let expected = only(&store).content().clone();
         let encoded = serde_json::to_string(&store).expect("serialize");
         let reopened: ObservationStore = serde_json::from_str(&encoded).expect("reopen");
 
         // Where content lives is a fact about the store, not a rendering choice.
-        assert_eq!(only(&reopened).content(), &handle);
+        assert_eq!(only(&reopened).content(), &expected);
     }
 }
 
@@ -228,16 +234,12 @@ fn an_observation_still_refuses_empty_content() {
 
 #[test]
 fn the_projection_describes_offloaded_content_without_a_preview() {
-    let mut content = ObjectContentStore::new("memory", MemoryObjectStore::default());
-    let reference = content
-        .store(SPAN.as_bytes(), Some("text/plain"))
-        .expect("store");
     let stores = EpistemicStores {
         sources: sources(),
-        observations: store_with(ObservationInput::with_content(
+        observations: store_with(ObservationInput::with_placement(
             observation_id("observation--span"),
             source_id(),
-            ContentHandle::External(reference),
+            offloaded(SPAN.as_bytes()),
             ObservationModality::Text,
         )),
         ..EpistemicStores::default()
@@ -283,14 +285,10 @@ fn inline_text_is_still_written_under_the_field_readers_expect() {
 
 #[test]
 fn offloaded_content_is_written_as_content_rather_than_a_missing_payload() {
-    let mut content = ObjectContentStore::new("memory", MemoryObjectStore::default());
-    let reference = content
-        .store(SPAN.as_bytes(), Some("text/plain"))
-        .expect("store");
-    let store = store_with(ObservationInput::with_content(
+    let store = store_with(ObservationInput::with_placement(
         observation_id("observation--span"),
         source_id(),
-        ContentHandle::External(reference),
+        offloaded(SPAN.as_bytes()),
         ObservationModality::Text,
     ));
 
@@ -305,13 +303,6 @@ fn offloaded_content_is_written_as_content_rather_than_a_missing_payload() {
 
 #[test]
 fn supersession_works_across_inline_and_offloaded_content() {
-    let mut content = ObjectContentStore::new("memory", MemoryObjectStore::default());
-    let reference = content
-        .store(
-            b"Aster no longer operates the North Relay.",
-            Some("text/plain"),
-        )
-        .expect("store");
     let sources = sources();
     let mut observations = ObservationStore::default();
     let first = observations
@@ -329,10 +320,10 @@ fn supersession_works_across_inline_and_offloaded_content() {
     let second = observations
         .supersede_observation(
             &first,
-            ObservationInput::with_content(
+            ObservationInput::with_placement(
                 observation_id("observation--second"),
                 source_id(),
-                ContentHandle::External(reference),
+                offloaded(b"Aster no longer operates the North Relay."),
                 ObservationModality::Text,
             ),
             &sources,
