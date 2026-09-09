@@ -36,6 +36,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{ClaimStore, ObservationStore, SourceStore, VerdictStore, VerificationRecordStore};
 
+/// Bundle shape that can hold a content handle or a retained storage policy.
+pub const EPISTEMIC_SCHEMA_V2: &str = "corrobore-epistemic-v2";
+
 /// The governed evidence stores of one graph.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct EpistemicStores {
@@ -100,6 +103,22 @@ pub struct EpistemicStores {
 }
 
 impl EpistemicStores {
+    /// Shape this bundle actually holds, when it is newer than the original.
+    ///
+    /// `None` means every observation is inline text no policy placed, which is
+    /// byte for byte what stores written before the content plane contain, so
+    /// they must not start announcing a shape they do not hold.
+    pub fn declared_schema(&self) -> Option<&'static str> {
+        self.observations
+            .observations()
+            .iter()
+            .any(|observation| {
+                observation.content_policy().is_some()
+                    || matches!(observation.content(), crate::ContentHandle::External(_))
+            })
+            .then_some(EPISTEMIC_SCHEMA_V2)
+    }
+
     /// Whether every store is empty.
     pub fn is_empty(&self) -> bool {
         self.artifacts.is_empty()

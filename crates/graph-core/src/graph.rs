@@ -63,6 +63,10 @@ pub struct GraphPersistenceSnapshot {
     /// before WS-A stay byte-identical.
     #[serde(default, skip_serializing_if = "EpistemicStores::is_empty")]
     epistemic: EpistemicStores,
+    /// Shape of the bundle, written only when it is newer than the original
+    /// inline-payload shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    epistemic_schema: Option<String>,
 }
 
 /// Global identifier sequence floors carried by a paged graph projection.
@@ -115,6 +119,7 @@ impl Graph {
             next_relationship_version_sequence: self.next_relationship_version_sequence,
             evidence: self.evidence.clone(),
             epistemic: self.epistemic.clone(),
+            epistemic_schema: self.epistemic.declared_schema().map(str::to_owned),
         }
     }
 
@@ -122,6 +127,14 @@ impl Graph {
     pub fn from_persistence_snapshot(
         snapshot: GraphPersistenceSnapshot,
     ) -> Result<Self, GraphError> {
+        // A newer writer may have used fields this reader would drop in silence.
+        if let Some(schema) = snapshot.epistemic_schema.as_deref()
+            && schema != crate::EPISTEMIC_SCHEMA_V2
+        {
+            return Err(GraphError::InvalidPropertyValue(format!(
+                "unsupported epistemic store schema: {schema}"
+            )));
+        }
         snapshot.evidence.validate_risk_references()?;
         snapshot
             .epistemic
@@ -260,6 +273,7 @@ impl Graph {
             next_relationship_version_sequence: sequence_floor.relationship_version,
             evidence: EvidenceRecordStore::new(),
             epistemic: EpistemicStores::default(),
+            epistemic_schema: None,
         };
         Self::from_persistence_snapshot(snapshot)
     }

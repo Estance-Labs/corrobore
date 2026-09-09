@@ -26,6 +26,11 @@ use std::collections::{BTreeMap, HashSet};
 fn invalid(error: impl std::fmt::Display) -> GraphError {
     GraphError::InvalidPropertyValue(error.to_string())
 }
+
+/// Original shape: inline text under `payload`, and nothing else.
+const CLAIM_AUDIT_V1: &str = "corrobore-claim-audit-v1";
+/// Shape that can carry a content handle and the policy that placed it.
+const CLAIM_AUDIT_V2: &str = "corrobore-claim-audit-v2";
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AuditArchive {
@@ -121,7 +126,13 @@ impl Graph {
             ..EpistemicStores::default()
         };
         let archive = AuditArchive {
-            schema: "corrobore-claim-audit-v1".into(),
+            // An archive says what it contains: only the newer shape needs the
+            // newer name, so an unchanged archive keeps telling v1 consumers
+            // the truth.
+            schema: match selected.declared_schema() {
+                Some(_) => CLAIM_AUDIT_V2.into(),
+                None => CLAIM_AUDIT_V1.into(),
+            },
             claim_ids: roots.clone(),
             audits,
             snapshot: self.scoped_audit_snapshot(selected, &evidence, &roots),
@@ -131,7 +142,7 @@ impl Graph {
     /// Restore a validated archive into a new graph, verifying every retained audit.
     pub fn from_claim_audit_archive(archive: &Value) -> Result<Self, GraphError> {
         let archive: AuditArchive = serde_json::from_value(archive.clone()).map_err(invalid)?;
-        if archive.schema != "corrobore-claim-audit-v1" {
+        if archive.schema != CLAIM_AUDIT_V1 && archive.schema != CLAIM_AUDIT_V2 {
             return Err(invalid("unsupported audit archive schema"));
         }
         let graph = Self::from_persistence_snapshot(archive.snapshot)?;
