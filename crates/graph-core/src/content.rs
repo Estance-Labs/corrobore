@@ -323,3 +323,102 @@ impl ContentStoragePolicy {
         }
     }
 }
+
+/// Where the engine placed content, and under which policy.
+///
+/// The policy identity travels with the outcome: a configurable threshold that
+/// is not recorded makes a store's layout irreproducible, so a caller can
+/// retain why this content sits where it does.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContentPlacementDecision {
+    handle: ContentHandle,
+    placement: ContentPlacement,
+    policy_version: String,
+}
+
+impl ContentPlacementDecision {
+    /// Handle naming the content.
+    #[must_use]
+    pub fn handle(&self) -> &ContentHandle {
+        &self.handle
+    }
+
+    /// Consume the decision, keeping only the handle.
+    #[must_use]
+    pub fn into_handle(self) -> ContentHandle {
+        self.handle
+    }
+
+    /// Where the content was placed.
+    #[must_use]
+    pub fn placement(&self) -> ContentPlacement {
+        self.placement
+    }
+
+    /// Identity of the policy that decided.
+    #[must_use]
+    pub fn policy_version(&self) -> &str {
+        &self.policy_version
+    }
+}
+
+/// Ingest content, letting the policy decide where it belongs.
+///
+/// The caller supplies bytes and what they are, never where they should live.
+/// Content the policy keeps inline never reaches the store, so a short span
+/// costs no round trip.
+///
+/// # Errors
+///
+/// Returns [`ContentStoreError::Invalid`] for empty content, and propagates a
+/// store failure rather than falling back to inline: falling back would place
+/// content the policy said to offload, and the record would claim an inline
+/// copy nobody decided to keep.
+pub fn ingest_content<S: crate::ContentStore>(
+    bytes: &[u8],
+    media_type: Option<&str>,
+    policy: &ContentStoragePolicy,
+    store: &mut S,
+) -> Result<ContentPlacementDecision, crate::ContentStoreError> {
+    if bytes.is_empty() {
+        return Err(crate::ContentStoreError::Invalid(
+            "content must not be empty".to_owned(),
+        ));
+    }
+
+    let placement = policy.placement(media_type, bytes.len() as u64);
+    let handle = match placement {
+        ContentPlacement::Inline => ContentHandle::inline(inline_content(bytes, media_type)?),
+        ContentPlacement::Offloaded => ContentHandle::External(store.store(bytes, media_type)?),
+    };
+    Ok(ContentPlacementDecision {
+        handle,
+        placement,
+        policy_version: policy.version().to_owned(),
+    })
+}
+
+/// Interpret inline bytes as what their media type says they are.
+fn inline_content(
+    bytes: &[u8],
+    media_type: Option<&str>,
+) -> Result<InlineContent, crate::ContentStoreError> {
+    let text = || {
+        std::str::from_utf8(bytes).map_err(|_| {
+            crate::ContentStoreError::Invalid(
+                "content declared as text is not valid UTF-8".to_owned(),
+            )
+        })
+    };
+    // Matched by prefix like the policy does, so a parameterised
+    // `application/json; charset=utf-8` is not silently demoted to text.
+    if media_type.is_some_and(|media_type| media_type.starts_with("application/json")) {
+        let value = serde_json::from_slice(bytes).map_err(|error| {
+            crate::ContentStoreError::Invalid(format!(
+                "content declared as JSON does not parse: {error}"
+            ))
+        })?;
+        return Ok(InlineContent::Json(value));
+    }
+    Ok(InlineContent::Text(text()?.to_owned()))
+}
