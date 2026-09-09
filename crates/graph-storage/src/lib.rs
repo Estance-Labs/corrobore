@@ -65,6 +65,7 @@ mod codec;
 mod database_operations;
 mod engine_snapshot;
 mod error;
+mod filesystem_object_store;
 mod graph_pager;
 mod log;
 mod manifest;
@@ -146,6 +147,7 @@ pub use database_operations::{
 };
 pub use engine_snapshot::{load_engine_graph_snapshot, persist_engine_graph_snapshot};
 pub use error::{GraphStorageError, GraphStorageResult};
+pub use filesystem_object_store::FilesystemObjectStore;
 pub use graph_pager::{
     FileBackedGraphPager, FileBackedGraphStore, create_file_backed_graph_pager,
     create_file_backed_graph_store, map_storage_error_to_graph_pager_error,
