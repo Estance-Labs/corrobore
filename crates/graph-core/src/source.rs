@@ -63,6 +63,8 @@ pub struct SourceInput {
     artifact_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     artifact_content: Option<crate::ContentRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    artifact_content_policy: Option<String>,
     signature: Option<String>,
     parent_source: Option<SourceId>,
     #[serde(
@@ -84,6 +86,7 @@ impl SourceInput {
             acquired_at: None,
             artifact_sha256: None,
             artifact_content: None,
+            artifact_content_policy: None,
             signature: None,
             parent_source: None,
             dependency_signals: crate::SourceDependencySignals::default(),
@@ -124,8 +127,17 @@ impl SourceInput {
     ///
     /// The digest proves an artifact has not changed; it cannot reproduce it.
     /// Retention is what survives a URI that rots or later serves other bytes.
-    pub fn with_artifact_content(mut self, artifact_content: crate::ContentRef) -> Self {
-        self.artifact_content = Some(artifact_content);
+    ///
+    /// The decision carries the policy that placed the artifact, so the version
+    /// can say why its bytes live where they do. A source describes its
+    /// artifact and never carries it, so a decision that kept the content
+    /// inline is refused at registration rather than silently dropped.
+    pub fn with_artifact_placement(mut self, placement: crate::ContentPlacementDecision) -> Self {
+        self.artifact_content_policy = Some(placement.policy_version().to_owned());
+        self.artifact_content = match placement.into_handle() {
+            crate::ContentHandle::External(reference) => Some(reference),
+            crate::ContentHandle::Inline(_) => None,
+        };
         self
     }
 
@@ -187,6 +199,22 @@ impl SourceInput {
             ));
         }
 
+        // An artifact in a store no policy was asked about leaves the version
+        // unable to say why its bytes live there.
+        if self.artifact_content.is_some() && self.artifact_content_policy.is_none() {
+            return Err(GraphError::InvalidPropertyValue(
+                "source artifact_content must retain the storage policy that placed it".to_owned(),
+            ));
+        }
+
+        // A source describes its artifact and never carries it, so a policy
+        // that kept the content inline leaves nothing to retain.
+        if self.artifact_content_policy.is_some() && self.artifact_content.is_none() {
+            return Err(GraphError::InvalidPropertyValue(
+                "source artifact retention requires offloaded content".to_owned(),
+            ));
+        }
+
         if self.parent_source.as_ref() == Some(&self.id) {
             return Err(GraphError::InvalidPropertyValue(
                 "source parent_source must not reference the source itself".to_owned(),
@@ -211,6 +239,8 @@ pub struct Source {
     artifact_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     artifact_content: Option<crate::ContentRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    artifact_content_policy: Option<String>,
     signature: Option<String>,
     parent_source: Option<SourceId>,
     #[serde(
@@ -274,6 +304,11 @@ impl Source {
     /// otherwise would misrepresent what can be audited.
     pub fn artifact_content(&self) -> Option<&crate::ContentRef> {
         self.artifact_content.as_ref()
+    }
+
+    /// Version of the storage policy that placed the retained artifact.
+    pub fn artifact_content_policy(&self) -> Option<&str> {
+        self.artifact_content_policy.as_deref()
     }
 
     /// Signature reference, when present.
@@ -362,6 +397,12 @@ impl Source {
                 );
             }
         }
+        if let Some(policy) = &self.artifact_content_policy {
+            put(
+                "source_artifact_content_policy",
+                PropertyValue::String(policy.clone()),
+            );
+        }
         if let Some(signature) = &self.signature {
             put("source_signature", PropertyValue::String(signature.clone()));
         }
@@ -401,6 +442,7 @@ impl Source {
             && self.acquired_at == input.acquired_at
             && self.artifact_sha256 == input.artifact_sha256
             && self.artifact_content == input.artifact_content
+            && self.artifact_content_policy == input.artifact_content_policy
             && self.signature == input.signature
             && self.parent_source == input.parent_source
             && self.dependency_signals == input.dependency_signals
@@ -660,6 +702,7 @@ impl SourceStore {
             acquired_at: input.acquired_at,
             artifact_sha256: input.artifact_sha256,
             artifact_content: input.artifact_content,
+            artifact_content_policy: input.artifact_content_policy,
             signature: input.signature,
             parent_source: input.parent_source,
             dependency_signals: input.dependency_signals,

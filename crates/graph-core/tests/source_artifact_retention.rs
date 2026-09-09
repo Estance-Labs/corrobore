@@ -29,10 +29,11 @@
 //! epistemic judgement, and sharing a stored blob must not touch it.
 use graph_core::{
     BitemporalStamp, ClaimAnalyticalTarget, ClaimId, ClaimInput, ClaimLink, ClaimLinkKind,
-    ClaimLinkSource, ClaimStatement, ClaimStore, ClaimTarget, ContentRef, ContentStore,
-    EvidenceRecordStore, EvidenceSourceType, MemoryObjectStore, ObjectContentStore, ObservationId,
-    ObservationInput, ObservationModality, ObservationStore, PropertyValue, SourceId, SourceInput,
-    SourceStore, TemporalTimestamp, VerdictAsOf,
+    ClaimLinkSource, ClaimStatement, ClaimStore, ClaimTarget, ContentPlacementDecision, ContentRef,
+    ContentStoragePolicy, ContentStore, EvidenceRecordStore, EvidenceSourceType, MemoryObjectStore,
+    ObjectContentStore, ObservationId, ObservationInput, ObservationModality, ObservationStore,
+    PropertyValue, SourceId, SourceInput, SourceStore, TemporalTimestamp, VerdictAsOf,
+    ingest_content,
 };
 use sha2::{Digest, Sha256};
 
@@ -53,6 +54,17 @@ fn content_store() -> ObjectContentStore<MemoryObjectStore> {
     ObjectContentStore::new("memory", MemoryObjectStore::default())
 }
 
+/// Place an artifact under a policy narrow enough that anything is offloaded,
+/// which is the only shape a source version can retain.
+fn placed(
+    bytes: &[u8],
+    media_type: Option<&str>,
+    content: &mut ObjectContentStore<MemoryObjectStore>,
+) -> ContentPlacementDecision {
+    let policy = ContentStoragePolicy::new("content-policy-v1", 1).expect("policy");
+    ingest_content(bytes, media_type, &policy, content).expect("ingest")
+}
+
 fn input(id: &str) -> SourceInput {
     SourceInput::new(
         source_id(id),
@@ -64,16 +76,13 @@ fn input(id: &str) -> SourceInput {
 #[test]
 fn a_source_can_retain_the_artifact_it_was_ingested_from() {
     let mut content = content_store();
-    let reference = content
-        .store(ARTIFACT, Some("application/pdf"))
-        .expect("store");
 
     let mut sources = SourceStore::default();
     sources
         .register_source(
             input("source--report")
                 .with_artifact_sha256(digest(ARTIFACT))
-                .with_artifact_content(reference.clone()),
+                .with_artifact_placement(placed(ARTIFACT, Some("application/pdf"), &mut content)),
         )
         .expect("register");
 
@@ -87,16 +96,13 @@ fn a_source_can_retain_the_artifact_it_was_ingested_from() {
 #[test]
 fn a_retained_artifact_verifies_against_the_digest_the_source_declared() {
     let mut content = content_store();
-    let reference = content
-        .store(ARTIFACT, Some("application/pdf"))
-        .expect("store");
 
     let mut sources = SourceStore::default();
     sources
         .register_source(
             input("source--report")
                 .with_artifact_sha256(digest(ARTIFACT))
-                .with_artifact_content(reference),
+                .with_artifact_placement(placed(ARTIFACT, Some("application/pdf"), &mut content)),
         )
         .expect("register");
 
@@ -112,9 +118,6 @@ fn a_retained_artifact_verifies_against_the_digest_the_source_declared() {
 #[test]
 fn a_retained_artifact_that_contradicts_the_declared_digest_is_refused() {
     let mut content = content_store();
-    let reference = content
-        .store(ARTIFACT, Some("application/pdf"))
-        .expect("store");
 
     let mut sources = SourceStore::default();
     // Retaining bytes under a source that declares a different artifact would
@@ -122,7 +125,7 @@ fn a_retained_artifact_that_contradicts_the_declared_digest_is_refused() {
     let failure = sources.register_source(
         input("source--report")
             .with_artifact_sha256(digest(b"different bytes entirely"))
-            .with_artifact_content(reference),
+            .with_artifact_placement(placed(ARTIFACT, Some("application/pdf"), &mut content)),
     );
 
     assert!(
@@ -151,9 +154,6 @@ fn a_source_may_declare_a_digest_without_retaining_the_artifact() {
 #[test]
 fn retaining_an_artifact_leaves_the_declared_digest_untouched() {
     let mut content = content_store();
-    let reference = content
-        .store(ARTIFACT, Some("application/pdf"))
-        .expect("store");
     let mut sources = SourceStore::default();
 
     sources
@@ -163,7 +163,7 @@ fn retaining_an_artifact_leaves_the_declared_digest_untouched() {
         .register_source(
             input("source--retained")
                 .with_artifact_sha256(digest(ARTIFACT))
-                .with_artifact_content(reference),
+                .with_artifact_placement(placed(ARTIFACT, Some("application/pdf"), &mut content)),
         )
         .expect("register");
 
@@ -259,9 +259,6 @@ fn supporting_clusters(sources: &SourceStore) -> usize {
 fn sharing_a_stored_blob_does_not_make_two_sources_dependent() {
     let mut content = content_store();
     // The same evidence sentence appears in two genuinely independent outlets.
-    let shared = content
-        .store(b"APT28 exploited CVE-2026-0001.", Some("text/plain"))
-        .expect("store");
 
     let mut sources = SourceStore::default();
     for (id, uri, publisher) in [
@@ -272,7 +269,11 @@ fn sharing_a_stored_blob_does_not_make_two_sources_dependent() {
             .register_source(
                 SourceInput::new(source_id(id), uri, EvidenceSourceType::Document)
                     .with_publisher(publisher)
-                    .with_artifact_content(shared.clone()),
+                    .with_artifact_placement(placed(
+                        b"APT28 exploited CVE-2026-0001.",
+                        Some("text/plain"),
+                        &mut content,
+                    )),
             )
             .expect("register");
     }
@@ -321,15 +322,12 @@ fn two_sources_declaring_the_same_artifact_digest_are_still_dependent() {
 #[test]
 fn reading_a_source_never_transfers_the_artifact() {
     let mut content = content_store();
-    let reference = content
-        .store(ARTIFACT, Some("application/pdf"))
-        .expect("store");
     let mut sources = SourceStore::default();
     sources
         .register_source(
             input("source--report")
                 .with_artifact_sha256(digest(ARTIFACT))
-                .with_artifact_content(reference),
+                .with_artifact_placement(placed(ARTIFACT, Some("application/pdf"), &mut content)),
         )
         .expect("register");
 
@@ -364,7 +362,7 @@ fn a_retained_artifact_is_visible_in_the_projection_without_its_bytes() {
         .register_source(
             input("source--report")
                 .with_artifact_sha256(digest(ARTIFACT))
-                .with_artifact_content(reference.clone()),
+                .with_artifact_placement(placed(ARTIFACT, Some("application/pdf"), &mut content)),
         )
         .expect("register");
 
@@ -402,9 +400,6 @@ fn a_source_without_a_retained_artifact_says_nothing_about_one() {
 #[test]
 fn retention_cannot_be_bolted_onto_an_already_registered_version() {
     let mut content = content_store();
-    let reference = content
-        .store(ARTIFACT, Some("application/pdf"))
-        .expect("store");
     let mut sources = SourceStore::default();
 
     sources
@@ -413,7 +408,7 @@ fn retention_cannot_be_bolted_onto_an_already_registered_version() {
     let conflict = sources.register_source(
         input("source--report")
             .with_artifact_sha256(digest(ARTIFACT))
-            .with_artifact_content(reference),
+            .with_artifact_placement(placed(ARTIFACT, Some("application/pdf"), &mut content)),
     );
 
     // A source version is identified by its artifact, so what a version holds
