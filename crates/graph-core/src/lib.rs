@@ -163,7 +163,8 @@ mod confidence;
 mod confidence_dimensions;
 mod content;
 pub use content::{
-    ContentHandle, ContentPlacement, ContentRef, ContentStoragePolicy, InlineContent,
+    ContentHandle, ContentPlacement, ContentPlacementDecision, ContentRef, ContentStoragePolicy,
+    InlineContent, ingest_content,
 };
 mod content_store;
 pub use content_store::{
