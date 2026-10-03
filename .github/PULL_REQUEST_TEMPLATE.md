@@ -12,7 +12,7 @@ Describe the problem and the resulting behavior.
 - [ ] `cargo fmt --all -- --check`
 - [ ] `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`
 - [ ] Relevant workspace, OSS, documentation, and contract tests
-- [ ] No secrets, customer data, generated artifacts, or private EE source added
+- [ ] No secrets, customer data, generated artifacts, or private source added
 
 ## Compatibility and operations
 

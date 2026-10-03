@@ -20,14 +20,8 @@
 // THE SOFTWARE.
 use std::{collections::HashMap, env, fmt, fs, net::IpAddr};
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
-use chrono::{DateTime, Utc};
 use corrobore_engine::MemoryPermissions;
-use ed25519_dalek::pkcs8::DecodePublicKey;
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use uuid::Uuid;
 
 use crate::security::{AuthenticationMode, OperationalEndpointPolicy, SecretSource};
 
@@ -104,16 +98,6 @@ pub struct ServerConfig {
     pub opencti_rate_limit_burst: u32,
     /// Optional directory containing the production explorer build.
     pub web_dir: Option<String>,
-    /// Licensed enterprise modules enabled for this runtime instance.
-    pub licensed_modules: Vec<String>,
-    /// Optional validated client UUID extracted from a signed license PEM.
-    pub license_client_uuid: Option<String>,
-    /// Optional validated client email extracted from a signed license PEM.
-    pub license_client_email: Option<String>,
-    /// Optional validated RFC3339 expiration timestamp extracted from a signed license PEM.
-    pub license_valid_until: Option<String>,
-    /// Optional marker indicating the signed license is tagged as NFR.
-    pub license_is_nfr: Option<bool>,
     /// Runtime graph storage mode.
     pub storage_mode: StorageMode,
     /// Graph storage directory configured for persistent mode.
@@ -128,7 +112,7 @@ pub struct ServerConfig {
     pub storage_max_hot_relationships: u64,
     /// Maximum lightweight adjacency entries resident in a persistent projection.
     pub storage_max_warm_adjacency_entries: u64,
-    /// Trusted root containing enterprise domain provider libraries.
+    /// Trusted root containing native domain provider libraries.
     pub domain_provider_dir: Option<String>,
     /// Deployment manifest describing required provider libraries and hashes.
     pub domain_provider_manifest_file: Option<String>,
@@ -192,11 +176,6 @@ impl fmt::Debug for ServerConfig {
             )
             .field("opencti_rate_limit_burst", &self.opencti_rate_limit_burst)
             .field("web_dir", &self.web_dir)
-            .field("licensed_modules", &self.licensed_modules)
-            .field("license_client_uuid", &self.license_client_uuid)
-            .field("license_client_email", &self.license_client_email)
-            .field("license_valid_until", &self.license_valid_until)
-            .field("license_is_nfr", &self.license_is_nfr)
             .field("storage_mode", &self.storage_mode)
             .field("storage_dir", &self.storage_dir)
             .field("storage_require_fsync", &self.storage_require_fsync)
@@ -738,34 +717,7 @@ impl ServerConfig {
         let (domain_provider_dir, domain_provider_manifest_file) =
             Self::parse_domain_provider_config(vars)?;
 
-        let license_bundle = resolve_license_bundle(vars)?;
-        let (
-            licensed_modules,
-            license_client_uuid,
-            license_client_email,
-            license_valid_until,
-            license_is_nfr,
-        ) = if let Some(bundle) = license_bundle {
-            let claims = validate_signed_license(&bundle.license_pem, &bundle.public_key_pem)?;
-            (
-                claims.modules,
-                Some(claims.client_uuid),
-                Some(claims.client_email),
-                Some(claims.valid_until),
-                Some(claims.is_nfr),
-            )
-        } else {
-            if vars.contains_key("CORROBORE_HTTP_LICENSED_MODULES") {
-                return Err(ConfigError::InvalidEnv {
-                    name: "CORROBORE_HTTP_LICENSED_MODULES",
-                    value:
-                        "deprecated fallback disabled; provide signed license PEM and public key"
-                            .to_owned(),
-                });
-            }
-
-            (Vec::new(), None, None, None, None)
-        };
+        reject_removed_license_variables(vars)?;
 
         Ok(Self {
             host,
@@ -801,11 +753,6 @@ impl ServerConfig {
             opencti_rate_limit_per_second,
             opencti_rate_limit_burst,
             web_dir,
-            licensed_modules,
-            license_client_uuid,
-            license_client_email,
-            license_valid_until,
-            license_is_nfr,
             storage_mode,
             storage_dir,
             storage_require_fsync,
@@ -848,12 +795,6 @@ impl ServerConfig {
             }),
             (None, None) => Ok((None, None)),
         }
-    }
-
-    #[must_use]
-    pub fn is_module_licensed(&self, module: &str) -> bool {
-        let module = module.trim().to_ascii_lowercase();
-        self.licensed_modules.iter().any(|value| value == &module)
     }
 
     fn parse_storage_mode(value: &str) -> Result<StorageMode, ConfigError> {
@@ -953,271 +894,31 @@ fn parse_memory_permissions(
     })
 }
 
-struct LicenseBundle {
-    license_pem: String,
-    public_key_pem: String,
-}
+/// Variables of the signed-license gate Corrobore no longer evaluates.
+const REMOVED_LICENSE_VARIABLES: [&str; 5] = [
+    "CORROBORE_HTTP_LICENSE_PEM",
+    "CORROBORE_HTTP_LICENSE_PEM_FILE",
+    "CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM",
+    "CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM_FILE",
+    "CORROBORE_HTTP_LICENSED_MODULES",
+];
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct LicenseClaims {
-    client_uuid: String,
-    client_email: String,
-    modules: Vec<String>,
-    valid_until: String,
-    is_nfr: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct SignedLicenseClaims {
-    client_uuid: String,
-    client_email: String,
-    modules: Vec<String>,
-    valid_until: String,
-    #[serde(default)]
-    tags: Vec<String>,
-    signature: String,
-}
-
-#[derive(Debug, Serialize)]
-struct UnsignedLicenseClaims<'a> {
-    client_uuid: &'a str,
-    client_email: &'a str,
-    modules: &'a [String],
-    valid_until: &'a str,
-    tags: &'a [String],
-}
-
-fn resolve_license_bundle(
-    vars: &HashMap<String, String>,
-) -> Result<Option<LicenseBundle>, ConfigError> {
-    let inline_license = vars
-        .get("CORROBORE_HTTP_LICENSE_PEM")
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty());
-    let file_license = vars
-        .get("CORROBORE_HTTP_LICENSE_PEM_FILE")
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty());
-
-    let license_pem = match (inline_license, file_license) {
-        (None, None) => return Ok(None),
-        (Some(_), Some(_)) => {
-            return Err(ConfigError::InvalidEnv {
-                name: "CORROBORE_HTTP_LICENSE_PEM",
-                value:
-                    "set only one of CORROBORE_HTTP_LICENSE_PEM or CORROBORE_HTTP_LICENSE_PEM_FILE"
-                        .to_owned(),
-            });
-        }
-        (Some(content), None) => content,
-        (None, Some(path)) => {
-            fs::read_to_string(&path).map_err(|error| ConfigError::InvalidEnv {
-                name: "CORROBORE_HTTP_LICENSE_PEM_FILE",
-                value: format!("{path}: {error}"),
-            })?
-        }
-    };
-
-    let inline_public_key = vars
-        .get("CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM")
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty());
-    let file_public_key = vars
-        .get("CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM_FILE")
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty());
-
-    let public_key_pem = match (inline_public_key, file_public_key) {
-        (None, None) => {
-            return Err(ConfigError::InvalidEnv {
-                name: "CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM",
-                value: "public key PEM is required when CORROBORE_HTTP_LICENSE_PEM is set"
-                    .to_owned(),
-            });
-        }
-        (Some(_), Some(_)) => {
-            return Err(ConfigError::InvalidEnv {
-                name: "CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM",
-                value: "set only one of CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM or CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM_FILE"
-                    .to_owned(),
-            });
-        }
-        (Some(content), None) => content,
-        (None, Some(path)) => {
-            fs::read_to_string(&path).map_err(|error| ConfigError::InvalidEnv {
-                name: "CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM_FILE",
-                value: format!("{path}: {error}"),
-            })?
-        }
-    };
-
-    Ok(Some(LicenseBundle {
-        license_pem,
-        public_key_pem,
-    }))
-}
-
-fn validate_signed_license(
-    license_pem: &str,
-    public_key_pem: &str,
-) -> Result<LicenseClaims, ConfigError> {
-    let license_bytes = decode_pem_block(license_pem, "CORROBORE LICENSE")?;
-    let signed: SignedLicenseClaims =
-        serde_json::from_slice(&license_bytes).map_err(|error| ConfigError::InvalidEnv {
-            name: "CORROBORE_HTTP_LICENSE_PEM",
-            value: format!("invalid license payload json: {error}"),
-        })?;
-
-    let client_uuid = signed.client_uuid.trim().to_owned();
-    Uuid::parse_str(&client_uuid).map_err(|error| ConfigError::InvalidEnv {
-        name: "CORROBORE_HTTP_LICENSE_PEM",
-        value: format!("invalid client_uuid: {error}"),
-    })?;
-
-    let client_email = signed.client_email.trim().to_ascii_lowercase();
-    if !is_email_like(&client_email) {
-        return Err(ConfigError::InvalidEnv {
-            name: "CORROBORE_HTTP_LICENSE_PEM",
-            value: "invalid client_email".to_owned(),
-        });
-    }
-
-    let modules = normalize_modules(signed.modules);
-    let valid_until = parse_and_validate_license_expiry(&signed.valid_until)?;
-    let tags = normalize_tags(signed.tags);
-    let canonical = UnsignedLicenseClaims {
-        client_uuid: &client_uuid,
-        client_email: &client_email,
-        modules: &modules,
-        valid_until: &valid_until,
-        tags: &tags,
-    };
-    let canonical_bytes =
-        serde_json::to_vec(&canonical).map_err(|error| ConfigError::InvalidEnv {
-            name: "CORROBORE_HTTP_LICENSE_PEM",
-            value: format!("unable to serialize license payload: {error}"),
-        })?;
-
-    let signature_bytes =
-        STANDARD
-            .decode(signed.signature.trim())
-            .map_err(|error| ConfigError::InvalidEnv {
-                name: "CORROBORE_HTTP_LICENSE_PEM",
-                value: format!("invalid signature encoding: {error}"),
-            })?;
-    let signature =
-        Signature::from_slice(&signature_bytes).map_err(|error| ConfigError::InvalidEnv {
-            name: "CORROBORE_HTTP_LICENSE_PEM",
-            value: format!("invalid signature bytes: {error}"),
-        })?;
-
-    let public_key_der = decode_pem_block(public_key_pem, "PUBLIC KEY").map_err(|error| {
-        ConfigError::InvalidEnv {
-            name: "CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM",
-            value: match error {
-                ConfigError::InvalidEnv { value, .. } => value,
-                _ => "invalid public key pem".to_owned(),
-            },
-        }
-    })?;
-
-    let verifying_key =
-        VerifyingKey::from_public_key_der(public_key_der.as_slice()).map_err(|error| {
-            ConfigError::InvalidEnv {
-                name: "CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM",
-                value: format!("invalid public key der: {error}"),
-            }
-        })?;
-
-    verifying_key
-        .verify(&canonical_bytes, &signature)
-        .map_err(|_| ConfigError::InvalidEnv {
-            name: "CORROBORE_HTTP_LICENSE_PEM",
-            value: "license signature verification failed".to_owned(),
-        })?;
-
-    Ok(LicenseClaims {
-        client_uuid,
-        client_email,
-        modules,
-        valid_until,
-        is_nfr: tags.iter().any(|tag| tag == "nfr"),
-    })
-}
-
-fn decode_pem_block(text: &str, label: &str) -> Result<Vec<u8>, ConfigError> {
-    let begin = format!("-----BEGIN {label}-----");
-    let end = format!("-----END {label}-----");
-    let trimmed = text.trim();
-    let start = trimmed
-        .find(&begin)
-        .ok_or_else(|| ConfigError::InvalidEnv {
-            name: "CORROBORE_HTTP_LICENSE_PEM",
-            value: format!("missing {begin}"),
-        })?;
-    let tail = &trimmed[start + begin.len()..];
-    let stop = tail.find(&end).ok_or_else(|| ConfigError::InvalidEnv {
-        name: "CORROBORE_HTTP_LICENSE_PEM",
-        value: format!("missing {end}"),
-    })?;
-    let body = tail[..stop].lines().map(str::trim).collect::<String>();
-
-    STANDARD
-        .decode(body)
-        .map_err(|error| ConfigError::InvalidEnv {
-            name: "CORROBORE_HTTP_LICENSE_PEM",
-            value: format!("invalid pem content: {error}"),
-        })
-}
-
-fn is_email_like(value: &str) -> bool {
-    let Some((local, domain)) = value.split_once('@') else {
-        return false;
-    };
-
-    !local.trim().is_empty()
-        && domain.contains('.')
-        && !domain.starts_with('.')
-        && !domain.ends_with('.')
-}
-
-fn normalize_modules(modules: Vec<String>) -> Vec<String> {
-    let mut modules = modules
+/// Fails startup when a license variable is still set. Corrobore carries a
+/// single license and gates no module, so a leftover variable from a
+/// signed-license deployment is a configuration error, not a no-op: ignoring
+/// it would let an operator believe a license gate is in force.
+fn reject_removed_license_variables(vars: &HashMap<String, String>) -> Result<(), ConfigError> {
+    match REMOVED_LICENSE_VARIABLES
         .into_iter()
-        .map(|entry| entry.trim().to_ascii_lowercase())
-        .filter(|entry| !entry.is_empty())
-        .collect::<Vec<_>>();
-    modules.sort();
-    modules.dedup();
-    modules
-}
-
-fn normalize_tags(tags: Vec<String>) -> Vec<String> {
-    let mut tags = tags
-        .into_iter()
-        .map(|entry| entry.trim().to_ascii_lowercase())
-        .filter(|entry| !entry.is_empty())
-        .collect::<Vec<_>>();
-    tags.sort();
-    tags.dedup();
-    tags
-}
-
-fn parse_and_validate_license_expiry(value: &str) -> Result<String, ConfigError> {
-    let raw = value.trim();
-    let parsed = DateTime::parse_from_rfc3339(raw).map_err(|error| ConfigError::InvalidEnv {
-        name: "CORROBORE_HTTP_LICENSE_PEM",
-        value: format!("invalid valid_until: {error}"),
-    })?;
-    let valid_until = parsed.with_timezone(&Utc);
-    if valid_until <= Utc::now() {
-        return Err(ConfigError::InvalidEnv {
-            name: "CORROBORE_HTTP_LICENSE_PEM",
-            value: format!("license expired at {}", valid_until.to_rfc3339()),
-        });
+        .find(|name| vars.contains_key(*name))
+    {
+        Some(name) => Err(ConfigError::InvalidEnv {
+            name,
+            value: "license-gated modules are not part of Corrobore; remove this variable"
+                .to_owned(),
+        }),
+        None => Ok(()),
     }
-
-    Ok(raw.to_owned())
 }
 
 fn parse_u16(name: &'static str, value: &str) -> Result<u16, ConfigError> {
@@ -1283,16 +984,7 @@ fn parse_positive_usize(name: &'static str, value: &str) -> Result<usize, Config
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::HashMap,
-        fs,
-        time::{SystemTime, UNIX_EPOCH},
-    };
-
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
-    use ed25519_dalek::pkcs8::EncodePublicKey;
-    use ed25519_dalek::{Signer, SigningKey};
-    use serde_json::json;
+    use std::collections::HashMap;
 
     use super::{ConfigError, ServerConfig, StorageMode};
 
@@ -1336,11 +1028,6 @@ mod tests {
         assert_eq!(config.opencti_rate_limit_per_second, 50);
         assert_eq!(config.opencti_rate_limit_burst, 200);
         assert_eq!(config.web_dir, None);
-        assert!(config.licensed_modules.is_empty());
-        assert_eq!(config.license_client_uuid, None);
-        assert_eq!(config.license_client_email, None);
-        assert_eq!(config.license_valid_until, None);
-        assert_eq!(config.license_is_nfr, None);
         assert_eq!(config.storage_mode, StorageMode::Ephemeral);
         assert_eq!(config.storage_dir, None);
         assert_eq!(config.storage_max_hot_nodes, 16_384);
@@ -1612,272 +1299,39 @@ mod tests {
         assert_eq!(config.web_dir.as_deref(), Some("web/dist"));
     }
 
+    /// Corrobore carries a single license and evaluates no license claim. A
+    /// variable left over from a signed-license deployment must stop startup
+    /// with a pointer to the variable, never be ignored: an ignored variable
+    /// would let an operator believe a license gate is in force.
     #[test]
-    fn config_contract_rejects_legacy_licensed_modules_fallback() {
-        let mut vars = HashMap::new();
-        vars.insert(
-            "CORROBORE_HTTP_AUTH_TOKEN".to_owned(),
-            "token-123".to_owned(),
-        );
-        vars.insert(
-            "CORROBORE_HTTP_LICENSED_MODULES".to_owned(),
-            " cti, crisis,cti ,fimi ".to_owned(),
-        );
+    fn config_contract_rejects_removed_license_variables() {
+        for name in [
+            "CORROBORE_HTTP_LICENSE_PEM",
+            "CORROBORE_HTTP_LICENSE_PEM_FILE",
+            "CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM",
+            "CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM_FILE",
+            "CORROBORE_HTTP_LICENSED_MODULES",
+        ] {
+            let vars = HashMap::from([
+                (
+                    "CORROBORE_HTTP_AUTH_TOKEN".to_owned(),
+                    "token-123".to_owned(),
+                ),
+                (name.to_owned(), "cti".to_owned()),
+            ]);
 
-        let error = ServerConfig::from_map(&vars).expect_err("legacy fallback should be rejected");
+            let error = ServerConfig::from_map(&vars)
+                .expect_err("a removed license variable must fail startup");
 
-        assert_eq!(
-            error,
-            ConfigError::InvalidEnv {
-                name: "CORROBORE_HTTP_LICENSED_MODULES",
-                value: "deprecated fallback disabled; provide signed license PEM and public key"
-                    .to_owned(),
-            }
-        );
-    }
-
-    #[test]
-    fn config_contract_validates_signed_license_pem_claims() {
-        let signing = SigningKey::from_bytes(&[7_u8; 32]);
-        let verifying_pem = public_key_pem(&signing.verifying_key());
-
-        let canonical = signable_payload(
-            "11111111-2222-4333-8444-555555555555",
-            "security@example.com",
-            vec!["fimi".to_owned(), "cti".to_owned(), "cti".to_owned()],
-            "2099-01-01T00:00:00Z",
-            vec!["NFR".to_owned()],
-        );
-        let signature = signing.sign(&canonical);
-
-        let signed = json!({
-            "client_uuid": "11111111-2222-4333-8444-555555555555",
-            "client_email": "security@example.com",
-            "modules": ["fimi", "cti", "cti"],
-            "valid_until": "2099-01-01T00:00:00Z",
-            "tags": ["NFR"],
-            "signature": STANDARD.encode(signature.to_bytes())
-        });
-
-        let license_json = serde_json::to_vec(&signed).expect("license json should serialize");
-        let license_pem = format!(
-            "-----BEGIN CORROBORE LICENSE-----\n{}\n-----END CORROBORE LICENSE-----",
-            STANDARD.encode(license_json)
-        );
-
-        let mut vars = HashMap::new();
-        vars.insert(
-            "CORROBORE_HTTP_AUTH_TOKEN".to_owned(),
-            "token-123".to_owned(),
-        );
-        vars.insert("CORROBORE_HTTP_LICENSE_PEM".to_owned(), license_pem);
-        vars.insert(
-            "CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM".to_owned(),
-            verifying_pem,
-        );
-
-        let config = ServerConfig::from_map(&vars).expect("signed license should parse");
-
-        assert_eq!(config.licensed_modules, vec!["cti", "fimi"]);
-        assert_eq!(
-            config.license_client_uuid.as_deref(),
-            Some("11111111-2222-4333-8444-555555555555")
-        );
-        assert_eq!(
-            config.license_client_email.as_deref(),
-            Some("security@example.com")
-        );
-        assert_eq!(
-            config.license_valid_until.as_deref(),
-            Some("2099-01-01T00:00:00Z")
-        );
-        assert_eq!(config.license_is_nfr, Some(true));
-    }
-
-    #[test]
-    fn config_contract_rejects_signed_license_with_invalid_signature() {
-        let signing = SigningKey::from_bytes(&[9_u8; 32]);
-        let verifying_pem = public_key_pem(&signing.verifying_key());
-
-        let signed = json!({
-            "client_uuid": "11111111-2222-4333-8444-555555555555",
-            "client_email": "security@example.com",
-            "modules": ["cti"],
-            "valid_until": "2099-01-01T00:00:00Z",
-            "tags": [],
-            "signature": STANDARD.encode([0_u8; 64])
-        });
-
-        let license_json = serde_json::to_vec(&signed).expect("license json should serialize");
-        let license_pem = format!(
-            "-----BEGIN CORROBORE LICENSE-----\n{}\n-----END CORROBORE LICENSE-----",
-            STANDARD.encode(license_json)
-        );
-
-        let mut vars = HashMap::new();
-        vars.insert(
-            "CORROBORE_HTTP_AUTH_TOKEN".to_owned(),
-            "token-123".to_owned(),
-        );
-        vars.insert("CORROBORE_HTTP_LICENSE_PEM".to_owned(), license_pem);
-        vars.insert(
-            "CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM".to_owned(),
-            verifying_pem,
-        );
-
-        let error = ServerConfig::from_map(&vars).expect_err("invalid signature should fail");
-        assert_eq!(
-            error,
-            ConfigError::InvalidEnv {
-                name: "CORROBORE_HTTP_LICENSE_PEM",
-                value: "license signature verification failed".to_owned(),
-            }
-        );
-    }
-
-    #[test]
-    fn config_contract_rejects_signed_license_without_public_key() {
-        let mut vars = HashMap::new();
-        vars.insert(
-            "CORROBORE_HTTP_AUTH_TOKEN".to_owned(),
-            "token-123".to_owned(),
-        );
-        vars.insert(
-            "CORROBORE_HTTP_LICENSE_PEM".to_owned(),
-            "-----BEGIN CORROBORE LICENSE-----\nZm9v\n-----END CORROBORE LICENSE-----".to_owned(),
-        );
-
-        let error = ServerConfig::from_map(&vars).expect_err("public key is mandatory");
-        assert_eq!(
-            error,
-            ConfigError::InvalidEnv {
-                name: "CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM",
-                value: "public key PEM is required when CORROBORE_HTTP_LICENSE_PEM is set"
-                    .to_owned(),
-            }
-        );
-    }
-
-    #[test]
-    fn config_contract_loads_signed_license_from_files() {
-        let signing = SigningKey::from_bytes(&[11_u8; 32]);
-        let verifying_pem = public_key_pem(&signing.verifying_key());
-
-        let canonical = signable_payload(
-            "66666666-7777-4888-9999-aaaaaaaaaaaa",
-            "ops@example.com",
-            vec!["crisis".to_owned()],
-            "2099-06-01T00:00:00Z",
-            vec![],
-        );
-        let signature = signing.sign(&canonical);
-
-        let signed = json!({
-            "client_uuid": "66666666-7777-4888-9999-aaaaaaaaaaaa",
-            "client_email": "ops@example.com",
-            "modules": ["crisis"],
-            "valid_until": "2099-06-01T00:00:00Z",
-            "tags": [],
-            "signature": STANDARD.encode(signature.to_bytes())
-        });
-        let license_json = serde_json::to_vec(&signed).expect("license json should serialize");
-        let license_pem = format!(
-            "-----BEGIN CORROBORE LICENSE-----\n{}\n-----END CORROBORE LICENSE-----",
-            STANDARD.encode(license_json)
-        );
-
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time should be after epoch")
-            .as_nanos();
-        let tmp = std::env::temp_dir();
-        let license_path = tmp.join(format!("corrobore-license-{nonce}.pem"));
-        let public_key_path = tmp.join(format!("corrobore-license-public-key-{nonce}.pem"));
-        fs::write(&license_path, license_pem).expect("license file should write");
-        fs::write(&public_key_path, verifying_pem).expect("public key file should write");
-
-        let mut vars = HashMap::new();
-        vars.insert(
-            "CORROBORE_HTTP_AUTH_TOKEN".to_owned(),
-            "token-123".to_owned(),
-        );
-        vars.insert(
-            "CORROBORE_HTTP_LICENSE_PEM_FILE".to_owned(),
-            license_path.display().to_string(),
-        );
-        vars.insert(
-            "CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM_FILE".to_owned(),
-            public_key_path.display().to_string(),
-        );
-
-        let config = ServerConfig::from_map(&vars).expect("signed license file should parse");
-        assert_eq!(config.licensed_modules, vec!["crisis"]);
-        assert_eq!(
-            config.license_client_uuid.as_deref(),
-            Some("66666666-7777-4888-9999-aaaaaaaaaaaa")
-        );
-        assert_eq!(
-            config.license_client_email.as_deref(),
-            Some("ops@example.com")
-        );
-        assert_eq!(
-            config.license_valid_until.as_deref(),
-            Some("2099-06-01T00:00:00Z")
-        );
-        assert_eq!(config.license_is_nfr, Some(false));
-
-        let _ = fs::remove_file(license_path);
-        let _ = fs::remove_file(public_key_path);
-    }
-
-    #[test]
-    fn config_contract_rejects_expired_signed_license() {
-        let signing = SigningKey::from_bytes(&[13_u8; 32]);
-        let verifying_pem = public_key_pem(&signing.verifying_key());
-
-        let canonical = signable_payload(
-            "11111111-2222-4333-8444-555555555555",
-            "security@example.com",
-            vec!["cti".to_owned()],
-            "2000-01-01T00:00:00Z",
-            vec![],
-        );
-        let signature = signing.sign(&canonical);
-
-        let signed = json!({
-            "client_uuid": "11111111-2222-4333-8444-555555555555",
-            "client_email": "security@example.com",
-            "modules": ["cti"],
-            "valid_until": "2000-01-01T00:00:00Z",
-            "tags": [],
-            "signature": STANDARD.encode(signature.to_bytes())
-        });
-        let license_json = serde_json::to_vec(&signed).expect("license json should serialize");
-        let license_pem = format!(
-            "-----BEGIN CORROBORE LICENSE-----\n{}\n-----END CORROBORE LICENSE-----",
-            STANDARD.encode(license_json)
-        );
-
-        let vars = HashMap::from([
-            (
-                "CORROBORE_HTTP_AUTH_TOKEN".to_owned(),
-                "token-123".to_owned(),
-            ),
-            ("CORROBORE_HTTP_LICENSE_PEM".to_owned(), license_pem),
-            (
-                "CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM".to_owned(),
-                verifying_pem,
-            ),
-        ]);
-
-        let error = ServerConfig::from_map(&vars).expect_err("expired license should fail");
-        assert_eq!(
-            error,
-            ConfigError::InvalidEnv {
-                name: "CORROBORE_HTTP_LICENSE_PEM",
-                value: "license expired at 2000-01-01T00:00:00+00:00".to_owned(),
-            }
-        );
+            assert_eq!(
+                error,
+                ConfigError::InvalidEnv {
+                    name,
+                    value: "license-gated modules are not part of Corrobore; remove this variable"
+                        .to_owned(),
+                }
+            );
+        }
     }
 
     #[test]
@@ -2119,36 +1573,5 @@ mod tests {
                 ..
             })
         ));
-    }
-
-    fn public_key_pem(verifying_key: &ed25519_dalek::VerifyingKey) -> String {
-        let der = verifying_key
-            .to_public_key_der()
-            .expect("public key der should serialize")
-            .as_bytes()
-            .to_vec();
-        format!(
-            "-----BEGIN PUBLIC KEY-----\n{}\n-----END PUBLIC KEY-----",
-            STANDARD.encode(der)
-        )
-    }
-
-    fn signable_payload(
-        client_uuid: &str,
-        client_email: &str,
-        modules: Vec<String>,
-        valid_until: &str,
-        tags: Vec<String>,
-    ) -> Vec<u8> {
-        let modules = super::normalize_modules(modules);
-        let tags = super::normalize_tags(tags);
-        serde_json::to_vec(&super::UnsignedLicenseClaims {
-            client_uuid,
-            client_email,
-            modules: &modules,
-            valid_until,
-            tags: &tags,
-        })
-        .expect("signable payload should serialize")
     }
 }

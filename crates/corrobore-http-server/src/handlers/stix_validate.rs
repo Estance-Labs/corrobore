@@ -23,10 +23,6 @@ use std::time::Duration;
 use axum::{Json, extract::State};
 use chrono::{SecondsFormat, Utc};
 use corrobore_engine::{EngineError, ExportMode, ExportProfile, StixExportOptions};
-#[cfg(feature = "enterprise-cti")]
-use domain_provider_abi::{
-    DomainName, InvokeRequest, IssueSeverity, ProviderResponseStatus, SCHEMA_V1,
-};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -112,92 +108,53 @@ pub async fn validate_stix(
     let source_mode = parse_source_mode(payload.source.as_deref())?;
 
     if source_mode == "graph" {
-        require_cti_provider(&state)?;
+        return Err(cti_provider_not_distributed("graph-native STIX validation"));
     }
 
     let timeout = Duration::from_millis(state.config.request_timeout_ms);
-    let engine = state.engine.clone();
-    let domain_providers = state.domain_providers.clone();
-
     let workspace_id = payload.workspace_id.clone();
     let session_id = payload.session_id.clone();
     let budget_ref = payload.budget_ref.clone();
-    let snapshot_id = payload.snapshot_id.clone();
-    let source_mode_clone = source_mode.clone();
     let bundle_payload = payload.bundle.clone();
 
-    // Run graph inspection + autofix on the blocking thread pool to avoid
+    // Run structural validation + autofix on the blocking thread pool to avoid
     // starving the async runtime.
-    let (issues, playbooks, corrections) = tokio::time::timeout(
+    let (issues, playbooks, corrected_objects) = tokio::time::timeout(
         timeout,
         tokio::task::spawn_blocking(move || {
-            if source_mode_clone == "bundle" {
-                // --- source=bundle: lightweight structural + field validation ---
-                let bundle = bundle_payload.ok_or_else(|| {
-                    ApiError::bad_request("MISSING_BUNDLE", "bundle is required for source=bundle")
-                })?;
+            let bundle = bundle_payload.ok_or_else(|| {
+                ApiError::bad_request("MISSING_BUNDLE", "bundle is required for source=bundle")
+            })?;
 
-                validate_bundle_shape(&bundle)?;
-                let (issues, playbooks, corrected_objects) =
-                    validate_and_fix_bundle_objects(&bundle);
-                Ok::<_, ApiError>((issues, playbooks, Some(corrected_objects)))
-            } else {
-                // --- source=graph: native domain validation ---
-                let mut engine = engine
-                    .lock()
-                    .map_err(|_| ApiError::internal("STATE_LOCK_FAILED", "engine lock poisoned"))?;
-                engine.hydrate_full_graph().map_err(|error| {
-                    ApiError::internal("GRAPH_HYDRATION_FAILED", error.to_string())
-                })?;
-                let (issues, playbooks) = validate_graph_nodes(
-                    engine.graph(),
-                    snapshot_id.as_deref(),
-                    domain_providers.as_deref(),
-                    true,
-                )?;
-                Ok::<_, ApiError>((issues, playbooks, None))
-            }
+            validate_bundle_shape(&bundle)?;
+            Ok::<_, ApiError>(validate_and_fix_bundle_objects(&bundle))
         }),
     )
     .await
     .map_err(|_| ApiError::timeout("REQUEST_TIMEOUT", "stix validation timeout"))?
     .map_err(|error| ApiError::internal("TASK_JOIN_FAILED", error.to_string()))??;
 
-    // Persist auto-corrected objects when source=bundle produced corrections.
-    let corrections_summary = if source_mode == "bundle" {
-        corrections
-            .as_ref()
-            .map(|objects| summarize_corrections(objects))
-            .filter(|summary| summary.total_corrections > 0)
-    } else {
-        None
-    };
+    let corrections_summary = Some(summarize_corrections(&corrected_objects))
+        .filter(|summary| summary.total_corrections > 0);
 
-    let persistence = if source_mode == "bundle" {
-        if let Some(corrected_objects) = corrections {
-            if !playbooks.is_empty() {
-                let corrected_bundle = serde_json::json!({
-                    "type": "bundle",
-                    "objects": corrected_objects
-                });
-                Some(
-                    import_bundle_with_context(
-                        &state,
-                        corrected_bundle,
-                        workspace_id,
-                        session_id,
-                        budget_ref,
-                    )
-                    .await?,
-                )
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    } else {
+    // Persist auto-corrected objects when a playbook produced corrections.
+    let persistence = if playbooks.is_empty() {
         None
+    } else {
+        let corrected_bundle = serde_json::json!({
+            "type": "bundle",
+            "objects": corrected_objects
+        });
+        Some(
+            import_bundle_with_context(
+                &state,
+                corrected_bundle,
+                workspace_id,
+                session_id,
+                budget_ref,
+            )
+            .await?,
+        )
     };
 
     let has_errors = issues.iter().any(|issue| issue.severity == "error");
@@ -216,196 +173,23 @@ pub async fn validate_stix(
     }))
 }
 
-#[cfg(feature = "enterprise-cti")]
-pub(crate) fn require_cti_provider(
-    state: &AppState,
-) -> Result<&crate::enterprise::registry::DomainProviderRegistry, ApiError> {
-    if !state.config.is_module_licensed("cti") {
-        return Err(ApiError::forbidden(
-            "LICENSE_MODULE_MISSING",
-            "graph-native STIX validation requires a valid cti enterprise license",
-        ));
-    }
-    let provider = state.domain_providers.as_deref().ok_or_else(|| {
-        ApiError::service_unavailable(
-            "DOMAIN_PROVIDER_NOT_READY",
-            "graph-native STIX validation requires a configured CTI provider",
-        )
-    })?;
-    let status = provider.status(DomainName::Cti).ok_or_else(|| {
-        ApiError::service_unavailable(
-            "DOMAIN_PROVIDER_NOT_READY",
-            "graph-native STIX validation requires a loaded CTI provider",
-        )
-    })?;
-    if !status.ready {
-        return Err(ApiError::service_unavailable(
-            "DOMAIN_PROVIDER_NOT_READY",
-            "graph-native STIX validation requires a ready CTI provider",
-        ));
-    }
-    if !status.has_capability("node.validate", SCHEMA_V1) {
-        return Err(ApiError::service_unavailable(
-            "DOMAIN_PROVIDER_CAPABILITY_MISSING",
-            "CTI provider does not expose node.validate/v1",
-        ));
-    }
-    Ok(provider)
-}
-
-#[cfg(not(feature = "enterprise-cti"))]
-pub(crate) fn require_cti_provider(
-    _state: &AppState,
-) -> Result<&crate::enterprise::registry::DomainProviderRegistry, ApiError> {
-    Err(ApiError::forbidden(
+/// Corrobore distributes no CTI domain provider. Graph-native STIX validation
+/// and the STIX export route both require that provider's `node.validate/1`
+/// findings and fail closed without them.
+fn cti_provider_not_distributed(operation: &str) -> ApiError {
+    ApiError::forbidden(
         "FEATURE_NOT_AVAILABLE",
-        "graph-native STIX validation requires enterprise-cti",
-    ))
+        format!(
+            "{operation} requires a CTI domain provider, which is not distributed with Corrobore"
+        ),
+    )
 }
 
 pub(crate) fn collect_cti_export_findings(
-    state: &AppState,
-    graph: &graph_core::Graph,
-) -> Result<Vec<graph_core::ValidationErrorRecord>, ApiError> {
-    let provider = require_cti_provider(state)?;
-    let (issues, _) = validate_graph_nodes(graph, None, Some(provider), false)?;
-    Ok(issues
-        .into_iter()
-        .filter_map(|issue| {
-            let node_id = issue.node_id?;
-            // Preserve legacy provider findings as diagnostics on export only.
-            // The public validation endpoint still uses the original contract.
-            if matches!(
-                issue.code.as_str(),
-                "CTI_CONFIDENCE_REQUIRED" | "CTI_CONFIDENCE_TOO_LOW"
-            ) {
-                return Some(graph_core::ValidationErrorRecord::new(
-                    "EXPORT_LEGACY_CONFIDENCE_DIAGNOSTIC",
-                    graph_core::ValidationErrorSeverity::Warning,
-                    format!(
-                        "{}: {} (display-only criterion; permission is governed by actionability)",
-                        issue.code, issue.message
-                    ),
-                    graph_core::ValidationTarget::node(node_id),
-                ));
-            }
-
-            Some(graph_core::ValidationErrorRecord::new(
-                issue.code,
-                if issue.severity == "error" {
-                    graph_core::ValidationErrorSeverity::Error
-                } else {
-                    graph_core::ValidationErrorSeverity::Warning
-                },
-                issue.message,
-                graph_core::ValidationTarget::node(node_id),
-            ))
-        })
-        .collect())
-}
-
-// ---------------------------------------------------------------------------
-// Graph-native validation (source=graph)
-// ---------------------------------------------------------------------------
-
-#[cfg(feature = "enterprise-cti")]
-fn validate_graph_nodes(
-    graph: &graph_core::Graph,
-    _snapshot_id: Option<&str>,
-    providers: Option<&crate::enterprise::registry::DomainProviderRegistry>,
-    legacy_scalar_validation: bool,
-) -> Result<(Vec<ValidationIssue>, Vec<AppliedPlaybook>), ApiError> {
-    let providers = providers.ok_or_else(|| {
-        ApiError::service_unavailable(
-            "DOMAIN_PROVIDER_NOT_READY",
-            "graph-native STIX validation requires a ready CTI provider",
-        )
-    })?;
-    let nodes = graph
-        .list_nodes()
-        .map_err(|error| ApiError::internal("GRAPH_LIST_FAILED", error.to_string()))?;
-
-    let mut issues = Vec::new();
-
-    for node in &nodes {
-        let labels = node.labels().to_vec();
-        if !graph_core::node_eligible_for_export_profile(&ExportProfile::StixMvp, node) {
-            continue;
-        }
-        let external_id = node
-            .property("stix_id")
-            .or_else(|| node.property("external_id"))
-            .and_then(|value| match value {
-                graph_core::PropertyValue::String(value) => Some(value.clone()),
-                _ => None,
-            })
-            .or_else(|| {
-                node.property("opencti.raw").and_then(|value| match value {
-                    graph_core::PropertyValue::Json(value) => {
-                        value.get("id").and_then(Value::as_str).map(str::to_owned)
-                    }
-                    _ => None,
-                })
-            });
-        let response = providers
-            .invoke(InvokeRequest {
-                schema_version: SCHEMA_V1.to_owned(),
-                request_id: uuid::Uuid::new_v4().to_string(),
-                domain: DomainName::Cti,
-                operation: "node.validate".to_owned(),
-                workspace_id: None,
-                snapshot_id: None,
-                payload: serde_json::json!({
-                    "labels": labels,
-                    "external_id": external_id,
-                    "evidence_refs": node
-                        .evidence_refs()
-                        .iter()
-                        .map(|id| id.as_str())
-                        .collect::<Vec<_>>(),
-                    "confidence": if legacy_scalar_validation { node.confidence().map(|value| value.value()) } else { None },
-                }),
-            })
-            .map_err(|error| ApiError::bad_gateway("DOMAIN_PROVIDER_ERROR", error.to_string()))?;
-        if response.status == ProviderResponseStatus::Failed {
-            return Err(ApiError::bad_gateway(
-                "DOMAIN_PROVIDER_ERROR",
-                "CTI provider reported a failed validation operation",
-            ));
-        }
-
-        for domain_issue in response.issues {
-            issues.push(ValidationIssue {
-                code: domain_issue.code,
-                message: domain_issue.message,
-                field: domain_issue.field,
-                severity: match domain_issue.severity {
-                    IssueSeverity::Error => "error".to_owned(),
-                    IssueSeverity::Warning => "warning".to_owned(),
-                },
-                node_id: domain_issue
-                    .node_id
-                    .or_else(|| Some(node.id().as_str().to_owned())),
-            });
-        }
-    }
-
-    // Graph-native mode: no in-place corrections are applied automatically
-    // (the agent should use targeted Cypher mutations based on the issues).
-    Ok((issues, Vec::new()))
-}
-
-#[cfg(not(feature = "enterprise-cti"))]
-fn validate_graph_nodes(
+    _state: &AppState,
     _graph: &graph_core::Graph,
-    _snapshot_id: Option<&str>,
-    _providers: Option<&crate::enterprise::registry::DomainProviderRegistry>,
-    _legacy_scalar_validation: bool,
-) -> Result<(Vec<ValidationIssue>, Vec<AppliedPlaybook>), ApiError> {
-    Err(ApiError::forbidden(
-        "FEATURE_NOT_AVAILABLE",
-        "graph-native STIX validation requires enterprise-cti",
-    ))
+) -> Result<Vec<graph_core::ValidationErrorRecord>, ApiError> {
+    Err(cti_provider_not_distributed("STIX export"))
 }
 
 // ---------------------------------------------------------------------------

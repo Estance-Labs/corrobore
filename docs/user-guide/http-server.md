@@ -44,7 +44,7 @@ Application errors use the JSON envelope above. Transport middleware can reject 
 | `CORROBORE_HTTP_AUTH_TOKEN` | required | Non-empty Bearer token for protected routes. |
 | `CORROBORE_HTTP_AUTH_MODE` | `required` | Authentication policy: `required` or explicit loopback-only `local-insecure`. |
 | `CORROBORE_HTTP_AUTH_TOKEN_FILE` | unset | Protected file containing the bearer token; mutually exclusive with `CORROBORE_HTTP_AUTH_TOKEN`. |
-| `CORROBORE_HTTP_ADMIN_AUTH_TOKEN` | unset | Optional dedicated Bearer token for admin-only endpoints (for example `/v1/admin/license/status`). |
+| `CORROBORE_HTTP_ADMIN_AUTH_TOKEN` | unset | Optional dedicated Bearer token for admin-only endpoints (for example `/v1/admin/domain-providers/status`). |
 | `CORROBORE_HTTP_ADMIN_AUTH_TOKEN_FILE` | unset | Protected file containing the admin bearer token; mutually exclusive with `CORROBORE_HTTP_ADMIN_AUTH_TOKEN`. |
 | `CORROBORE_MEMORY_WORKSPACE_ID` | `workspace--standalone-default` | Trusted workspace for high-level memory operations; clients cannot override it in JSON. |
 | `CORROBORE_MEMORY_ACTOR_ID` | `actor--standalone-client` | Trusted authenticated actor attribution for high-level memory mutations and traces. |
@@ -78,12 +78,7 @@ Application errors use the JSON envelope above. Transport middleware can reject 
 | `CORROBORE_HTTP_RATE_LIMIT_PER_SECOND` | `50` | Sustained global protected-route rate. |
 | `CORROBORE_HTTP_RATE_LIMIT_BURST` | `200` | Global burst allowance. |
 | `CORROBORE_HTTP_WEB_DIR` | unset | Optional directory containing the production explorer build. Unset keeps API-only mode. |
-| `CORROBORE_HTTP_LICENSE_PEM` | unset | Inline signed license PEM containing `client_uuid`, `client_email`, `modules`, `valid_until` (RFC3339), optional `tags`, and `signature`. |
-| `CORROBORE_HTTP_LICENSE_PEM_FILE` | unset | Path to signed license PEM file (alternative to inline variable). |
-| `CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM` | unset | Inline Ed25519 public key PEM used to verify the license signature. |
-| `CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM_FILE` | unset | Path to Ed25519 public key PEM file (alternative to inline variable). |
-| `CORROBORE_HTTP_LICENSED_MODULES` | unset | Compatibility fallback: comma-separated module claims used only when no PEM license is provided. |
-| `CORROBORE_DOMAIN_PROVIDER_DIR` | unset | Trusted root containing native CTI, FIMI, and Crisis provider libraries. Must be configured with the manifest file. |
+| `CORROBORE_DOMAIN_PROVIDER_DIR` | unset | Trusted root containing native domain provider libraries. Must be configured with the manifest file. |
 | `CORROBORE_DOMAIN_PROVIDER_MANIFEST_FILE` | unset | Strict JSON manifest pinning provider domains, relative paths, SHA-256 digests, required policy, and capabilities. Must be configured with the provider directory. |
 | `CORROBORE_STORAGE_MODE` | `ephemeral` | Runtime graph storage mode (`ephemeral` or `persistent`). |
 | `CORROBORE_STORAGE_DIR` | unset | Required when `CORROBORE_STORAGE_MODE=persistent`; graph storage root path. |
@@ -104,6 +99,14 @@ configuration, diagnostics, logs, and metrics never include token or private-key
 contents.
 
 The binary loads `.env`, supports `-v`/`-vv` verbosity, and honors `RUST_LOG` as the logging-filter override. Provider configuration is fail-fast: a missing required library, path escape, digest mismatch, incompatible ABI, invalid metadata, missing capability, creation failure, or unhealthy response prevents the HTTP listener from starting. See [the manifest example](../examples/domain-providers.json).
+
+Corrobore evaluates no license. The signed-license variables
+`CORROBORE_HTTP_LICENSE_PEM`, `CORROBORE_HTTP_LICENSE_PEM_FILE`,
+`CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM`,
+`CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM_FILE`, and
+`CORROBORE_HTTP_LICENSED_MODULES` are removed: startup fails with
+`invalid environment variable` naming the first one still set, so a leftover
+license configuration is never silently ignored. Remove them when upgrading.
 
 Persistent mode acquires an exclusive process-lifetime filesystem lock before
 storage creation or recovery. Only one server can own a storage directory at a
@@ -306,11 +309,7 @@ Resolves a natural-language objective into ranked graph seeds.
 
 Defaults are cross-domain, hybrid retrieval, `top_k=10`, and threshold `0.0`. Profiles are `cti`, `fimi`, `crisis`, or `cross_domain`; modes are `hybrid`, `full_text`, `semantic`, or `vector`. Each candidate includes `node_id`, `score`, and an explanation with rationale, source refs, and boundary notes. Expected 422 errors include `NO_SEED`, `AMBIGUOUS_SEED`, and `OVERBROAD_OBJECTIVE`.
 
-Domain-scoped profiles (`cti`, `fimi`, `crisis`) are enterprise-gated:
-
-- Build-time gate: profile requests return `FEATURE_NOT_AVAILABLE` if the matching enterprise feature is not compiled.
-- Runtime license gate: profile requests return `LICENSE_MODULE_MISSING` if `CORROBORE_HTTP_LICENSED_MODULES` does not contain the requested module.
-- Provider gate: profile requests return `DOMAIN_PROVIDER_NOT_READY` unless the matching provider is loaded and healthy.
+The domain-scoped profiles (`cti`, `fimi`, `crisis`) take their seed semantics from domain packs that are not distributed with Corrobore; requests naming them return `403 FEATURE_NOT_AVAILABLE`. Only `cross_domain` resolves against the core runtime.
 
 ## `POST /v1/memory/operations`
 
@@ -327,58 +326,22 @@ for complete semantics, limits, examples, errors, and compatibility rules.
 
 ## `POST /v1/domains/{domain}/validate`
 
-Invokes `node.validate/1` through the common provider registry for `cti`, `fimi`, `crisis`, `medical`, and `research` after the gates that apply to the requested domain.
-
-The enterprise domains `cti`, `fimi`, and `crisis` pass build, license, readiness, and capability gates. The MIT domains `medical` and `research` ship with the open-source runtime and pass only readiness and capability gates: they require neither an enterprise build feature nor a signed license claim, so `FEATURE_NOT_AVAILABLE` and `LICENSE_MODULE_MISSING` never apply to them. Every domain still fails closed when its provider is absent, unhealthy, or missing `node.validate`.
+Invokes `node.validate/1` through the common provider registry for the distributed `medical` and `research` domains. The ABI-named `cti`, `fimi`, and `crisis` domains are accepted values, but Corrobore distributes no pack for them: requests naming them return `403 FEATURE_NOT_AVAILABLE` before any provider call. A distributed domain still fails closed when its provider is absent, unhealthy, or missing `node.validate`.
 
 ```json
 {
   "request_id": "validation--123",
   "workspace_id": "workspace--demo",
   "snapshot_id": "snapshot--current",
-  "payload": {"id": "node--123", "labels": ["ThreatActor"]}
+  "payload": {"id": "node--123", "labels": ["Condition"]}
 }
 ```
 
-The successful envelope preserves `request_id` and returns provider `status` (`accepted`, `rejected`, or `failed`), structured `issues`, and optional diagnostics. Stable gate errors are `INVALID_DOMAIN`, `FEATURE_NOT_AVAILABLE`, `LICENSE_MODULE_MISSING`, `DOMAIN_PROVIDER_NOT_READY`, and `DOMAIN_PROVIDER_CAPABILITY_MISSING`; invocation failures return `DOMAIN_PROVIDER_ERROR` and timeouts return `REQUEST_TIMEOUT`.
+The successful envelope preserves `request_id` and returns provider `status` (`accepted`, `rejected`, or `failed`), structured `issues`, and optional diagnostics. Stable gate errors are `INVALID_DOMAIN`, `FEATURE_NOT_AVAILABLE`, `DOMAIN_PROVIDER_NOT_READY`, and `DOMAIN_PROVIDER_CAPABILITY_MISSING`; invocation failures return `DOMAIN_PROVIDER_ERROR` and timeouts return `REQUEST_TIMEOUT`.
 
 ## `GET /v1/admin/domain-providers/status`
 
-Uses the same dedicated admin Bearer boundary as the admin license route. It returns no paths, hashes, handles, or configuration secrets, only each loaded provider's `provider_id`, `provider_version`, `domain`, declared capabilities, and `ready` state.
-
-## `GET /v1/license/status`
-
-Returns the authenticated runtime view of enterprise licensing.
-
-```json
-{
-  "ok": true,
-  "result": {
-    "source": "signed_pem",
-    "client_uuid": "11111111-2222-4333-8444-555555555555",
-    "client_email": "security@example.com",
-    "valid_until": "2099-01-01T00:00:00+00:00",
-    "is_nfr": true,
-    "modules": ["cti", "crisis"]
-  }
-}
-```
-
-The runtime rejects a signed license when `valid_until` is expired. `is_nfr` is derived from the case-insensitive presence of the `nfr` tag in `tags`.
-
-`source` is one of:
-
-- `signed_pem`: modules and identity were loaded from a verified license PEM.
-- `legacy_env`: modules were loaded from `CORROBORE_HTTP_LICENSED_MODULES` fallback.
-- `none`: no active enterprise module claims.
-
-## `GET /v1/admin/license/status`
-
-Returns the same license summary as `/v1/license/status` but is protected by a secondary admin token configured in `CORROBORE_HTTP_ADMIN_AUTH_TOKEN`.
-
-This endpoint is independent from the standard `/v1/*` middleware token. It validates:
-
-- `Authorization: Bearer <CORROBORE_HTTP_ADMIN_AUTH_TOKEN>`
+Uses the dedicated admin Bearer boundary configured in `CORROBORE_HTTP_ADMIN_AUTH_TOKEN`, independent from the standard `/v1/*` middleware token. It returns no paths, hashes, handles, or configuration secrets, only each loaded provider's `provider_id`, `provider_version`, `domain`, declared capabilities, and `ready` state.
 
 Error behavior:
 
@@ -942,11 +905,7 @@ Validates either an explicit bundle (default) or current graph CTI nodes.
 
 The result contains `source_mode`, `valid`, `issues`, `playbooks_applied`, optional `corrections_summary`, optional import `persistence`, and `errors`. Bundle playbooks cover missing `identity.name`, `malware.is_family`, and required temporal fields for indicators, reports, and observed data. Graph mode reports readiness issues and does not auto-mutate nodes.
 
-Graph-native CTI validation has two explicit gates:
-
-- Build-time gate: when the server is compiled without enterprise CTI support, `source=graph` returns a forbidden error.
-- Runtime license gate: when enterprise CTI is compiled but `CORROBORE_HTTP_LICENSED_MODULES` does not contain `cti`, `source=graph` returns a forbidden error.
-- Provider gate: graph mode requires a ready CTI provider exposing `node.validate/1`; availability does not depend on whether the graph is empty.
+Graph-native CTI validation (`source=graph`) requires a CTI domain provider exposing `node.validate/1`. Corrobore distributes none, so `source=graph` returns `403 FEATURE_NOT_AVAILABLE` whether or not the graph is empty.
 
 ```json
 {
@@ -994,10 +953,15 @@ Graph-native CTI validation has two explicit gates:
 | `MISSING_BUNDLE` | 400 | `source=bundle` without a bundle. |
 | `INVALID_STIX_BUNDLE` | 400 | The payload is not a STIX bundle object. |
 | `INVALID_SOURCE_MODE` | 400 | Unknown source value. |
-| `FEATURE_NOT_AVAILABLE` | 403 | `source=graph` requested when enterprise CTI support is not compiled in. |
-| `LICENSE_MODULE_MISSING` | 403 | `source=graph` requested without a valid `cti` runtime license claim. |
+| `FEATURE_NOT_AVAILABLE` | 403 | `source=graph` requested; no CTI domain provider is distributed with Corrobore. |
 
 ## `GET /v1/export/stix`
+
+The route's fail-closed contract requires CTI provider findings, and Corrobore
+distributes no CTI domain provider. Once query parameters are accepted, it
+returns `403 FEATURE_NOT_AVAILABLE`. Deterministic STIX projection stays
+available as the `export-stix` library surface (see [Exporters](exporters.md)).
+The contract below is what the route enforces when a CTI provider is present.
 
 Exports a raw STIX bundle (not the standard envelope). Query parameters:
 
@@ -1027,20 +991,16 @@ mode omits failing records and returns bounded machine-readable details in
 objects is included in `x_corrobore_evidence`.
 
 `force=true` is an explicit operator override for semantic CTI validation. The
-server still runs built-in confidence/evidence rules and the licensed CTI
-provider, but it includes otherwise eligible, export-ready records whose
+server still runs built-in confidence/evidence rules and the CTI provider, but it includes otherwise eligible, export-ready records whose
 confidence policy or provider finding would normally block them. Every
 bypassed finding remains in the bounded `export_diagnostics.exclusions` array
-for audit. Force never bypasses the CTI license/provider gates, export status,
+for audit. Force never bypasses the CTI provider gate, export status,
 profile selection, canonical STIX identity, missing retained-evidence targets,
 or relationship endpoint integrity.
 
 | Error code | HTTP | Meaning |
 | :--- | :---: | :--- |
-| `FEATURE_NOT_AVAILABLE` | 403 | Enterprise CTI support is not compiled in. |
-| `LICENSE_MODULE_MISSING` | 403 | The runtime license does not enable `cti`. |
-| `DOMAIN_PROVIDER_NOT_READY` | 503 | No loaded, healthy CTI provider is available. |
-| `DOMAIN_PROVIDER_CAPABILITY_MISSING` | 503 | The CTI provider does not expose `node.validate/v1`. |
+| `FEATURE_NOT_AVAILABLE` | 403 | No CTI domain provider is distributed with Corrobore. |
 | `EXPORT_PLAN_FAILED` | 400 | Strict CTI readiness or identity checks rejected the export; the message contains named issue codes. |
 
 ## `POST /v1/sessions/start`

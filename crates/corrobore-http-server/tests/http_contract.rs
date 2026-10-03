@@ -18,7 +18,7 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
-#[cfg(all(unix, feature = "enterprise-cti"))]
+#[cfg(unix)]
 use std::process::Command;
 use std::{
     collections::HashMap,
@@ -34,23 +34,11 @@ use axum::{
     http::{Method, Request, StatusCode, header},
     routing::post,
 };
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use corrobore_http_server::{AppState, ServerConfig, build_router};
-use ed25519_dalek::pkcs8::EncodePublicKey;
-use ed25519_dalek::{Signer, SigningKey};
 use serde_json::{Value, json};
-#[cfg(all(unix, feature = "enterprise-cti"))]
+#[cfg(unix)]
 use sha2::{Digest, Sha256};
 use tower::ServiceExt;
-
-#[derive(serde::Serialize)]
-struct TestUnsignedLicenseClaims<'a> {
-    client_uuid: &'a str,
-    client_email: &'a str,
-    modules: &'a [String],
-    valid_until: &'a str,
-    tags: &'a [String],
-}
 
 fn test_app() -> axum::Router {
     test_app_with_store_dir(unique_store_dir("default"))
@@ -64,10 +52,6 @@ fn test_app_with_store_dir_and_extra_env(
     store_dir: PathBuf,
     extra_env: HashMap<String, String>,
 ) -> axum::Router {
-    let legacy_modules = extra_env
-        .get("CORROBORE_HTTP_LICENSED_MODULES")
-        .cloned()
-        .unwrap_or_else(|| "cti".to_owned());
     let mut vars = HashMap::from([
         (
             "CORROBORE_HTTP_AUTH_TOKEN".to_owned(),
@@ -79,8 +63,6 @@ fn test_app_with_store_dir_and_extra_env(
         ),
     ]);
     vars.extend(extra_env);
-    vars.remove("CORROBORE_HTTP_LICENSED_MODULES");
-    vars.extend(test_signed_license_env(&legacy_modules));
 
     let config = ServerConfig::from_map(&vars).expect("config should parse");
 
@@ -99,68 +81,6 @@ fn unique_store_dir(suffix: &str) -> PathBuf {
         suffix,
         format_args!("{millis}-{}", SEQUENCE.fetch_add(1, Ordering::Relaxed))
     ))
-}
-
-fn test_signed_license_env(modules_csv: &str) -> HashMap<String, String> {
-    let signing = SigningKey::from_bytes(&[23_u8; 32]);
-    let public_key_der = signing
-        .verifying_key()
-        .to_public_key_der()
-        .expect("public key der should serialize")
-        .as_bytes()
-        .to_vec();
-    let verifying_pem = format!(
-        "-----BEGIN PUBLIC KEY-----\n{}\n-----END PUBLIC KEY-----",
-        STANDARD.encode(public_key_der)
-    );
-
-    let mut modules = modules_csv
-        .split(',')
-        .map(|entry| entry.trim().to_ascii_lowercase())
-        .filter(|entry| !entry.is_empty())
-        .collect::<Vec<_>>();
-    modules.sort();
-    modules.dedup();
-
-    let mut tags = vec!["NFR".to_owned()]
-        .into_iter()
-        .map(|entry| entry.trim().to_ascii_lowercase())
-        .filter(|entry| !entry.is_empty())
-        .collect::<Vec<_>>();
-    tags.sort();
-    tags.dedup();
-
-    let canonical = serde_json::to_vec(&TestUnsignedLicenseClaims {
-        client_uuid: "11111111-2222-4333-8444-555555555555",
-        client_email: "tests@corrobore.dev",
-        modules: &modules,
-        valid_until: "2099-01-01T00:00:00Z",
-        tags: &tags,
-    })
-    .expect("canonical payload should serialize");
-    let signature = signing.sign(&canonical);
-
-    let license_json = serde_json::to_vec(&json!({
-        "client_uuid": "11111111-2222-4333-8444-555555555555",
-        "client_email": "tests@corrobore.dev",
-        "modules": modules,
-        "valid_until": "2099-01-01T00:00:00Z",
-        "tags": ["NFR"],
-        "signature": STANDARD.encode(signature.to_bytes()),
-    }))
-    .expect("license payload should serialize");
-    let license_pem = format!(
-        "-----BEGIN CORROBORE LICENSE-----\n{}\n-----END CORROBORE LICENSE-----",
-        STANDARD.encode(license_json)
-    );
-
-    HashMap::from([
-        ("CORROBORE_HTTP_LICENSE_PEM".to_owned(), license_pem),
-        (
-            "CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM".to_owned(),
-            verifying_pem,
-        ),
-    ])
 }
 
 #[tokio::test]
@@ -183,17 +103,14 @@ async fn domain_validation_contract_rejects_unknown_domain() {
     assert_eq!(payload["error"]["code"], "INVALID_DOMAIN");
 }
 
-/// The two MIT packs must reach the provider registry on a server holding no
-/// enterprise license bundle at all. Requiring a signed license to call an
-/// open-source pack would make it unusable without a commercial agreement.
+/// The two MIT packs must reach the provider registry with no further gate.
 ///
 /// `DOMAIN_PROVIDER_NOT_READY` is the expected outcome here, and it is the
-/// point: the request passed the domain, feature, and license stages and
-/// stopped at the registry, which is unconfigured in this fixture. Anything
-/// else — `INVALID_DOMAIN`, `FEATURE_NOT_AVAILABLE`, `LICENSE_MODULE_MISSING`,
-/// or a success — would be a defect.
+/// point: the request passed domain parsing and stopped at the registry, which
+/// is unconfigured in this fixture. Anything else — `INVALID_DOMAIN`,
+/// `FEATURE_NOT_AVAILABLE`, or a success — would be a defect.
 #[tokio::test]
-async fn domain_validation_contract_reaches_open_source_domains_without_a_license() {
+async fn domain_validation_contract_reaches_open_source_domains() {
     for domain in ["medical", "research"] {
         let app = test_app();
         let request = Request::builder()
@@ -218,7 +135,7 @@ async fn domain_validation_contract_reaches_open_source_domains_without_a_licens
         );
         assert_eq!(
             payload["error"]["code"], "DOMAIN_PROVIDER_NOT_READY",
-            "{domain} must fail closed at the registry, not at a licence gate"
+            "{domain} must fail closed at the registry"
         );
     }
 }
@@ -254,60 +171,63 @@ async fn domain_validation_contract_lists_accepted_domains_when_rejecting() {
     }
 }
 
-#[cfg(feature = "enterprise-fimi")]
+/// `cti`, `fimi`, and `crisis` stay valid ABI domain names so provider
+/// binaries keep loading, but Corrobore distributes no implementation for
+/// them. The request must stop before the registry with a stable code, with
+/// no license stage left to reach.
 #[tokio::test]
-async fn domain_validation_contract_rejects_unlicensed_module() {
-    let app = test_app();
-    let request = Request::builder()
-        .method(Method::POST)
-        .uri("/v1/domains/fimi/validate")
-        .header(header::AUTHORIZATION, "Bearer token-123")
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(json!({"payload": {}}).to_string()))
-        .expect("request should build");
+async fn domain_validation_contract_rejects_domains_not_distributed_with_corrobore() {
+    for domain in ["cti", "fimi", "crisis"] {
+        let app = test_app();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(format!("/v1/domains/{domain}/validate"))
+            .header(header::AUTHORIZATION, "Bearer token-123")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({"payload": {}}).to_string()))
+            .expect("request should build");
 
-    let response = app.oneshot(request).await.expect("request should respond");
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    let body = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("body should be readable");
-    let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
-    assert_eq!(payload["error"]["code"], "LICENSE_MODULE_MISSING");
+        let response = app.oneshot(request).await.expect("request should respond");
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should be readable");
+        let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
+
+        assert_eq!(status, StatusCode::FORBIDDEN, "{domain}: {payload}");
+        assert_eq!(
+            payload["error"]["code"], "FEATURE_NOT_AVAILABLE",
+            "{domain}"
+        );
+    }
 }
 
-#[cfg(feature = "enterprise-fimi")]
+/// Corrobore evaluates no license, so it exposes no license status surface.
 #[tokio::test]
-async fn domain_validation_contract_rejects_missing_provider() {
-    let app = test_app_with_store_dir_and_extra_env(
-        unique_store_dir("domain-fimi-provider-missing"),
-        HashMap::from([(
-            "CORROBORE_HTTP_LICENSED_MODULES".to_owned(),
-            "fimi".to_owned(),
-        )]),
-    );
-    let request = Request::builder()
-        .method(Method::POST)
-        .uri("/v1/domains/fimi/validate")
-        .header(header::AUTHORIZATION, "Bearer token-123")
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(json!({"payload": {}}).to_string()))
-        .expect("request should build");
+async fn license_status_routes_are_not_served() {
+    for uri in ["/v1/license/status", "/v1/admin/license/status"] {
+        let app = test_app();
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri(uri)
+            .header(header::AUTHORIZATION, "Bearer token-123")
+            .body(Body::empty())
+            .expect("request should build");
 
-    let response = app.oneshot(request).await.expect("request should respond");
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    let body = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("body should be readable");
-    let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
-    assert_eq!(payload["error"]["code"], "DOMAIN_PROVIDER_NOT_READY");
+        let response = app.oneshot(request).await.expect("request should respond");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri}");
+    }
 }
 
-#[cfg(all(unix, feature = "enterprise-cti"))]
+/// The native host is the extension point the MIT packs ship through: a real C
+/// library declared in the manifest must load, pass its health check, and
+/// answer `node.validate/1` for an open-source domain.
+#[cfg(unix)]
 #[tokio::test]
 async fn domain_validation_contract_invokes_real_c_provider() {
     let (provider_dir, manifest_file) = compile_c_provider_fixture();
     let app = test_app_with_store_dir_and_extra_env(
-        unique_store_dir("domain-cti-provider-success"),
+        unique_store_dir("domain-medical-provider-success"),
         HashMap::from([
             (
                 "CORROBORE_DOMAIN_PROVIDER_DIR".to_owned(),
@@ -321,7 +241,7 @@ async fn domain_validation_contract_invokes_real_c_provider() {
     );
     let request = Request::builder()
         .method(Method::POST)
-        .uri("/v1/domains/cti/validate")
+        .uri("/v1/domains/medical/validate")
         .header(header::AUTHORIZATION, "Bearer token-123")
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(
@@ -346,23 +266,17 @@ async fn domain_validation_contract_invokes_real_c_provider() {
     assert_eq!(payload["result"]["issues"], json!([]));
 }
 
-#[cfg(all(unix, feature = "enterprise-cti"))]
+#[cfg(unix)]
 fn compile_c_provider_fixture() -> (PathBuf, PathBuf) {
-    compile_c_provider_fixture_with_capability("node.validate")
-}
-
-#[cfg(all(unix, feature = "enterprise-cti"))]
-fn compile_c_provider_fixture_with_capability(capability: &str) -> (PathBuf, PathBuf) {
     let root = unique_store_dir("c-domain-provider");
     fs::create_dir_all(&root).expect("provider root should be created");
     let source = root.join("provider.c");
-    let source_code =
-        include_str!("fixtures/domain_provider_v1.c").replace("node.validate", capability);
-    fs::write(&source, source_code).expect("provider source should be written");
+    fs::write(&source, include_str!("fixtures/domain_provider_v1.c"))
+        .expect("provider source should be written");
     let library_name = if cfg!(target_os = "macos") {
-        "libcorrobore_domain_cti.dylib"
+        "libcorrobore_domain_medical.dylib"
     } else {
-        "libcorrobore_domain_cti.so"
+        "libcorrobore_domain_medical.so"
     };
     let library = root.join(library_name);
     let include_dir =
@@ -398,11 +312,11 @@ fn compile_c_provider_fixture_with_capability(capability: &str) -> (PathBuf, Pat
         json!({
             "schema_version": "1",
             "providers": [{
-                "domain": "cti",
+                "domain": "medical",
                 "library": library_name,
                 "sha256": hash,
                 "required": true,
-                "capabilities": [{"name": capability, "version": "1"}]
+                "capabilities": [{"name": "node.validate", "version": "1"}]
             }]
         })
         .to_string(),
@@ -802,7 +716,7 @@ async fn cypher_contract_restores_session_idle_when_request_is_invalid() {
 }
 
 #[tokio::test]
-async fn export_contract_fails_closed_when_cti_provider_is_unavailable() {
+async fn export_contract_fails_closed_without_a_distributed_cti_provider() {
     let app = test_app();
     for uri in ["/v1/export/stix", "/v1/export/stix?force=true"] {
         let request = Request::builder()
@@ -817,272 +731,15 @@ async fn export_contract_fails_closed_when_cti_provider_is_unavailable() {
             .oneshot(request)
             .await
             .expect("request should respond");
-        let expected_status = if cfg!(feature = "enterprise-cti") {
-            StatusCode::SERVICE_UNAVAILABLE
-        } else {
-            StatusCode::FORBIDDEN
-        };
-        assert_eq!(response.status(), expected_status);
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
         let body = to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("body should be readable");
         let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
 
-        let expected_code = if cfg!(feature = "enterprise-cti") {
-            "DOMAIN_PROVIDER_NOT_READY"
-        } else {
-            "FEATURE_NOT_AVAILABLE"
-        };
-        assert_eq!(payload["error"]["code"], expected_code);
+        assert_eq!(payload["error"]["code"], "FEATURE_NOT_AVAILABLE");
     }
-}
-
-#[cfg(all(unix, feature = "enterprise-cti"))]
-#[tokio::test]
-async fn export_contract_uses_default_snapshot_with_ready_cti_provider() {
-    let (provider_dir, manifest_file) = compile_c_provider_fixture();
-    let app = test_app_with_store_dir_and_extra_env(
-        unique_store_dir("export-ready-cti-provider"),
-        HashMap::from([
-            (
-                "CORROBORE_DOMAIN_PROVIDER_DIR".to_owned(),
-                provider_dir.display().to_string(),
-            ),
-            (
-                "CORROBORE_DOMAIN_PROVIDER_MANIFEST_FILE".to_owned(),
-                manifest_file.display().to_string(),
-            ),
-        ]),
-    );
-    let request = Request::builder()
-        .method(Method::GET)
-        .uri("/v1/export/stix")
-        .header(header::AUTHORIZATION, "Bearer token-123")
-        .body(Body::empty())
-        .expect("request should build");
-
-    let response = app.oneshot(request).await.expect("request should respond");
-    assert_eq!(response.status(), StatusCode::OK);
-
-    let body = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("body should be readable");
-    let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
-    assert_eq!(payload["type"], "bundle");
-    assert_eq!(
-        payload["export_metadata"]["snapshot_id"],
-        "snapshot--current"
-    );
-}
-
-#[cfg(all(unix, feature = "enterprise-cti"))]
-#[tokio::test]
-async fn export_contract_scalar_confidence_is_display_only() {
-    let (provider_dir, manifest_file) = compile_c_provider_fixture();
-    let app = test_app_with_store_dir_and_extra_env(
-        unique_store_dir("export-force-low-confidence"),
-        HashMap::from([
-            (
-                "CORROBORE_DOMAIN_PROVIDER_DIR".to_owned(),
-                provider_dir.display().to_string(),
-            ),
-            (
-                "CORROBORE_DOMAIN_PROVIDER_MANIFEST_FILE".to_owned(),
-                manifest_file.display().to_string(),
-            ),
-        ]),
-    );
-    let import_request = Request::builder()
-        .method(Method::POST)
-        .uri("/v1/import/stix")
-        .header(header::AUTHORIZATION, "Bearer token-123")
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(
-            json!({
-                "bundle": {
-                    "type": "bundle",
-                    "objects": [{
-                        "type": "indicator",
-                        "spec_version": "2.1",
-                        "id": "indicator--13131313-1313-4131-8131-131313131313",
-                        "pattern": "[domain-name:value = 'forced.example']",
-                        "pattern_type": "stix",
-                        "valid_from": "2026-08-02T00:00:00.000Z"
-                    }]
-                },
-                "evidence": {
-                    "schema_version": "1.0",
-                    "records": [{
-                        "id": "evidence--force-http-131",
-                        "source_id": "document--force-http-131",
-                        "content_sha256": "1313131313131313131313131313131313131313131313131313131313131313",
-                        "payload": "forced.example",
-                        "locator": {"type": "page", "page": 1}
-                    }],
-                    "annotations": {
-                        "indicator--13131313-1313-4131-8131-131313131313": {
-                            "evidence_refs": ["evidence--force-http-131"],
-                            "confidence": 0.79,
-                            "status": "candidate"
-                        }
-                    }
-                }
-            })
-            .to_string(),
-        ))
-        .expect("import request should build");
-    let import_response = app
-        .clone()
-        .oneshot(import_request)
-        .await
-        .expect("import should respond");
-    let import_status = import_response.status();
-    let import_body = to_bytes(import_response.into_body(), usize::MAX)
-        .await
-        .expect("import response body should be readable");
-    let import_payload: Value =
-        serde_json::from_slice(&import_body).expect("import response should be json");
-    assert_eq!(import_status, StatusCode::OK, "{import_payload}");
-
-    let promote_request = Request::builder()
-        .method(Method::POST)
-        .uri("/v1/cypher/write")
-        .header(header::AUTHORIZATION, "Bearer token-123")
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(
-            json!({
-                "query": "MATCH (n) SET n.status = 'exportable' RETURN n.status"
-            })
-            .to_string(),
-        ))
-        .expect("promotion request should build");
-    let promote_response = app
-        .clone()
-        .oneshot(promote_request)
-        .await
-        .expect("promotion should respond");
-    assert_eq!(promote_response.status(), StatusCode::OK);
-
-    let strict_request = Request::builder()
-        .method(Method::GET)
-        .uri("/v1/export/stix")
-        .header(header::AUTHORIZATION, "Bearer token-123")
-        .body(Body::empty())
-        .expect("strict export request should build");
-    let strict_response = app
-        .clone()
-        .oneshot(strict_request)
-        .await
-        .expect("strict export should respond");
-    let strict_status = strict_response.status();
-    let strict_body = to_bytes(strict_response.into_body(), usize::MAX)
-        .await
-        .expect("strict response body should be readable");
-    let strict_payload: Value =
-        serde_json::from_slice(&strict_body).expect("strict response should be json");
-    assert_eq!(strict_status, StatusCode::OK, "{strict_payload}");
-    assert!(
-        strict_payload["objects"]
-            .as_array()
-            .expect("objects")
-            .iter()
-            .any(|object| object["id"] == "indicator--13131313-1313-4131-8131-131313131313")
-    );
-
-    let forced_request = Request::builder()
-        .method(Method::GET)
-        .uri("/v1/export/stix?force=true")
-        .header(header::AUTHORIZATION, "Bearer token-123")
-        .body(Body::empty())
-        .expect("forced export request should build");
-    let forced_response = app
-        .oneshot(forced_request)
-        .await
-        .expect("forced export should respond");
-    let forced_status = forced_response.status();
-    let forced_body = to_bytes(forced_response.into_body(), usize::MAX)
-        .await
-        .expect("forced response body should be readable");
-    let forced_payload: Value =
-        serde_json::from_slice(&forced_body).expect("forced response should be json");
-    assert_eq!(forced_status, StatusCode::OK, "{forced_payload}");
-    assert!(
-        forced_payload["objects"]
-            .as_array()
-            .expect("forced objects should be an array")
-            .iter()
-            .any(|object| { object["id"] == "indicator--13131313-1313-4131-8131-131313131313" })
-    );
-    assert!(
-        forced_payload["export_diagnostics"]["exclusions"]
-            .as_array()
-            .expect("diagnostics")
-            .iter()
-            .all(|finding| finding["code"] == "EXPORT_LEGACY_CONFIDENCE_DIAGNOSTIC")
-    );
-}
-
-#[cfg(feature = "enterprise-cti")]
-#[tokio::test]
-async fn forced_export_contract_does_not_bypass_missing_cti_license() {
-    let app = test_app_with_store_dir_and_extra_env(
-        unique_store_dir("export-license-missing"),
-        HashMap::from([(
-            "CORROBORE_HTTP_LICENSED_MODULES".to_owned(),
-            "fimi".to_owned(),
-        )]),
-    );
-    let request = Request::builder()
-        .method(Method::GET)
-        .uri("/v1/export/stix?force=true")
-        .header(header::AUTHORIZATION, "Bearer token-123")
-        .body(Body::empty())
-        .expect("request should build");
-
-    let response = app.oneshot(request).await.expect("request should respond");
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    let body = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("body should be readable");
-    let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
-    assert_eq!(payload["error"]["code"], "LICENSE_MODULE_MISSING");
-}
-
-#[cfg(all(unix, feature = "enterprise-cti"))]
-#[tokio::test]
-async fn forced_export_contract_does_not_bypass_missing_provider_capability() {
-    let (provider_dir, manifest_file) = compile_c_provider_fixture_with_capability("node.inspect");
-    let app = test_app_with_store_dir_and_extra_env(
-        unique_store_dir("export-provider-capability-missing"),
-        HashMap::from([
-            (
-                "CORROBORE_DOMAIN_PROVIDER_DIR".to_owned(),
-                provider_dir.display().to_string(),
-            ),
-            (
-                "CORROBORE_DOMAIN_PROVIDER_MANIFEST_FILE".to_owned(),
-                manifest_file.display().to_string(),
-            ),
-        ]),
-    );
-    let request = Request::builder()
-        .method(Method::GET)
-        .uri("/v1/export/stix?force=true")
-        .header(header::AUTHORIZATION, "Bearer token-123")
-        .body(Body::empty())
-        .expect("request should build");
-
-    let response = app.oneshot(request).await.expect("request should respond");
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    let body = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("body should be readable");
-    let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
-    assert_eq!(
-        payload["error"]["code"],
-        "DOMAIN_PROVIDER_CAPABILITY_MISSING"
-    );
 }
 
 #[tokio::test]
@@ -2028,156 +1685,6 @@ async fn stix_validate_contract_rejects_missing_auth_header() {
 }
 
 #[tokio::test]
-async fn license_status_contract_rejects_missing_auth_header() {
-    let app = test_app();
-    let request = Request::builder()
-        .method(Method::GET)
-        .uri("/v1/license/status")
-        .body(Body::empty())
-        .expect("request should build");
-
-    let response = app.oneshot(request).await.expect("request should respond");
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-}
-
-#[tokio::test]
-async fn license_status_contract_returns_runtime_license_summary() {
-    let app = test_app();
-    let request = Request::builder()
-        .method(Method::GET)
-        .uri("/v1/license/status")
-        .header(header::AUTHORIZATION, "Bearer token-123")
-        .body(Body::empty())
-        .expect("request should build");
-
-    let response = app.oneshot(request).await.expect("request should respond");
-    assert_eq!(response.status(), StatusCode::OK);
-
-    let body = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("body should be readable");
-    let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
-
-    assert_eq!(payload["ok"], true);
-    assert_eq!(payload["result"]["source"], "signed_pem");
-    assert_eq!(
-        payload["result"]["client_uuid"],
-        json!("11111111-2222-4333-8444-555555555555")
-    );
-    assert_eq!(
-        payload["result"]["client_email"],
-        json!("tests@corrobore.dev")
-    );
-    assert_eq!(
-        payload["result"]["valid_until"],
-        json!("2099-01-01T00:00:00Z")
-    );
-    assert_eq!(payload["result"]["is_nfr"], json!(true));
-    assert_eq!(payload["result"]["modules"], json!(["cti"]));
-}
-
-#[tokio::test]
-async fn admin_license_status_contract_rejects_when_admin_token_not_configured() {
-    let app = test_app();
-    let request = Request::builder()
-        .method(Method::GET)
-        .uri("/v1/admin/license/status")
-        .header(header::AUTHORIZATION, "Bearer admin-token-123")
-        .body(Body::empty())
-        .expect("request should build");
-
-    let response = app.oneshot(request).await.expect("request should respond");
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
-
-    let body = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("body should be readable");
-    let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
-    assert_eq!(payload["error"]["code"], "ADMIN_AUTH_NOT_CONFIGURED");
-}
-
-#[tokio::test]
-async fn admin_license_status_contract_rejects_missing_auth_header() {
-    let app = test_app_with_store_dir_and_extra_env(
-        unique_store_dir("admin-license-status-missing-auth"),
-        HashMap::from([(
-            "CORROBORE_HTTP_ADMIN_AUTH_TOKEN".to_owned(),
-            "admin-token-123".to_owned(),
-        )]),
-    );
-    let request = Request::builder()
-        .method(Method::GET)
-        .uri("/v1/admin/license/status")
-        .body(Body::empty())
-        .expect("request should build");
-
-    let response = app.oneshot(request).await.expect("request should respond");
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-}
-
-#[tokio::test]
-async fn admin_license_status_contract_rejects_invalid_token() {
-    let app = test_app_with_store_dir_and_extra_env(
-        unique_store_dir("admin-license-status-invalid-auth"),
-        HashMap::from([(
-            "CORROBORE_HTTP_ADMIN_AUTH_TOKEN".to_owned(),
-            "admin-token-123".to_owned(),
-        )]),
-    );
-    let request = Request::builder()
-        .method(Method::GET)
-        .uri("/v1/admin/license/status")
-        .header(header::AUTHORIZATION, "Bearer wrong-token")
-        .body(Body::empty())
-        .expect("request should build");
-
-    let response = app.oneshot(request).await.expect("request should respond");
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-}
-
-#[tokio::test]
-async fn admin_license_status_contract_returns_license_summary_with_admin_token() {
-    let app = test_app_with_store_dir_and_extra_env(
-        unique_store_dir("admin-license-status-success"),
-        HashMap::from([(
-            "CORROBORE_HTTP_ADMIN_AUTH_TOKEN".to_owned(),
-            "admin-token-123".to_owned(),
-        )]),
-    );
-    let request = Request::builder()
-        .method(Method::GET)
-        .uri("/v1/admin/license/status")
-        .header(header::AUTHORIZATION, "Bearer admin-token-123")
-        .body(Body::empty())
-        .expect("request should build");
-
-    let response = app.oneshot(request).await.expect("request should respond");
-    assert_eq!(response.status(), StatusCode::OK);
-
-    let body = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("body should be readable");
-    let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
-
-    assert_eq!(payload["ok"], true);
-    assert_eq!(payload["result"]["source"], "signed_pem");
-    assert_eq!(
-        payload["result"]["client_uuid"],
-        json!("11111111-2222-4333-8444-555555555555")
-    );
-    assert_eq!(
-        payload["result"]["client_email"],
-        json!("tests@corrobore.dev")
-    );
-    assert_eq!(
-        payload["result"]["valid_until"],
-        json!("2099-01-01T00:00:00Z")
-    );
-    assert_eq!(payload["result"]["is_nfr"], json!(true));
-    assert_eq!(payload["result"]["modules"], json!(["cti"]));
-}
-
-#[tokio::test]
 async fn admin_domain_provider_status_contract_returns_non_sensitive_summary() {
     let app = test_app_with_store_dir_and_extra_env(
         unique_store_dir("admin-domain-provider-status"),
@@ -2281,65 +1788,8 @@ async fn stix_validate_contract_rejects_missing_bundle_for_bundle_source() {
     assert_eq!(payload["error"]["code"], "MISSING_BUNDLE");
 }
 
-#[cfg(feature = "enterprise-cti")]
 #[tokio::test]
-async fn stix_validate_contract_graph_source_requires_ready_provider() {
-    let app = test_app();
-    let request = Request::builder()
-        .method(Method::POST)
-        .uri("/v1/stix/validate")
-        .header(header::AUTHORIZATION, "Bearer token-123")
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(json!({ "source": "graph" }).to_string()))
-        .expect("request should build");
-
-    let response = app.oneshot(request).await.expect("request should respond");
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-
-    let body = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("body should be readable");
-    let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
-
-    assert_eq!(payload["ok"], false);
-    assert_eq!(payload["error"]["code"], "DOMAIN_PROVIDER_NOT_READY");
-}
-
-#[cfg(feature = "enterprise-cti")]
-#[tokio::test]
-async fn stix_validate_contract_graph_source_rejected_without_cti_license() {
-    let store_dir = unique_store_dir("graph-native-license-missing");
-    let app = test_app_with_store_dir_and_extra_env(
-        store_dir,
-        HashMap::from([(
-            "CORROBORE_HTTP_LICENSED_MODULES".to_owned(),
-            "fimi".to_owned(),
-        )]),
-    );
-
-    let request = Request::builder()
-        .method(Method::POST)
-        .uri("/v1/stix/validate")
-        .header(header::AUTHORIZATION, "Bearer token-123")
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(json!({ "source": "graph" }).to_string()))
-        .expect("request should build");
-
-    let response = app.oneshot(request).await.expect("request should respond");
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
-
-    let body = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("body should be readable");
-    let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
-
-    assert_eq!(payload["ok"], false);
-    assert_eq!(payload["error"]["code"], "LICENSE_MODULE_MISSING");
-}
-
-#[cfg(not(feature = "enterprise-cti"))]
-#[tokio::test]
-async fn stix_validate_contract_graph_source_rejected_when_enterprise_cti_disabled() {
+async fn stix_validate_contract_graph_source_is_not_distributed() {
     let app = test_app();
     let request = Request::builder()
         .method(Method::POST)
@@ -2431,68 +1881,6 @@ async fn stix_validate_contract_bundle_identity_missing_name_is_flagged_and_auto
         payload["result"]["corrections_summary"]["by_playbook_id"]["PLAYBOOK_FIX_IDENTITY_NAME"],
         1
     );
-}
-
-#[cfg(all(feature = "enterprise-cti", not(feature = "enterprise-cti-binary")))]
-#[tokio::test]
-async fn stix_validate_contract_graph_source_with_preloaded_nodes_validates_natively() {
-    // Seed the graph with one valid ThreatActor via the write endpoint first.
-    let store_dir = unique_store_dir("graph-native-validate");
-    let app = test_app_with_store_dir(store_dir);
-
-    // Import a valid ThreatActor with all required fields.
-    let import_request = Request::builder()
-        .method(Method::POST)
-        .uri("/v1/import/stix")
-        .header(header::AUTHORIZATION, "Bearer token-123")
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(
-            json!({
-                "bundle": {
-                    "type": "bundle",
-                    "objects": [
-                        {
-                            "type": "threat-actor",
-                            "id": "threat-actor--graph-native-1",
-                            "name": "GraphNativeActor"
-                        }
-                    ]
-                }
-            })
-            .to_string(),
-        ))
-        .expect("import request should build");
-
-    let import_response = app
-        .clone()
-        .oneshot(import_request)
-        .await
-        .expect("import should respond");
-    assert_eq!(import_response.status(), StatusCode::OK);
-
-    // Now validate the graph natively.
-    let validate_request = Request::builder()
-        .method(Method::POST)
-        .uri("/v1/stix/validate")
-        .header(header::AUTHORIZATION, "Bearer token-123")
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(json!({ "source": "graph" }).to_string()))
-        .expect("validate request should build");
-
-    let validate_response = app
-        .oneshot(validate_request)
-        .await
-        .expect("validate should respond");
-    assert_eq!(validate_response.status(), StatusCode::OK);
-
-    let body = to_bytes(validate_response.into_body(), usize::MAX)
-        .await
-        .expect("body should be readable");
-    let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
-
-    assert_eq!(payload["ok"], true);
-    assert_eq!(payload["result"]["source_mode"], "graph");
-    assert_eq!(payload["result"]["persistence"], Value::Null);
 }
 
 #[tokio::test]
@@ -3751,71 +3139,8 @@ async fn seed_search_contract_rejects_unknown_mode() {
     assert_eq!(payload["error"]["code"], "INVALID_RETRIEVAL_MODE");
 }
 
-#[cfg(feature = "enterprise-fimi")]
 #[tokio::test]
-async fn seed_search_contract_rejects_fimi_profile_without_license() {
-    let app = test_app_with_store_dir_and_extra_env(
-        unique_store_dir("seed-fimi-license-missing"),
-        HashMap::from([(
-            "CORROBORE_HTTP_LICENSED_MODULES".to_owned(),
-            "cti,crisis".to_owned(),
-        )]),
-    );
-
-    let request = Request::builder()
-        .method(Method::POST)
-        .uri("/v1/seed/search")
-        .header(header::AUTHORIZATION, "Bearer token-123")
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(
-            json!({"objective": "coordinated messaging", "domain_profile": "fimi"}).to_string(),
-        ))
-        .expect("request should build");
-
-    let response = app.oneshot(request).await.expect("request should respond");
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
-
-    let body = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("body should be readable");
-    let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
-    assert_eq!(payload["error"]["code"], "LICENSE_MODULE_MISSING");
-}
-
-#[cfg(feature = "enterprise-fimi")]
-#[tokio::test]
-async fn seed_search_contract_rejects_fimi_profile_without_provider() {
-    let app = test_app_with_store_dir_and_extra_env(
-        unique_store_dir("seed-fimi-provider-missing"),
-        HashMap::from([(
-            "CORROBORE_HTTP_LICENSED_MODULES".to_owned(),
-            "fimi".to_owned(),
-        )]),
-    );
-
-    let request = Request::builder()
-        .method(Method::POST)
-        .uri("/v1/seed/search")
-        .header(header::AUTHORIZATION, "Bearer token-123")
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(
-            json!({"objective": "coordinated messaging", "domain_profile": "fimi"}).to_string(),
-        ))
-        .expect("request should build");
-
-    let response = app.oneshot(request).await.expect("request should respond");
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-
-    let body = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("body should be readable");
-    let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
-    assert_eq!(payload["error"]["code"], "DOMAIN_PROVIDER_NOT_READY");
-}
-
-#[cfg(not(feature = "enterprise-fimi"))]
-#[tokio::test]
-async fn seed_search_contract_rejects_fimi_profile_when_feature_disabled() {
+async fn seed_search_contract_rejects_fimi_profile_not_distributed() {
     let app = test_app();
 
     let request = Request::builder()
@@ -3838,40 +3163,8 @@ async fn seed_search_contract_rejects_fimi_profile_when_feature_disabled() {
     assert_eq!(payload["error"]["code"], "FEATURE_NOT_AVAILABLE");
 }
 
-#[cfg(feature = "enterprise-crisis")]
 #[tokio::test]
-async fn seed_search_contract_rejects_crisis_profile_without_license() {
-    let app = test_app_with_store_dir_and_extra_env(
-        unique_store_dir("seed-crisis-license-missing"),
-        HashMap::from([(
-            "CORROBORE_HTTP_LICENSED_MODULES".to_owned(),
-            "cti,fimi".to_owned(),
-        )]),
-    );
-
-    let request = Request::builder()
-        .method(Method::POST)
-        .uri("/v1/seed/search")
-        .header(header::AUTHORIZATION, "Bearer token-123")
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(
-            json!({"objective": "humanitarian needs", "domain_profile": "crisis"}).to_string(),
-        ))
-        .expect("request should build");
-
-    let response = app.oneshot(request).await.expect("request should respond");
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
-
-    let body = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("body should be readable");
-    let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
-    assert_eq!(payload["error"]["code"], "LICENSE_MODULE_MISSING");
-}
-
-#[cfg(not(feature = "enterprise-crisis"))]
-#[tokio::test]
-async fn seed_search_contract_rejects_crisis_profile_when_feature_disabled() {
+async fn seed_search_contract_rejects_crisis_profile_not_distributed() {
     let app = test_app();
 
     let request = Request::builder()
@@ -3894,40 +3187,8 @@ async fn seed_search_contract_rejects_crisis_profile_when_feature_disabled() {
     assert_eq!(payload["error"]["code"], "FEATURE_NOT_AVAILABLE");
 }
 
-#[cfg(feature = "enterprise-cti")]
 #[tokio::test]
-async fn seed_search_contract_rejects_cti_profile_without_license() {
-    let app = test_app_with_store_dir_and_extra_env(
-        unique_store_dir("seed-cti-license-missing"),
-        HashMap::from([(
-            "CORROBORE_HTTP_LICENSED_MODULES".to_owned(),
-            "fimi,crisis".to_owned(),
-        )]),
-    );
-
-    let request = Request::builder()
-        .method(Method::POST)
-        .uri("/v1/seed/search")
-        .header(header::AUTHORIZATION, "Bearer token-123")
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(
-            json!({"objective": "phishing campaign", "domain_profile": "cti"}).to_string(),
-        ))
-        .expect("request should build");
-
-    let response = app.oneshot(request).await.expect("request should respond");
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
-
-    let body = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("body should be readable");
-    let payload: Value = serde_json::from_slice(&body).expect("payload should be json");
-    assert_eq!(payload["error"]["code"], "LICENSE_MODULE_MISSING");
-}
-
-#[cfg(not(feature = "enterprise-cti"))]
-#[tokio::test]
-async fn seed_search_contract_rejects_cti_profile_when_feature_disabled() {
+async fn seed_search_contract_rejects_cti_profile_not_distributed() {
     let app = test_app();
 
     let request = Request::builder()

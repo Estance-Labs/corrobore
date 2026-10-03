@@ -1,7 +1,7 @@
 // Copyright (c) 2026 AreDee-Bangs
 // SPDX-License-Identifier: MIT
 
-//! Stable C ABI shared by the Corrobore runtime and enterprise domain providers.
+//! Stable C ABI shared by the Corrobore runtime and native domain providers.
 //!
 //! The boundary deliberately exposes only fixed-layout scalars, opaque handles,
 //! and pointer-length byte buffers. Rust-owned dynamic types must never cross it.

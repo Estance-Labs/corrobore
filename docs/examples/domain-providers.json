@@ -2,23 +2,16 @@
   "schema_version": "1",
   "providers": [
     {
-      "domain": "cti",
-      "library": "libcorrobore_domain_cti.so",
+      "domain": "medical",
+      "library": "libdomain_medical_provider.so",
       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "required": true,
       "capabilities": [{"name": "node.validate", "version": "1"}]
     },
     {
-      "domain": "fimi",
-      "library": "libcorrobore_domain_fimi.so",
+      "domain": "research",
+      "library": "libdomain_research_provider.so",
       "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "required": true,
-      "capabilities": [{"name": "node.validate", "version": "1"}]
-    },
-    {
-      "domain": "crisis",
-      "library": "libcorrobore_domain_crisis.so",
-      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "required": true,
       "capabilities": [{"name": "node.validate", "version": "1"}]
     }

@@ -19,7 +19,7 @@ flowchart TD
     Core --> StorageAPI["storage-api"]
     Storage["graph-storage"] --> StorageAPI
     Core --> Domains["domain-common (workspace)"]
-    HTTP --> EEProviders["EE binary domain providers"]
+    HTTP --> Providers["native domain providers (domain-provider-abi)"]
     Core --> Exporters["export-stix / export-fimi"]
 ```
 
@@ -41,7 +41,7 @@ flowchart TD
 | `function-registry` | Typed `namespace.symbol` registration and dispatch. |
 | `export-stix`, `export-fimi` | Deterministic projections into interchange formats. |
 
-Enterprise domain logic (`cti`, `fimi`, `crisis`) is externalized to dedicated EE repositories and consumed at runtime through the shared `domain-provider-abi` contract. The core host loads a private deployment manifest once at startup, confines libraries to a trusted root, verifies SHA-256 digests, negotiates the prefix-versioned C ABI, validates metadata and capabilities, and health-checks instances before serving. Source and binaries for those domains are intentionally not shipped in the OSS image; a private EE image layers all licensed providers onto the unchanged core runtime.
+Domain packs are consumed at runtime through the shared `domain-provider-abi` contract. The host loads a deployment manifest once at startup, confines libraries to a trusted root, verifies SHA-256 digests, negotiates the prefix-versioned C ABI, validates metadata and capabilities, and health-checks instances before serving. The MIT `medical` and `research` packs ship in this workspace. The ABI also names the `cti`, `fimi`, and `crisis` domains so existing provider binaries keep loading, but Corrobore distributes no implementation for them and serves no request for them.
 
 ## Repository boundaries (multi-repo)
 

@@ -63,8 +63,6 @@ jobs:
               - 'scripts/standalone-acceptance-contract.test.mjs'
               - 'scripts/standalone-docs-contract.test.mjs'
               - 'scripts/standalone-acceptance.sh'
-              - 'scripts/report-to-stix-acceptance.sh'
-              - 'scripts/report-to-stix-acceptance-contract.test.mjs'
               - '.github/workflows/standalone-acceptance.yml'
               - 'scripts/opencti-elastic-free-contract.test.mjs'
               - 'scripts/opencti-elastic-free-acceptance.sh'
@@ -139,9 +137,7 @@ jobs:
         run: node --test scripts/open-source-readiness.test.mjs
 
       - name: Validate standalone acceptance contracts
-        run: |
-          node --test scripts/standalone-acceptance-contract.test.mjs
-          node --test scripts/report-to-stix-acceptance-contract.test.mjs
+        run: node --test scripts/standalone-acceptance-contract.test.mjs
 
       # Asserts the standalone reference still covers every CLI flag, TOML field
       # and env var declared in the binary and config module.
@@ -167,8 +163,8 @@ jobs:
         with:
           command: check advisories bans licenses sources
 
-  edition-contracts:
-    name: OSS and enterprise edition contracts
+  provider-host-contract:
+    name: Native domain-provider host contract
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
@@ -181,20 +177,8 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: OSS edition contract - graph source gated
-        run: cargo test -p corrobore-http-server --no-default-features --locked stix_validate_contract_graph_source
-
-      - name: OSS edition contract - seed profiles gated
-        run: cargo test -p corrobore-http-server --no-default-features --locked seed_search_contract_rejects_
-
-      - name: Enterprise edition contract - graph source licensed
-        run: cargo test -p corrobore-http-server --locked stix_validate_contract_graph_source
-
-      - name: Enterprise edition contract - seed profiles licensed
-        run: cargo test -p corrobore-http-server --locked seed_search_contract_rejects_
-
-      - name: Enterprise binary contract - missing manifest fails closed
+      - name: Provider host contract - missing manifest fails closed
         run: cargo test -p corrobore-http-server --locked app_state_fails_when_domain_provider_manifest_is_missing
 
-      - name: Enterprise binary contract - real C provider is invoked
+      - name: Provider host contract - real C provider is invoked
         run: cargo test -p corrobore-http-server --test http_contract --locked domain_validation_contract_invokes_real_c_provider

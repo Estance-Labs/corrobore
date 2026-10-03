@@ -22,7 +22,6 @@ use std::time::Duration;
 
 use axum::{Json, extract::State};
 use corrobore_engine::EngineError;
-use domain_provider_abi::DomainName;
 use graph_core::{
     GraphError, SemanticDomainProfile, SemanticSeedQueryRequest, SemanticSeedResolutionErrorCode,
     SemanticSeedRetrievalMode, WorkspaceId,
@@ -33,21 +32,6 @@ use crate::{app::AppState, error::ApiError};
 
 const DEFAULT_TOP_K: usize = 10;
 const DEFAULT_SCORE_THRESHOLD: f64 = 0.0;
-
-#[cfg(feature = "enterprise-cti")]
-const ENTERPRISE_CTI_ENABLED: bool = true;
-#[cfg(not(feature = "enterprise-cti"))]
-const ENTERPRISE_CTI_ENABLED: bool = false;
-
-#[cfg(feature = "enterprise-crisis")]
-const ENTERPRISE_CRISIS_ENABLED: bool = true;
-#[cfg(not(feature = "enterprise-crisis"))]
-const ENTERPRISE_CRISIS_ENABLED: bool = false;
-
-#[cfg(feature = "enterprise-fimi")]
-const ENTERPRISE_FIMI_ENABLED: bool = true;
-#[cfg(not(feature = "enterprise-fimi"))]
-const ENTERPRISE_FIMI_ENABLED: bool = false;
 
 #[derive(Debug, Deserialize)]
 pub struct SeedSearchRequest {
@@ -96,7 +80,7 @@ pub async fn seed_search(
     .map_err(|error| ApiError::bad_request("INVALID_WORKSPACE_ID", error.to_string()))?;
 
     let domain_profile = parse_domain_profile(payload.domain_profile.as_deref())?;
-    enforce_profile_availability(&state, &domain_profile)?;
+    enforce_profile_availability(&domain_profile)?;
     let mode = parse_retrieval_mode(payload.mode.as_deref())?;
     let top_k = payload.top_k.unwrap_or(DEFAULT_TOP_K);
     let score_threshold = payload.score_threshold.unwrap_or(DEFAULT_SCORE_THRESHOLD);
@@ -159,48 +143,21 @@ fn map_seed_engine_error(error: EngineError) -> ApiError {
     }
 }
 
-fn enforce_profile_availability(
-    state: &AppState,
-    profile: &SemanticDomainProfile,
-) -> Result<(), ApiError> {
-    let (module, domain, feature_enabled) = match profile {
-        SemanticDomainProfile::CtiInvestigation => ("cti", DomainName::Cti, ENTERPRISE_CTI_ENABLED),
-        SemanticDomainProfile::CrisisInvestigation => {
-            ("crisis", DomainName::Crisis, ENTERPRISE_CRISIS_ENABLED)
-        }
-        SemanticDomainProfile::FimiInvestigation => {
-            ("fimi", DomainName::Fimi, ENTERPRISE_FIMI_ENABLED)
-        }
+/// Rejects the domain-scoped profiles: their seed semantics come from the CTI,
+/// crisis, and FIMI packs, which Corrobore does not distribute. Only the
+/// cross-domain profile resolves against the core runtime.
+fn enforce_profile_availability(profile: &SemanticDomainProfile) -> Result<(), ApiError> {
+    let module = match profile {
+        SemanticDomainProfile::CtiInvestigation => "cti",
+        SemanticDomainProfile::CrisisInvestigation => "crisis",
+        SemanticDomainProfile::FimiInvestigation => "fimi",
         SemanticDomainProfile::CrossDomainInvestigation => return Ok(()),
     };
 
-    if !feature_enabled {
-        return Err(ApiError::forbidden(
-            "FEATURE_NOT_AVAILABLE",
-            format!("domain profile '{module}' requires enterprise-{module}"),
-        ));
-    }
-
-    if !state.config.is_module_licensed(module) {
-        return Err(ApiError::forbidden(
-            "LICENSE_MODULE_MISSING",
-            format!("domain profile '{module}' requires a valid {module} enterprise license"),
-        ));
-    }
-
-    let provider_ready = state
-        .domain_providers
-        .as_deref()
-        .and_then(|registry| registry.status(domain))
-        .is_some_and(|status| status.ready);
-    if !provider_ready {
-        return Err(ApiError::service_unavailable(
-            "DOMAIN_PROVIDER_NOT_READY",
-            format!("domain profile '{module}' requires a ready enterprise provider"),
-        ));
-    }
-
-    Ok(())
+    Err(ApiError::forbidden(
+        "FEATURE_NOT_AVAILABLE",
+        format!("domain profile '{module}' is not distributed with Corrobore"),
+    ))
 }
 
 fn map_seed_error(error: GraphError) -> ApiError {

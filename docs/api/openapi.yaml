@@ -1743,58 +1743,6 @@ paths:
         '503': {$ref: '#/components/responses/BadRequest'}
         '504': {$ref: '#/components/responses/BadRequest'}
 
-  /v1/license/status:
-    get:
-      operationId: getLicenseStatus
-      summary: Read runtime enterprise license status
-      tags: [Operations]
-      responses:
-        '200':
-          description: Active runtime license summary
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok: {type: boolean, const: true}
-                  result:
-                    type: object
-                    properties:
-                      source: {type: string, enum: [signed_pem, legacy_env, none]}
-                      client_uuid: {type: [string, 'null']}
-                      client_email: {type: [string, 'null']}
-                      modules:
-                        type: array
-                        items: {type: string}
-        '401': {$ref: '#/components/responses/Unauthorized'}
-
-  /v1/admin/license/status:
-    get:
-      operationId: getAdminLicenseStatus
-      summary: Read runtime enterprise license status with admin token boundary
-      tags: [Operations]
-      security: []
-      responses:
-        '200':
-          description: Active runtime license summary
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok: {type: boolean, const: true}
-                  result:
-                    type: object
-                    properties:
-                      source: {type: string, enum: [signed_pem, legacy_env, none]}
-                      client_uuid: {type: [string, 'null']}
-                      client_email: {type: [string, 'null']}
-                      modules:
-                        type: array
-                        items: {type: string}
-        '401': {$ref: '#/components/responses/Unauthorized'}
-        '403': {$ref: '#/components/responses/BadRequest'}
-
   /v1/admin/domain-providers/status:
     get:
       operationId: getAdminDomainProviderStatus
@@ -2670,7 +2618,7 @@ paths:
         - {name: profile, in: query, schema: {type: string, enum: [stix-mvp], default: stix-mvp}}
         - name: force
           in: query
-          description: Preserve overridable semantic CTI validation findings as diagnostics and include otherwise eligible records; structural and provider/license gates remain enforced.
+          description: Preserve overridable semantic CTI validation findings as diagnostics and include otherwise eligible records; structural and provider gates remain enforced.
           schema: {type: boolean, default: false}
       responses:
         '200':
@@ -2685,12 +2633,7 @@ paths:
               schema: {$ref: '#/components/schemas/ErrorEnvelope'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403':
-          description: Enterprise CTI support or the licensed cti module is unavailable
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ErrorEnvelope'}
-        '503':
-          description: CTI provider is not ready or lacks node.validate/v1
+          description: No CTI domain provider is distributed with Corrobore (FEATURE_NOT_AVAILABLE)
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ErrorEnvelope'}

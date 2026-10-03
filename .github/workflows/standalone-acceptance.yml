@@ -10,10 +10,8 @@ on:
       - "Cargo.toml"
       - "Dockerfile"
       - "crates/**"
-      - "docs/acceptance/report-to-stix.md"
       - "plugins/corrobore/**"
       - "packaging/**"
-      - "scripts/report-to-stix-acceptance*"
       - "scripts/standalone-acceptance*"
   workflow_dispatch:
 
@@ -34,9 +32,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Validate acceptance wiring and traceability
-        run: |
-          node --test scripts/standalone-acceptance-contract.test.mjs
-          node --test scripts/report-to-stix-acceptance-contract.test.mjs
+        run: node --test scripts/standalone-acceptance-contract.test.mjs
 
   acceptance:
     name: Native, container, and embedded acceptance
@@ -74,10 +70,6 @@ jobs:
           CORROBORE_ACCEPTANCE_ARTIFACT_DIR: acceptance-artifacts/native
           CORROBORE_ACCEPTANCE_PORT: "18084"
         run: scripts/standalone-acceptance.sh native
-
-      - name: Run report-to-STIX release acceptance
-        timeout-minutes: 10
-        run: scripts/report-to-stix-acceptance.sh
 
       - name: Build actual production image
         run: |

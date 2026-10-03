@@ -4,12 +4,12 @@ on:
   pull_request:
     paths:
       - "crates/domain-provider-abi/**"
-      - ".github/workflows/ee-domain-binaries.yml"
+      - ".github/workflows/domain-provider-abi.yml"
   push:
     branches: [main]
     paths:
       - "crates/domain-provider-abi/**"
-      - ".github/workflows/ee-domain-binaries.yml"
+      - ".github/workflows/domain-provider-abi.yml"
   workflow_dispatch:
 
 permissions:

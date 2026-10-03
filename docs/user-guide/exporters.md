@@ -78,9 +78,10 @@ fallback.
 may repair lifecycle bookkeeping and retry once through separately authorized
 write operations, but export itself does not promote or mutate state.
 
-The HTTP route is fail-closed: it requires enterprise CTI support, a valid
-`cti` license claim, and a ready provider exposing `node.validate/v1`. Missing
-license, provider readiness, and provider capability have distinct error codes.
+The HTTP route is fail-closed: it requires a ready CTI domain provider exposing
+`node.validate/v1`. Corrobore distributes no CTI provider, so the route returns
+`403 FEATURE_NOT_AVAILABLE`; the `export-stix` library surface above has no such
+dependency.
 
 ## FIMI
 
