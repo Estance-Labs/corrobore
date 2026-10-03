@@ -43,10 +43,6 @@ test("the cache contract and existing validation steps stay wired into CI", asyn
     "Run Clippy with warnings denied",
     "Build workspace",
     "Run cargo-deny",
-    "OSS edition contract - graph source gated",
-    "OSS edition contract - seed profiles gated",
-    "Enterprise edition contract - graph source licensed",
-    "Enterprise edition contract - seed profiles licensed",
   ]) {
     assert.match(
       workflow,

@@ -188,11 +188,6 @@ remain environment-only:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `CORROBORE_HTTP_SESSION_IDLE_TTL_MS` | `0` | Automatically stop inactive sessions after this many milliseconds; `0` disables expiry. |
-| `CORROBORE_HTTP_LICENSE_PEM` | unset | Inline signed enterprise license; prefer the file form. |
-| `CORROBORE_HTTP_LICENSE_PEM_FILE` | unset | Signed enterprise license file. |
-| `CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM` | unset | Inline Ed25519 license-verification key; prefer the file form. |
-| `CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM_FILE` | unset | Ed25519 license-verification key file. |
-| `CORROBORE_HTTP_LICENSED_MODULES` | unset | Legacy compatibility fallback when no signed license is configured. |
 | `CORROBORE_DOMAIN_PROVIDER_DIR` | unset | Trusted root containing optional native domain providers. |
 | `CORROBORE_DOMAIN_PROVIDER_MANIFEST_FILE` | unset | Manifest pinning provider paths, hashes, policy, and capabilities. |
 | `CORROBORE_MEMORY_WORKSPACE_ID` | `workspace--standalone-default` | Trusted workspace for high-level memory operations. |
@@ -207,6 +202,12 @@ remain environment-only:
 | `CORROBORE_S3_SECRET_KEY` | unset | Secret access key required by `export-snapshot-s3`; inject it through the process environment. |
 | `CORROBORE_S3_SESSION_TOKEN` | unset | Optional temporary-credential session token used by `export-snapshot-s3`. |
 | `CORROBORE_BUILD_REVISION` | `unknown` at compile time | Build-time source revision embedded by release automation; it is not a runtime override. |
+
+The signed-license variables `CORROBORE_HTTP_LICENSE_PEM`,
+`CORROBORE_HTTP_LICENSE_PEM_FILE`, `CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM`,
+`CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM_FILE`, and
+`CORROBORE_HTTP_LICENSED_MODULES` are removed. Corrobore evaluates no license,
+and startup fails while any of them is still set; remove them when upgrading.
 
 The complete HTTP-specific behavior for licensing and domain providers remains
 in the [HTTP server reference](http-server.md#configuration).

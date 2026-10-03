@@ -77,7 +77,7 @@ Use TLS for non-loopback or otherwise untrusted network paths. The MCP bridge
 passes the configured bearer token only in the HTTP `Authorization` header and
 never returns or logs it. Authentication and Corrobore policy remain the
 authority boundary; loading the plugin does not grant read, write, trace,
-forget, consolidate, STIX, or enterprise-domain permissions.
+forget, consolidate, STIX, or domain permissions.
 
 ## MCP tools
 

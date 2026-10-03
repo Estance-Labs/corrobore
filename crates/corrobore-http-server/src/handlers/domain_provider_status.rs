@@ -5,7 +5,7 @@ use axum::{Json, extract::State, http::HeaderMap};
 use serde::Serialize;
 
 use crate::{
-    app::AppState, auth::require_admin_auth, enterprise::registry::DomainProviderStatus,
+    app::AppState, auth::require_admin_auth, domain_providers::registry::DomainProviderStatus,
     error::ApiError,
 };
 

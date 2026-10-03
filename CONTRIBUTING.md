@@ -149,23 +149,6 @@ cargo nextest run --workspace --tests
 Use `cargo test` as the reference command for final parity checks unless the CI
 workflow explicitly switches to `cargo nextest`.
 
-### OSS and enterprise edition contracts
-
-`corrobore-http-server` supports two validation paths for enterprise-gated modules:
-
-```bash
-# OSS contract: compile without enterprise defaults and verify gated behavior.
-cargo test -p corrobore-http-server --no-default-features --locked stix_validate_contract_graph_source
-cargo test -p corrobore-http-server --no-default-features --locked seed_search_contract_rejects_
-
-# Enterprise contract: default build with enterprise feature enabled.
-cargo test -p corrobore-http-server --locked stix_validate_contract_graph_source
-cargo test -p corrobore-http-server --locked seed_search_contract_rejects_
-```
-
-Runtime license claims are configured through `CORROBORE_HTTP_LICENSED_MODULES`
-(comma-separated, for example `cti,crisis`).
-
 ### CI duration monitoring
 
 The repository includes a scheduled workflow that tracks the `rust-ci.yml`

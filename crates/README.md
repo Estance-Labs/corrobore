@@ -28,7 +28,7 @@ Responsibilities:
 
 Shared domain abstractions used by CTI, FIMI, crisis, and future intelligence domains.
 
-`domain-cti`, `domain-fimi`, and `domain-crisis` are externalized to enterprise binary repositories and are no longer shipped as source crates in this workspace.
+The provider ABI names the `cti`, `fimi`, and `crisis` domains, but Corrobore distributes no implementation for them: no source crate in this workspace and no provider binary.
 
 ## Future infrastructure crates
 

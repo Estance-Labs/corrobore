@@ -11,6 +11,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
+### Removed
+
+- **Breaking:** the enterprise edition and its license gate leave Corrobore,
+  which now ships under MIT only (#306). The `enterprise-cti`,
+  `enterprise-cti-binary`, `enterprise-fimi`, and `enterprise-crisis` Cargo
+  features, signed-license verification, and the `GET /v1/license/status` and
+  `GET /v1/admin/license/status` routes are gone. Startup now fails when a
+  `CORROBORE_HTTP_LICENSE_PEM[_FILE]`,
+  `CORROBORE_HTTP_LICENSE_PUBLIC_KEY_PEM[_FILE]`, or
+  `CORROBORE_HTTP_LICENSED_MODULES` variable is still set, instead of ignoring
+  it. The `cti`, `fimi`, and `crisis` domains, their seed profiles,
+  graph-native STIX validation, and `GET /v1/export/stix` return
+  `403 FEATURE_NOT_AVAILABLE`, which was already the open-source build's
+  response, and the `LICENSE_MODULE_MISSING` code is no longer emitted. The
+  native domain-provider host and its ABI are unchanged: existing provider
+  binaries keep loading, and the MIT `medical` and `research` packs are
+  unaffected. The EE provider retrieval script, its workflow, and the
+  report-to-STIX licensed acceptance gate are removed along with the edition
+  contract CI job.
+
 ### Fixed
 
 - Workspace compatibility after the `hmac` 0.13 and `fs4` 1.1 upgrades:

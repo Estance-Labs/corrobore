@@ -13,57 +13,29 @@ use serde_json::Value;
 
 use crate::{app::AppState, error::ApiError};
 
-#[cfg(feature = "enterprise-cti")]
-const CTI_COMPILED: bool = true;
-#[cfg(not(feature = "enterprise-cti"))]
-const CTI_COMPILED: bool = false;
-#[cfg(feature = "enterprise-fimi")]
-const FIMI_COMPILED: bool = true;
-#[cfg(not(feature = "enterprise-fimi"))]
-const FIMI_COMPILED: bool = false;
-#[cfg(feature = "enterprise-crisis")]
-const CRISIS_COMPILED: bool = true;
-#[cfg(not(feature = "enterprise-crisis"))]
-const CRISIS_COMPILED: bool = false;
-
 /// Accepted values for the `domain` path segment, in error-message order.
 const ACCEPTED_DOMAINS: &str = "cti, fimi, crisis, medical, or research";
 
-/// How a domain is gated before its request reaches the provider registry.
-enum DomainGating {
-    /// Enterprise domain: requires both its build feature and a signed license
-    /// claim naming the module.
-    Enterprise {
-        /// Whether the enterprise feature was compiled into this build.
-        compiled: bool,
-    },
-    /// Open-source domain: part of the MIT runtime, gated by neither a build
-    /// feature nor a license claim.
-    OpenSource,
+/// Whether Corrobore distributes a pack for a domain the provider ABI names.
+enum DomainAvailability {
+    /// The pack ships with Corrobore; requests go to the provider registry.
+    Distributed,
+    /// The ABI keeps the domain name so existing provider binaries still load,
+    /// but Corrobore distributes no implementation and serves no request for it.
+    NotDistributed,
 }
 
-/// Maps a domain to its gating.
+/// Maps a domain to its availability.
 ///
 /// The match is exhaustive on purpose. Adding a `DomainName` variant breaks
 /// this function rather than letting the new domain inherit whichever branch
-/// happens to be last, so the enterprise-versus-open-source decision is always
-/// made explicitly.
-const fn gating_for(domain: DomainName) -> DomainGating {
+/// happens to be last, so availability is always decided explicitly.
+const fn availability_for(domain: DomainName) -> DomainAvailability {
     match domain {
-        DomainName::Cti => DomainGating::Enterprise {
-            compiled: CTI_COMPILED,
-        },
-        DomainName::Fimi => DomainGating::Enterprise {
-            compiled: FIMI_COMPILED,
-        },
-        DomainName::Crisis => DomainGating::Enterprise {
-            compiled: CRISIS_COMPILED,
-        },
-        // The MEDICAL and RESEARCH packs ship under MIT as part of the
-        // open-source runtime. Requiring an enterprise license to call them
-        // would make an open-source pack unusable without a commercial
-        // agreement.
-        DomainName::Medical | DomainName::Research => DomainGating::OpenSource,
+        DomainName::Medical | DomainName::Research => DomainAvailability::Distributed,
+        DomainName::Cti | DomainName::Fimi | DomainName::Crisis => {
+            DomainAvailability::NotDistributed
+        }
     }
 }
 
@@ -87,25 +59,14 @@ pub async fn validate_domain(
     Json(payload): Json<DomainValidationRequest>,
 ) -> Result<Json<DomainValidationResponse>, ApiError> {
     let domain = parse_domain(&domain)?;
-    if let DomainGating::Enterprise { compiled } = gating_for(domain) {
-        if !compiled {
-            return Err(ApiError::forbidden(
-                "FEATURE_NOT_AVAILABLE",
-                format!(
-                    "domain '{}' requires its enterprise build feature",
-                    domain.as_str()
-                ),
-            ));
-        }
-        if !state.config.is_module_licensed(domain.as_str()) {
-            return Err(ApiError::forbidden(
-                "LICENSE_MODULE_MISSING",
-                format!(
-                    "domain '{}' requires a valid enterprise license claim",
-                    domain.as_str()
-                ),
-            ));
-        }
+    if let DomainAvailability::NotDistributed = availability_for(domain) {
+        return Err(ApiError::forbidden(
+            "FEATURE_NOT_AVAILABLE",
+            format!(
+                "domain '{}' is not distributed with Corrobore",
+                domain.as_str()
+            ),
+        ));
     }
     let registry = state.domain_providers.clone().ok_or_else(|| {
         ApiError::service_unavailable(
@@ -198,34 +159,24 @@ mod tests {
     }
 
     #[test]
-    fn open_source_domains_carry_no_enterprise_gating() {
+    fn open_source_domains_are_distributed() {
         for domain in [DomainName::Medical, DomainName::Research] {
             assert!(
-                matches!(gating_for(domain), DomainGating::OpenSource),
-                "{} must not be enterprise-gated",
+                matches!(availability_for(domain), DomainAvailability::Distributed),
+                "{} must reach the provider registry",
                 domain.as_str()
             );
         }
     }
 
     #[test]
-    fn enterprise_domains_keep_their_feature_gating() {
-        for (domain, compiled) in [
-            (DomainName::Cti, CTI_COMPILED),
-            (DomainName::Fimi, FIMI_COMPILED),
-            (DomainName::Crisis, CRISIS_COMPILED),
-        ] {
-            match gating_for(domain) {
-                DomainGating::Enterprise { compiled: actual } => assert_eq!(
-                    actual,
-                    compiled,
-                    "{} must report its build feature",
-                    domain.as_str()
-                ),
-                DomainGating::OpenSource => {
-                    panic!("{} must stay enterprise-gated", domain.as_str())
-                }
-            }
+    fn abi_domains_without_a_distributed_pack_are_not_served() {
+        for domain in [DomainName::Cti, DomainName::Fimi, DomainName::Crisis] {
+            assert!(
+                matches!(availability_for(domain), DomainAvailability::NotDistributed),
+                "{} has no pack in Corrobore",
+                domain.as_str()
+            );
         }
     }
 }

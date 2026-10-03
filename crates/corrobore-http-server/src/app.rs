@@ -78,7 +78,6 @@ use crate::{
         export::export_stix,
         health::health,
         import::{import_stix_bundle, import_stix_bundle_file},
-        license::{admin_license_status, license_status},
         memory::execute_memory_operation,
         metrics::metrics,
         opencti_files::execute_opencti_file_command,
@@ -138,7 +137,7 @@ pub enum AppStateInitError {
     PersistentStorageIncompatible { path: String, reason: String },
     #[error("persistent storage recovery failed at {path}: {reason}")]
     PersistentStorageRecoveryFailed { path: String, reason: String },
-    #[error("failed to initialize enterprise domain providers: {reason}")]
+    #[error("failed to initialize domain providers: {reason}")]
     DomainProviderInitFailed { reason: String },
     #[error("failed to register domain provider verifiers: {reason}")]
     DomainVerifierRegistrationFailed { reason: String },
@@ -171,7 +170,8 @@ pub struct AppState {
     pub database_operations: Arc<Mutex<crate::database_operations::DatabaseOperationMetrics>>,
     pub stix_import_metrics: Arc<Mutex<crate::handlers::import::ImportRuntimeMetrics>>,
     pub opencti_write_semaphore: Arc<tokio::sync::Semaphore>,
-    pub(crate) domain_providers: Option<Arc<crate::enterprise::registry::DomainProviderRegistry>>,
+    pub(crate) domain_providers:
+        Option<Arc<crate::domain_providers::registry::DomainProviderRegistry>>,
     /// Verifiers available to governance workflows, including adapters
     /// registered by loaded domain providers.
     pub verifier_registry: Arc<graph_core::VerifierRegistry>,
@@ -359,7 +359,7 @@ impl AppState {
 }
 
 fn initialize_verifier_registry(
-    domain_providers: Option<&Arc<crate::enterprise::registry::DomainProviderRegistry>>,
+    domain_providers: Option<&Arc<crate::domain_providers::registry::DomainProviderRegistry>>,
 ) -> Result<Arc<graph_core::VerifierRegistry>, AppStateInitError> {
     let mut registry = graph_core::VerifierRegistry::new();
     if let Some(providers) = domain_providers {
@@ -590,7 +590,8 @@ fn initialize_engine(
 
 fn initialize_domain_providers(
     config: &ServerConfig,
-) -> Result<Option<Arc<crate::enterprise::registry::DomainProviderRegistry>>, AppStateInitError> {
+) -> Result<Option<Arc<crate::domain_providers::registry::DomainProviderRegistry>>, AppStateInitError>
+{
     let (Some(provider_dir), Some(manifest_file)) = (
         config.domain_provider_dir.as_deref(),
         config.domain_provider_manifest_file.as_deref(),
@@ -598,7 +599,7 @@ fn initialize_domain_providers(
         return Ok(None);
     };
 
-    crate::enterprise::registry::DomainProviderRegistry::initialize(
+    crate::domain_providers::registry::DomainProviderRegistry::initialize(
         Path::new(provider_dir),
         Path::new(manifest_file),
     )
@@ -1054,7 +1055,6 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/cypher/write", post(execute_write_cypher))
         .route("/v1/domains/{domain}/validate", post(validate_domain))
         .route("/v1/stix/validate", post(validate_stix))
-        .route("/v1/license/status", get(license_status))
         .route("/v1/seed/search", post(seed_search))
         .route("/v1/memory/operations", post(execute_memory_operation))
         .route("/v1/sessions/start", post(start_session))
@@ -1199,7 +1199,6 @@ pub fn build_router(state: AppState) -> Router {
 
     let web_dir = state.config.web_dir.clone();
     let router = Router::new()
-        .route("/v1/admin/license/status", get(admin_license_status))
         .route("/v1/admin/storage/snapshots", post(create_snapshot))
         .route("/v1/admin/storage/indexes/rebuild", post(rebuild_indexes))
         .route(

@@ -1,16 +1,15 @@
 # Intelligence Domains
 
-Corrobore keeps shared evidence primitives in-workspace and consumes enterprise domain logic through dedicated binary providers.
+Corrobore keeps shared evidence primitives in-workspace and consumes domain logic through native binary providers.
 
 This guide targets the current `0.3.x` runtime baseline.
 
 ## Distribution model
 
 - In this workspace, `domain-common` provides shared evidence and epistemic primitives.
-- Enterprise domain implementations (`cti`, `fimi`, `crisis`) are externalized to dedicated EE repositories.
-- The public core image contains the ABI host but no EE implementation or source.
-- The private EE image adds all licensed native libraries and a deployment manifest without replacing the core server binary.
-- CTI, FIMI, and Crisis use the same versioned provider ABI and the `node.validate/1` capability; domain-specific behavior remains inside each EE repository.
+- The MIT `medical` and `research` packs ship in this workspace as `domain-medical-provider` and `domain-research-provider`, built against the provider ABI.
+- The ABI also names the `cti`, `fimi`, and `crisis` domains so existing provider binaries keep loading. Corrobore distributes no implementation for them: no source, no binary, and no request is served for them (`FEATURE_NOT_AVAILABLE`).
+- Every pack uses the same versioned provider ABI and the `node.validate/1` capability; domain-specific behavior stays inside the pack.
 
 ## Provider contract and deployment
 
@@ -20,34 +19,13 @@ A provider declaring `claim.verify/1` is registered as a host-side `Verifier`. I
 
 Set both `CORROBORE_DOMAIN_PROVIDER_DIR` and `CORROBORE_DOMAIN_PROVIDER_MANIFEST_FILE` to enable providers. The manifest uses relative library paths, lowercase SHA-256 digests, required/optional policy, and required capabilities; see [the production manifest shape](../examples/domain-providers.json). At startup the host confines canonical paths to the trusted root, verifies each digest, negotiates ABI v1, validates provider identity and limits, creates one instance, and requires a ready health response. Any failure for a required provider prevents the server from accepting traffic.
 
-Build availability, signed license claims, and provider readiness are independent gates. A licensed module is not usable unless its matching build feature and healthy provider are also present. The build and license gates apply to the enterprise domains only; the MIT `medical` and `research` packs ship with the open-source runtime and are gated by provider readiness and capability alone. Provider calls are serialized in ABI v1, bounded by declared request/response sizes, wrapped by the server request timeout, and correlated by `request_id`.
+A distributed domain is gated by provider readiness and capability alone. Provider calls are serialized in ABI v1, bounded by declared request/response sizes, wrapped by the server request timeout, and correlated by `request_id`.
 
-Use `POST /v1/domains/{domain}/validate` for generic `cti`, `fimi`, `crisis`, `medical`, or `research` validation. `GET /health` reports aggregate configured/ready counts; authenticated operators can inspect non-sensitive provider identity, version, capabilities, domain, and readiness through `GET /v1/admin/domain-providers/status`.
+Use `POST /v1/domains/{domain}/validate` for generic `medical` or `research` validation; `cti`, `fimi`, and `crisis` are accepted names that return `FEATURE_NOT_AVAILABLE`. `GET /health` reports aggregate configured/ready counts; authenticated operators can inspect non-sensitive provider identity, version, capabilities, domain, and readiness through `GET /v1/admin/domain-providers/status`.
 
-## CTI model surface
+## Narrative and campaign primitives
 
-The CTI provider contract validates the following node labels and relationship vocabulary:
-
-- Nodes: `ThreatActor`, `Malware`, `Indicator`, `Tool`, `Campaign`, `Infrastructure`, `Vulnerability`, `Identity`, `Location`, `Report`.
-- Relationships: `Indicates`, `Uses`, `Targets`, `AttributedTo`, `CommunicatesWith`, `RelatedTo`.
-- Validation: CTI-to-STIX readiness rules are applied through the shared provider registry by graph-mode STIX validation and the generic domain route.
-
-## FIMI model surface
-
-The EE FIMI provider models foreign information manipulation and interference.
-
-- Nodes: `Actor`, `Narrative`, `Claim`, `Account`, `Outlet`, `Campaign`, `CoordinationCluster`.
-- Relationships: `Amplifies`, `CoordinatesWith`, `OriginatesFrom`, `Targets`, `Repeats`, `Contradicts`.
-- Typical use: connect claims, accounts, narratives, amplification, and coordination while preserving evidence and confidence.
-- Since Epic 0029 WS-G the open-source core also holds domain-neutral, immutable `Narrative` and `Campaign` collections, coordination signals stored as evidence, and an attribution gate that refuses coordination signals as the only support. The pack adds the meaning: six misleadingness mechanisms, the reader-versus-evidence gap, the band rule, and validators reachable through `node.validate/1`, plus an advisory `claim.verify/1` that reports `inconclusive` only and can never move a factual verdict. See [Narratives, Campaigns, and Misleadingness](narratives-and-campaigns.md).
-
-## Crisis model surface
-
-The EE crisis provider models crisis events, locations, needs, organizations, and observations.
-
-- Nodes: `CrisisEvent`, `Location`, `HumanitarianNeed`, `Organization`, `Observation`.
-- Relationships: `OccursAt`, `Impacts`, `ReportedBy`, `Needs`, `EscalatesTo`.
-- Domain-specific Rust functions are implemented in EE repositories and are not distributed as source in this workspace. Their deployment boundary is the same ABI and manifest used by CTI and FIMI.
+Since Epic 0029 WS-G the core holds domain-neutral, immutable `Narrative` and `Campaign` collections, coordination signals stored as evidence, and an attribution gate that refuses coordination signals as the only support. Domain packs add meaning on top of these primitives through `node.validate/1` and `claim.verify/1`. See [Narratives, Campaigns, and Misleadingness](narratives-and-campaigns.md).
 
 ## Shared evidence and epistemic primitives
 
