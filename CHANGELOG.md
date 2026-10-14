@@ -58,6 +58,12 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
 ### Added
 
+- Unicode-aware recall matching (#313): recall folds objective terms and record
+  text with Unicode lowercase, NFKD decomposition, and combining-mark removal,
+  so accented and non-ASCII text matches case- and accent-insensitively
+  (`Bière` matches `biere`). Punctuation is trimmed from objective terms,
+  punctuation-only terms are ignored, and a repeated term counts once. ASCII
+  ranking, scores, and page tokens are unchanged.
 - Consolidation that merges evidence (#312): `consolidate` accepts the opt-in
   `merge_provenance` flag (default false, part of the proposal identity). An
   approved merging apply appends the originals' deduplicated provenance to the

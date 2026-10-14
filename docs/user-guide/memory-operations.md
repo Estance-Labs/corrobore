@@ -241,6 +241,15 @@ projection once, so its cost does not grow with the number of requested keys.
 
 ## Recall limits and bounded outcomes
 
+Objective matching is Unicode-aware and accent-insensitive. Objective terms and
+the searched record text (identity key, kind, content, and tags) are folded with
+Unicode lowercase, NFKD decomposition, and removal of combining marks, so
+`Bière`, `BIÈRE`, and `biere` match each other and compatibility forms such as
+ligatures decompose. The objective is split on whitespace; leading and trailing
+punctuation or symbols are trimmed from each term, terms that become empty are
+ignored, and a repeated term counts once. Matching remains substring-based and
+language-neutral: no stopword list is applied.
+
 `recall` requires a non-empty objective plus positive limits for items,
 traversal depth, serialized payload bytes, deterministic expansion cost,
 timeout, and supernode degree. Contract maxima are 10,000 items, depth 16,

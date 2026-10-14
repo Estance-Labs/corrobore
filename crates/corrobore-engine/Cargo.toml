@@ -29,6 +29,7 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 subtle = { workspace = true }
 thiserror = { workspace = true }
+unicode-normalization = "0.1.25"
 
 [dev-dependencies]
 opencti-adapter = { path = "../opencti-adapter" }

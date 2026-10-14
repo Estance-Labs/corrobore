@@ -657,3 +657,37 @@ async fn merging_consolidation_moves_evidence_and_survives_restart() {
     assert_eq!(records[1]["lifecycle"], "superseded");
     assert_eq!(records[1]["superseded_by"], alpha_id.as_str());
 }
+
+#[tokio::test]
+async fn accented_objectives_match_case_and_accent_insensitively() {
+    let storage = temp_storage();
+    let app = build_router(persistent_state(&storage));
+    let mut payload = remember_payload();
+    payload["input"]["content"]["value"] = json!("Romain préfère la bière belge");
+    let remembered = execute(&app, payload, "unicode-remember").await;
+    let id = remembered["result"]["result"]["record"]["id"].clone();
+    let recall = execute(
+        &app,
+        json!({
+            "contract_version": "v1",
+            "operation": "recall",
+            "input": {
+                "objective": "Quelle BIERE prefere-t-il ?",
+                "seed_ids": [],
+                "limits": {"max_items": 10, "max_depth": 1, "max_payload_bytes": 65536, "max_cost": 100, "timeout_ms": 1000, "supernode_threshold": 20},
+                "page_token": null
+            }
+        }),
+        "unicode-recall",
+    )
+    .await;
+    let items = recall["result"]["result"]["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["record"]["id"], id);
+    assert!(
+        items[0]["selection_reasons"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("objective_lexical_match"))
+    );
+}

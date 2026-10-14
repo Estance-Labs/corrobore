@@ -2067,7 +2067,7 @@ fn recall_operation(
         &context.workspace_id,
         &input.objective,
     )?;
-    let objective = input.objective.to_ascii_lowercase();
+    let terms = objective_terms(&input.objective);
     let now = ReadClock::new(heat);
     let all_nodes = graph
         .list_nodes()
@@ -2098,17 +2098,16 @@ fn recall_operation(
         .iter()
         .filter_map(|node| {
             let record = memory_record_at(node, &now).ok()?;
-            let haystack = format!(
+            let haystack = fold_text(&format!(
                 "{} {} {} {}",
                 record.identity_key.as_deref().unwrap_or_default(),
                 record.kind,
                 content_text(&record.content),
                 record.tags.join(" ")
-            )
-            .to_ascii_lowercase();
-            let matches = objective
-                .split_whitespace()
-                .filter(|term| haystack.contains(term))
+            ));
+            let matches = terms
+                .iter()
+                .filter(|term| haystack.contains(term.as_str()))
                 .count();
             (matches > 0).then_some((node.id().as_str().to_owned(), matches, record.heat))
         })
@@ -3669,6 +3668,32 @@ fn append_unique<T: Clone + PartialEq>(target: &mut Vec<T>, values: &[T]) {
             target.push(value.clone());
         }
     }
+}
+
+/// Fold text for matching: Unicode lowercase, NFKD decomposition, and
+/// removal of combining marks, so `Bière`, `BIÈRE`, and `biere` are equal.
+fn fold_text(value: &str) -> String {
+    use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
+    value
+        .to_lowercase()
+        .nfkd()
+        .filter(|character| !is_combining_mark(*character))
+        .collect()
+}
+
+/// Objective terms: whitespace-separated, folded, trimmed of leading and
+/// trailing punctuation or symbols, empty terms ignored, each term once.
+fn objective_terms(objective: &str) -> Vec<String> {
+    let mut terms = Vec::new();
+    for raw in objective.split_whitespace() {
+        let term = fold_text(raw)
+            .trim_matches(|character: char| !character.is_alphanumeric())
+            .to_owned();
+        if !term.is_empty() && !terms.contains(&term) {
+            terms.push(term);
+        }
+    }
+    terms
 }
 
 fn content_text(content: &MemoryContent) -> String {
