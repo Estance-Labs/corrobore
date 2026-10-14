@@ -65,12 +65,12 @@ Evidence and confidence remain owned by each assertion.
 
 When Corrobore is exposed as agent tools, preserve the transport boundary:
 
-- health, metrics, seed search, Cypher reads, claim audit, memory recall and trace, export, session health, and session logs are read operations;
+- health, metrics, seed search, Cypher reads, claim audit, memory recall, trace and get, export, session health, and session logs are read operations;
 - candidate submission, repair, reviewed promotion, reconciliation application/undo, validation with correction persistence, memory remember/relate/update/forget/consolidate, session start, and session stop change durable state;
 - never route a mutation through a read tool or retry a policy rejection through a broader endpoint.
 
 The packaged MCP tools are the `mcp` projection of one runtime capability
-catalogue: `corrobore_ready`, `corrobore_claim_audit`, the seven memory tools,
+catalogue: `corrobore_ready`, `corrobore_claim_audit`, the memory tools,
 and the three STIX tools. Raw Cypher execution is HTTP-only and is not a tool.
 Whether a capability writes and what authorization it needs is decided in the
 catalogue, never by a tool description. When the host runs you through the agent

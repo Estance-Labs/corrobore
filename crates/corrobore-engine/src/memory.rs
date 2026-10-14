@@ -173,7 +173,7 @@ impl MemoryRequest {
     }
 }
 
-/// Seven high-level memory operations.
+/// Domain-neutral high-level memory operations.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "operation", content = "input", rename_all = "snake_case")]
 pub enum MemoryOperation {
@@ -191,6 +191,8 @@ pub enum MemoryOperation {
     Consolidate(ConsolidateRequest),
     /// Explain a record, relationship, recall, or mutation.
     Trace(TraceRequest),
+    /// Read current records and relationships by identity key or engine id.
+    Get(MemoryGetRequest),
 }
 
 /// Domain-neutral memory content.
@@ -454,6 +456,79 @@ pub struct TraceRequest {
     pub target: MemoryTarget,
 }
 
+/// Maximum number of lookup values accepted by one `get` request.
+pub const MEMORY_GET_MAX_VALUES: usize = 100;
+
+/// Input for `get`: current records resolved by application identity key or
+/// engine id.
+///
+/// Every field is optional and defaults to empty; a request must name between
+/// one and [`MEMORY_GET_MAX_VALUES`] values in total. Empty arrays are omitted
+/// when serialized, so the canonical request stays minimal.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryGetRequest {
+    /// Application identity keys of memories.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub identity_keys: Vec<String>,
+    /// Engine ids of memories.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ids: Vec<String>,
+    /// Application identity keys of relationships.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relationship_identity_keys: Vec<String>,
+    /// Engine ids of relationships.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relationship_ids: Vec<String>,
+}
+
+impl MemoryGetRequest {
+    fn value_count(&self) -> usize {
+        self.identity_keys.len()
+            + self.ids.len()
+            + self.relationship_identity_keys.len()
+            + self.relationship_ids.len()
+    }
+}
+
+/// Lookup field a `get` value was supplied in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryLookupField {
+    /// `identity_keys`.
+    IdentityKeys,
+    /// `ids`.
+    Ids,
+    /// `relationship_identity_keys`.
+    RelationshipIdentityKeys,
+    /// `relationship_ids`.
+    RelationshipIds,
+}
+
+/// One requested value that resolved to no visible record.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryGetMiss {
+    /// Field the value was supplied in.
+    pub field: MemoryLookupField,
+    /// The unresolved value.
+    pub value: String,
+}
+
+/// Result of `get`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MemoryGetResult {
+    /// Current memory records, in request order, each at most once.
+    pub records: Vec<MemoryRecord>,
+    /// Current relationships, in request order, each at most once.
+    pub relationships: Vec<MemoryRelationship>,
+    /// Requested values that resolved to nothing visible in the workspace.
+    pub missing: Vec<MemoryGetMiss>,
+}
+
+const fn default_recallable() -> bool {
+    true
+}
+
 /// One public memory record.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MemoryRecord {
@@ -485,6 +560,15 @@ pub struct MemoryRecord {
     pub version: u64,
     /// Application tags.
     pub tags: Vec<String>,
+    /// Canonical memory that superseded this record through an approved
+    /// consolidation, if any.
+    #[serde(default)]
+    pub superseded_by: Option<String>,
+    /// Whether ordinary recall currently considers this record: active
+    /// lifecycle, not past `expires_at`, and inside its validity window.
+    /// Derived at read time; never accepted as input.
+    #[serde(default = "default_recallable")]
+    pub recallable: bool,
 }
 
 /// One public relationship record with first-class metadata.
@@ -518,6 +602,11 @@ pub struct MemoryRelationship {
     pub lifecycle: MemoryLifecycle,
     /// Monotonic record version.
     pub version: u64,
+    /// Whether recall traversal currently considers this relationship: active
+    /// lifecycle, not past `expires_at`, and inside its validity window.
+    /// Derived at read time; never accepted as input.
+    #[serde(default = "default_recallable")]
+    pub recallable: bool,
 }
 
 /// Stable receipt returned only after the configured durability gate.
@@ -676,7 +765,7 @@ pub struct TraceResult {
     pub details: BTreeMap<String, String>,
 }
 
-/// Responses for the seven high-level operations.
+/// Responses for the high-level operations.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "operation", content = "result", rename_all = "snake_case")]
 pub enum MemoryResponse {
@@ -721,6 +810,8 @@ pub enum MemoryResponse {
     Consolidate(ConsolidationResult),
     /// Trace result.
     Trace(TraceResult),
+    /// Lookup result.
+    Get(MemoryGetResult),
 }
 
 /// Stable error taxonomy shared by embedded and standalone adapters.
@@ -894,6 +985,7 @@ const P_VALID_UNTIL: &str = "corrobore.memory.valid_until";
 const P_RECORDED_AT: &str = "corrobore.memory.recorded_at";
 const P_EXPIRES_AT: &str = "corrobore.memory.expires_at";
 const P_LIFECYCLE: &str = "corrobore.memory.lifecycle";
+const P_SUPERSEDED_BY: &str = "corrobore.memory.superseded_by";
 const P_FUSION_ORIGINS: &str = "corrobore.memory.fusion_origins";
 const P_FUSED_AUTHORITY: &str = "corrobore.memory.fused_authority";
 const P_FUSION_POLICY: &str = "corrobore.memory.fusion_policy";
@@ -931,7 +1023,7 @@ fn validate_request_permission(
         MemoryOperation::Remember(_) | MemoryOperation::Relate(_) | MemoryOperation::Update(_) => {
             context.permissions.write
         }
-        MemoryOperation::Recall(_) => context.permissions.read,
+        MemoryOperation::Recall(_) | MemoryOperation::Get(_) => context.permissions.read,
         MemoryOperation::Forget(_) => context.permissions.forget,
         MemoryOperation::Consolidate(_) => context.permissions.consolidate,
         MemoryOperation::Trace(_) => context.permissions.trace,
@@ -1028,6 +1120,32 @@ fn validate_request(request: &MemoryRequest) -> Result<(), MemoryError> {
             | MemoryTarget::Recall(id)
             | MemoryTarget::Mutation(id) => require_text("target.id", id)?,
         },
+        MemoryOperation::Get(input) => validate_get(input)?,
+    }
+    Ok(())
+}
+
+// A lookup names 1..=100 non-blank values in total, so one request is bounded
+// regardless of how the values are split across the four lookup fields.
+fn validate_get(input: &MemoryGetRequest) -> Result<(), MemoryError> {
+    let count = input.value_count();
+    if count == 0 || count > MEMORY_GET_MAX_VALUES {
+        return Err(invalid(format!(
+            "get requires 1 to {MEMORY_GET_MAX_VALUES} lookup values"
+        )));
+    }
+    for (field, values) in [
+        ("identity_keys", &input.identity_keys),
+        ("ids", &input.ids),
+        (
+            "relationship_identity_keys",
+            &input.relationship_identity_keys,
+        ),
+        ("relationship_ids", &input.relationship_ids),
+    ] {
+        for value in values {
+            require_text(field, value)?;
+        }
     }
     Ok(())
 }
@@ -1158,7 +1276,116 @@ fn execute_operation(
         MemoryOperation::Forget(input) => forget_operation(graph, context, input),
         MemoryOperation::Consolidate(input) => consolidate_operation(graph, context, input),
         MemoryOperation::Trace(input) => trace_operation(graph, recall_traces, context, input),
+        MemoryOperation::Get(input) => get_operation(graph, context, input),
     }
+}
+
+// Resolve every requested value against one pass over the trusted workspace
+// projection: identity keys are indexed once (first engine id wins, matching
+// the record `remember` upserts), ids are direct lookups. Tombstoned records
+// are absent from current reads, and records of other workspaces fail the
+// workspace filter, so both surface as `missing` exactly like unknown values.
+fn get_operation(
+    graph: &Graph,
+    context: &MemoryServiceContext,
+    input: &MemoryGetRequest,
+) -> Result<MemoryResponse, MemoryError> {
+    let now = Utc::now().to_rfc3339();
+    let workspace = context.workspace_id.as_str();
+    let mut missing = Vec::new();
+    let mut records = Vec::new();
+    let mut seen_records = BTreeSet::new();
+
+    if !input.identity_keys.is_empty() {
+        let mut by_identity = BTreeMap::<String, Node>::new();
+        for node in graph.list_nodes().map_err(map_graph_error)? {
+            if node.has_label(MEMORY_LABEL)
+                && belongs_to_node(&node, workspace)
+                && let Some(identity) = string_property(node.properties(), P_IDENTITY)
+            {
+                by_identity.entry(identity.to_owned()).or_insert(node);
+            }
+        }
+        for key in &input.identity_keys {
+            match by_identity.get(key) {
+                Some(node) => {
+                    if seen_records.insert(node.id().as_str().to_owned()) {
+                        records.push(memory_record_at(node, &now)?);
+                    }
+                }
+                None => missing.push(MemoryGetMiss {
+                    field: MemoryLookupField::IdentityKeys,
+                    value: key.clone(),
+                }),
+            }
+        }
+    }
+    for id in &input.ids {
+        match visible_memory_node(graph, workspace, id) {
+            Ok(node) => {
+                if seen_records.insert(node.id().as_str().to_owned()) {
+                    records.push(memory_record_at(&node, &now)?);
+                }
+            }
+            Err(error) if error.code == MemoryErrorCode::NotFound => {
+                missing.push(MemoryGetMiss {
+                    field: MemoryLookupField::Ids,
+                    value: id.clone(),
+                });
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    let mut relationships = Vec::new();
+    let mut seen_relationships = BTreeSet::new();
+    if !input.relationship_identity_keys.is_empty() {
+        let mut by_identity = BTreeMap::<String, Relationship>::new();
+        for relationship in graph.list_relationships().map_err(map_graph_error)? {
+            if belongs_to_relationship(&relationship, workspace)
+                && let Some(identity) = string_property(relationship.properties(), P_REL_IDENTITY)
+            {
+                by_identity
+                    .entry(identity.to_owned())
+                    .or_insert(relationship);
+            }
+        }
+        for key in &input.relationship_identity_keys {
+            match by_identity.get(key) {
+                Some(relationship) => {
+                    if seen_relationships.insert(relationship.id().as_str().to_owned()) {
+                        relationships.push(memory_relationship_at(relationship, &now)?);
+                    }
+                }
+                None => missing.push(MemoryGetMiss {
+                    field: MemoryLookupField::RelationshipIdentityKeys,
+                    value: key.clone(),
+                }),
+            }
+        }
+    }
+    for id in &input.relationship_ids {
+        match visible_memory_relationship(graph, workspace, id) {
+            Ok(relationship) => {
+                if seen_relationships.insert(relationship.id().as_str().to_owned()) {
+                    relationships.push(memory_relationship_at(&relationship, &now)?);
+                }
+            }
+            Err(error) if error.code == MemoryErrorCode::NotFound => {
+                missing.push(MemoryGetMiss {
+                    field: MemoryLookupField::RelationshipIds,
+                    value: id.clone(),
+                });
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Ok(MemoryResponse::Get(MemoryGetResult {
+        records,
+        relationships,
+        missing,
+    }))
 }
 
 fn remember_operation(
@@ -1420,7 +1647,7 @@ fn recall_operation(
     let mut lexical = all_nodes
         .iter()
         .filter_map(|node| {
-            let record = memory_record(node).ok()?;
+            let record = memory_record_at(node, &now).ok()?;
             let haystack = format!(
                 "{} {} {} {}",
                 record.identity_key.as_deref().unwrap_or_default(),
@@ -1518,7 +1745,7 @@ fn recall_operation(
         .iter()
         .filter_map(|id| by_id.get(id))
         .map(|node| {
-            let record = memory_record(node)?;
+            let record = memory_record_at(node, &now)?;
             let depth = depths.get(record.id.as_str()).copied().unwrap_or(0);
             let mut reasons = Vec::new();
             if input.seed_ids.contains(&record.id) {
@@ -1550,7 +1777,7 @@ fn recall_operation(
             page_set.contains(relationship.source().as_str())
                 && page_set.contains(relationship.target().as_str())
         })
-        .map(|relationship| memory_relationship(&relationship))
+        .map(|relationship| memory_relationship_at(&relationship, &now))
         .collect::<Result<Vec<_>, _>>()?;
     let mut truncated = more || !outcomes.is_empty() || !queue.is_empty();
     let recall_id = format!(
@@ -1947,10 +2174,7 @@ fn consolidate_operation(
                         P_RECORDED_AT,
                         PropertyValue::String(Utc::now().to_rfc3339()),
                     )
-                    .set_property(
-                        "corrobore.memory.superseded_by",
-                        PropertyValue::String(canonical.clone()),
-                    )
+                    .set_property(P_SUPERSEDED_BY, PropertyValue::String(canonical.clone()))
                     .set_property(
                         "corrobore.memory.consolidation_policy",
                         PropertyValue::String(approval_policy.clone()),
@@ -2198,7 +2422,7 @@ fn mark_replayed(mut response: MemoryResponse) -> MemoryResponse {
         | MemoryResponse::UpdateRelationship { receipt, .. }
         | MemoryResponse::Forget { receipt, .. } => Some(receipt),
         MemoryResponse::Consolidate(result) => result.receipt.as_mut(),
-        MemoryResponse::Recall(_) | MemoryResponse::Trace(_) => None,
+        MemoryResponse::Recall(_) | MemoryResponse::Trace(_) | MemoryResponse::Get(_) => None,
     };
     if let Some(receipt) = receipt {
         receipt.replayed = true;
@@ -2276,6 +2500,12 @@ fn visible_relationship_versions(
 }
 
 fn memory_record(node: &Node) -> Result<MemoryRecord, MemoryError> {
+    memory_record_at(node, &Utc::now().to_rfc3339())
+}
+
+// Project one stored memory version at a read instant. Derived fields such as
+// `recallable` are evaluated against `now`, so one response is consistent.
+fn memory_record_at(node: &Node, now: &str) -> Result<MemoryRecord, MemoryError> {
     Ok(MemoryRecord {
         id: node.id().as_str().to_owned(),
         identity_key: string_property(node.properties(), P_IDENTITY).map(str::to_owned),
@@ -2292,10 +2522,19 @@ fn memory_record(node: &Node) -> Result<MemoryRecord, MemoryError> {
         lifecycle: lifecycle_property(node.properties(), node.status()),
         version: node.version(),
         tags: json_property(node.properties(), P_TAGS).unwrap_or_default(),
+        superseded_by: string_property(node.properties(), P_SUPERSEDED_BY).map(str::to_owned),
+        recallable: node.status() != RecordStatus::Tombstoned && visible_at(node.properties(), now),
     })
 }
 
 fn memory_relationship(relationship: &Relationship) -> Result<MemoryRelationship, MemoryError> {
+    memory_relationship_at(relationship, &Utc::now().to_rfc3339())
+}
+
+fn memory_relationship_at(
+    relationship: &Relationship,
+    now: &str,
+) -> Result<MemoryRelationship, MemoryError> {
     Ok(MemoryRelationship {
         id: relationship.id().as_str().to_owned(),
         identity_key: string_property(relationship.properties(), P_REL_IDENTITY).map(str::to_owned),
@@ -2315,6 +2554,8 @@ fn memory_relationship(relationship: &Relationship) -> Result<MemoryRelationship
         expires_at: string_property(relationship.properties(), P_EXPIRES_AT).map(str::to_owned),
         lifecycle: lifecycle_property(relationship.properties(), relationship.status()),
         version: relationship.version(),
+        recallable: relationship.status() != RecordStatus::Tombstoned
+            && visible_at(relationship.properties(), now),
     })
 }
 

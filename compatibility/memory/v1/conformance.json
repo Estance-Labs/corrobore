@@ -37,12 +37,20 @@
       "operation": "trace",
       "mutation": false,
       "required": ["target"]
+    },
+    {
+      "operation": "get",
+      "mutation": false,
+      "required": [],
+      "lookup_by": ["identity_keys", "ids", "relationship_identity_keys", "relationship_ids"],
+      "max_values": 100
     }
   ],
   "invariants": [
     "trusted context is not part of an operation payload",
     "mutations require idempotency and return a durability-gated receipt",
     "workspace-hidden targets use the same not-found surface",
+    "lookup by identity key or id reports unresolved values as missing and keeps lifecycle visible",
     "consolidation retains originals and disagreements",
     "application forgetting is distinct from regulatory erasure"
   ]

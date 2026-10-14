@@ -157,6 +157,7 @@ fn public_contract_is_versioned_domain_neutral_and_contains_no_cypher_field() {
             "forget",
             "consolidate",
             "trace",
+            "get",
         ])
     );
 }

@@ -18,6 +18,7 @@ const expectedTools = [
   'corrobore_claim_audit',
   'corrobore_consolidate',
   'corrobore_forget',
+  'corrobore_get',
   'corrobore_ready',
   'corrobore_recall',
   'corrobore_relate',
@@ -194,7 +195,7 @@ test('tools map to the documented HTTP methods, paths, bodies, query, and bearer
     await initialize(client);
     let id = 10;
     await callTool(client, id++, 'corrobore_ready');
-    const operations = ['remember', 'relate', 'recall', 'update', 'forget', 'consolidate', 'trace'];
+    const operations = ['remember', 'relate', 'recall', 'update', 'forget', 'consolidate', 'trace', 'get'];
     for (const operation of operations) {
       const args = { input: { marker: operation } };
       if (['remember', 'relate', 'update', 'forget'].includes(operation)) {
@@ -238,13 +239,14 @@ test('tools map to the documented HTTP methods, paths, bodies, query, and bearer
         body: expected,
       });
     }
-    assert.equal(upstream.requests[8].method, 'POST');
-    assert.equal(upstream.requests[8].url, '/v1/import/stix');
-    assert.equal(upstream.requests[8].body.bundle.type, 'bundle');
-    assert.deepEqual(upstream.requests[9].body, { source: 'graph', snapshot_id: 'snapshot--test' });
-    assert.equal(upstream.requests[9].url, '/v1/stix/validate');
+    const stix = operations.length + 1;
+    assert.equal(upstream.requests[stix].method, 'POST');
+    assert.equal(upstream.requests[stix].url, '/v1/import/stix');
+    assert.equal(upstream.requests[stix].body.bundle.type, 'bundle');
+    assert.deepEqual(upstream.requests[stix + 1].body, { source: 'graph', snapshot_id: 'snapshot--test' });
+    assert.equal(upstream.requests[stix + 1].url, '/v1/stix/validate');
     assert.equal(
-      upstream.requests[10].url,
+      upstream.requests[stix + 2].url,
       '/v1/export/stix?snapshot_id=snapshot--test&transaction_id=transaction--test&exporter_version=contract-test&mode=permissive&profile=stix-mvp&force=true',
     );
   } finally {

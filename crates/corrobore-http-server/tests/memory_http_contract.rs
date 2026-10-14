@@ -125,7 +125,7 @@ async fn execute(app: &Router, payload: Value, correlation: &str) -> Value {
 }
 
 #[tokio::test]
-async fn standalone_adapter_passes_the_shared_seven_operation_conformance_journey() {
+async fn standalone_adapter_passes_the_shared_operation_conformance_journey() {
     let corpus: Value = serde_json::from_str(include_str!(
         "../../../compatibility/memory/v1/conformance.json"
     ))
@@ -180,6 +180,33 @@ async fn standalone_adapter_passes_the_shared_seven_operation_conformance_journe
     )
     .await;
     seen.insert("relate".to_owned());
+
+    let lookup = execute(
+        &app,
+        json!({
+            "contract_version": "v1",
+            "operation": "get",
+            "input": {
+                "identity_keys": ["http-memory", "http-memory-unknown"],
+                "relationship_identity_keys": ["http-relation"]
+            }
+        }),
+        "corpus-get",
+    )
+    .await;
+    seen.insert("get".to_owned());
+    assert_eq!(lookup["result"]["operation"], "get");
+    let found = &lookup["result"]["result"];
+    assert_eq!(found["records"].as_array().unwrap().len(), 1);
+    assert_eq!(found["records"][0]["id"], alpha_id.as_str());
+    assert_eq!(found["records"][0]["lifecycle"], "active");
+    assert_eq!(found["records"][0]["recallable"], true);
+    assert_eq!(found["records"][0]["superseded_by"], Value::Null);
+    assert_eq!(found["relationships"][0]["identity_key"], "http-relation");
+    assert_eq!(
+        found["missing"],
+        json!([{"field": "identity_keys", "value": "http-memory-unknown"}])
+    );
 
     let recall = execute(
         &app,
@@ -338,6 +365,25 @@ async fn standalone_adapter_reuses_contract_and_persists_memory_after_restart() 
     assert_eq!(
         payload["result"]["result"]["session_id"],
         "session--standalone-api"
+    );
+
+    // The application identity key resolves to the same durable record after
+    // the restart, without the client mirroring engine ids.
+    let restarted = persistent_state(&storage);
+    let lookup = execute(
+        &build_router(restarted),
+        json!({
+            "contract_version": "v1",
+            "operation": "get",
+            "input": {"identity_keys": ["http-memory"]}
+        }),
+        "memory-http-get-after-restart",
+    )
+    .await;
+    assert_eq!(lookup["result"]["result"]["records"][0]["id"], memory_id);
+    assert_eq!(
+        lookup["result"]["result"]["records"][0]["identity_key"],
+        "http-memory"
     );
 }
 

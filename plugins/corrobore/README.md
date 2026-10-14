@@ -98,11 +98,12 @@ is restricted to HTTP and is not a tool.
 | `corrobore_forget` | `memory.forget` | `POST /v1/memory/operations` | Authorized expiry, tombstone, or application deletion semantics. |
 | `corrobore_consolidate` | `memory.consolidate` | `POST /v1/memory/operations` | Operator-approved proposal or approved apply; optional `authority_policy` cap and `revoked_source_ids` revocation. |
 | `corrobore_trace` | `memory.trace` | `POST /v1/memory/operations` | Bounded provenance and policy trace. |
+| `corrobore_get` | `memory.get` | `POST /v1/memory/operations` | Current memories and relationships by identity key or id, lifecycle included. |
 | `corrobore_stix_import` | `stix.import` | `POST /v1/import/stix` | STIX 2.1 import with optional retained evidence. |
 | `corrobore_stix_validate` | `stix.validate` | `POST /v1/stix/validate` | Bundle or graph validation; supported playbooks may persist corrections. |
 | `corrobore_stix_export` | `stix.export` | `GET /v1/export/stix` | Deterministic CTI-scoped STIX projection; strict by default. |
 
-The seven memory tools always add `contract_version: "v1"` and select the
+The memory tools always add `contract_version: "v1"` and select the
 operation named by the tool. Callers still own complete operation input,
 explicit recall limits, mutation authority, and mutation idempotency keys. MCP
 annotations are hints only and are never an authorization decision.

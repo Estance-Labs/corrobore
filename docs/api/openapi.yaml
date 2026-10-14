@@ -1166,7 +1166,7 @@ components:
           description: Required for remember, relate, update, forget, and approved consolidation apply.
         operation:
           type: string
-          enum: [remember, relate, recall, update, forget, consolidate, trace]
+          enum: [remember, relate, recall, update, forget, consolidate, trace, get]
         input:
           oneOf:
             - $ref: '#/components/schemas/RememberMemoryInput'
@@ -1176,6 +1176,7 @@ components:
             - $ref: '#/components/schemas/ForgetMemoryInput'
             - $ref: '#/components/schemas/ConsolidateMemoryInput'
             - $ref: '#/components/schemas/TraceMemoryInput'
+            - $ref: '#/components/schemas/GetMemoryInput'
       description: Trusted workspace, actor, agent, session, permissions, request, and correlation fields are not accepted in this payload.
     RememberMemoryInput:
       type: object
@@ -1282,6 +1283,80 @@ components:
       required: [target]
       properties:
         target: {$ref: '#/components/schemas/MemoryTarget'}
+    GetMemoryInput:
+      type: object
+      additionalProperties: false
+      description: Read current records by application identity key or engine id. Between 1 and 100 non-blank values in total across the four arrays; requires the read permission and no idempotency key.
+      properties:
+        identity_keys: {type: array, items: {type: string, minLength: 1}}
+        ids: {type: array, items: {type: string, minLength: 1}}
+        relationship_identity_keys: {type: array, items: {type: string, minLength: 1}}
+        relationship_ids: {type: array, items: {type: string, minLength: 1}}
+    MemoryLifecycle:
+      type: string
+      enum: [active, expired, superseded, tombstoned]
+    MemoryRecord:
+      type: object
+      description: One current memory record. Unknown optional fields may be added within v1; clients should tolerate them.
+      required: [id, kind, schema_version, content, provenance, recorded_at, lifecycle, version, tags, recallable]
+      properties:
+        id: {type: string}
+        identity_key: {type: [string, 'null']}
+        kind: {type: string}
+        schema_version: {type: string}
+        content: {$ref: '#/components/schemas/MemoryContent'}
+        provenance: {type: array, items: {$ref: '#/components/schemas/MemoryProvenanceReference'}}
+        confidence: {type: [number, 'null'], minimum: 0, maximum: 1}
+        valid_from: {type: [string, 'null'], format: date-time}
+        valid_until: {type: [string, 'null'], format: date-time}
+        recorded_at: {type: string, format: date-time}
+        expires_at: {type: [string, 'null'], format: date-time}
+        lifecycle: {$ref: '#/components/schemas/MemoryLifecycle'}
+        version: {type: integer, minimum: 1}
+        tags: {type: array, items: {type: string}}
+        superseded_by:
+          type: [string, 'null']
+          description: Canonical memory that superseded this record through an approved consolidation.
+        recallable:
+          type: boolean
+          description: Read-time derivation; whether ordinary recall currently considers the record (active lifecycle, not past expires_at, inside its validity window).
+    MemoryRelationship:
+      type: object
+      description: One current relationship record with first-class metadata. Unknown optional fields may be added within v1; clients should tolerate them.
+      required: [id, source_id, target_id, kind, properties, provenance, recorded_at, lifecycle, version, recallable]
+      properties:
+        id: {type: string}
+        identity_key: {type: [string, 'null']}
+        source_id: {type: string}
+        target_id: {type: string}
+        kind: {type: string}
+        properties: {}
+        provenance: {type: array, items: {$ref: '#/components/schemas/MemoryProvenanceReference'}}
+        confidence: {type: [number, 'null'], minimum: 0, maximum: 1}
+        valid_from: {type: [string, 'null'], format: date-time}
+        valid_until: {type: [string, 'null'], format: date-time}
+        recorded_at: {type: string, format: date-time}
+        expires_at: {type: [string, 'null'], format: date-time}
+        lifecycle: {$ref: '#/components/schemas/MemoryLifecycle'}
+        version: {type: integer, minimum: 1}
+        recallable:
+          type: boolean
+          description: Read-time derivation; whether recall traversal currently considers the relationship.
+    GetMemoryResult:
+      type: object
+      required: [records, relationships, missing]
+      properties:
+        records: {type: array, items: {$ref: '#/components/schemas/MemoryRecord'}}
+        relationships: {type: array, items: {$ref: '#/components/schemas/MemoryRelationship'}}
+        missing:
+          type: array
+          description: Requested values that resolved to nothing visible; hidden, tombstoned, and unknown values are indistinguishable.
+          items:
+            type: object
+            required: [field, value]
+            properties:
+              field: {type: string, enum: [identity_keys, ids, relationship_identity_keys, relationship_ids]}
+              value: {type: string}
     MemoryOperationResponse:
       type: object
       required: [contract_version, result]
@@ -1291,9 +1366,9 @@ components:
           type: object
           required: [operation, result]
           properties:
-            operation: {type: string, enum: [remember, relate, recall, update, update_relationship, forget, consolidate, trace]}
+            operation: {type: string, enum: [remember, relate, recall, update, update_relationship, forget, consolidate, trace, get]}
             result:
-              description: Typed record, relationship, recall, consolidation, trace, or durability-gated mutation receipt result.
+              description: Typed record, relationship, recall, consolidation, trace, lookup (GetMemoryResult), or durability-gated mutation receipt result. Records follow MemoryRecord and relationships follow MemoryRelationship.
 
 paths:
   /v1/memory/operations:

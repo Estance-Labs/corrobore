@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (name) => fs.readFileSync(path.join(root, name), 'utf8');
 
-test('engine contract owns seven domain-neutral operations and trusted context', () => {
+test('engine contract owns the domain-neutral operations and trusted context', () => {
   const source = read('crates/corrobore-engine/src/memory.rs');
   for (const operation of [
     'Remember',
@@ -20,6 +20,7 @@ test('engine contract owns seven domain-neutral operations and trusted context',
     'Forget',
     'Consolidate',
     'Trace',
+    'Get',
   ]) {
     assert.match(source, new RegExp(`\\b${operation}\\(`));
   }
@@ -94,7 +95,7 @@ test('shared v1 conformance corpus covers every operation without Cypher', () =>
   assert.equal(corpus.contract_version, 'v1');
   assert.deepEqual(
     new Set(corpus.operations.map((entry) => entry.operation)),
-    new Set(['remember', 'relate', 'recall', 'update', 'forget', 'consolidate', 'trace']),
+    new Set(['remember', 'relate', 'recall', 'update', 'forget', 'consolidate', 'trace', 'get']),
   );
   assert.equal(JSON.stringify(corpus).toLowerCase().includes('cypher'), false);
 });

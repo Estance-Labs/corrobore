@@ -2,11 +2,12 @@
 
 Corrobore exposes a domain-neutral memory contract for ordinary SDK, SaaS, MCP,
 embedded, and standalone clients. The default contract is not a query language:
-clients choose one of seven operations and never need to know graph labels,
-storage records, or Cypher templates.
+clients choose one of a small set of operations and never need to know graph
+labels, storage records, or Cypher templates.
 
 The version-one journey is **remember → relate → recall → update → trace → forget**.
-`consolidate` is a separate policy-gated maintenance operation.
+`consolidate` is a separate policy-gated maintenance operation, and `get` reads
+current records back by application identity key or engine id.
 Advanced Cypher remains available through its explicit embedded and HTTP
 interfaces and has a separate authorization boundary.
 
@@ -36,6 +37,11 @@ A memory has an engine ID, optional application identity key,
 application-defined kind and schema version, text and/or structured properties,
 source references, confidence, validity and recorded time, optional expiry,
 lifecycle, tags, and a monotonic version. No domain provider is required.
+Returned records also carry two read-only fields derived at read time:
+`superseded_by` (the canonical memory after an approved consolidation, else
+`null`) and `recallable` (whether ordinary recall currently considers the record:
+active lifecycle, not past `expires_at`, inside its validity window). Returned
+relationships carry `recallable` with the same meaning for recall traversal.
 
 A relationship is a versioned record, not an anonymous edge. It owns its ID,
 optional application identity, endpoints, kind, structured properties,
@@ -52,6 +58,7 @@ provenance, confidence, temporal metadata, expiry, lifecycle, and version.
 | `forget` | Expire, tombstone, or apply application deletion semantics so ordinary recall no longer returns the memory. |
 | `consolidate` | Produce a non-destructive proposal, or apply a matching approved proposal while retaining originals and explicit disagreements. The fused memory retains back-pointers to every origin and an authority capped by the strongest justified source, never raised by repetition. |
 | `trace` | Explain memory/relationship versions, recall selection paths, evidence, actor/agent/session attribution, mutation correlation, and policy decisions. |
+| `get` | Read current memories and relationships by application identity key or engine id. Expired and superseded records are returned with their lifecycle; unresolved values are listed in `missing`. |
 
 ## Example
 
@@ -110,6 +117,53 @@ The response includes the committed record and a stable receipt:
 The abbreviated record above omits fields only for readability; the actual
 response returns the complete typed record.
 
+## Lookup by identity key or id
+
+`get` is a read: it needs the `read` permission and no idempotency key. Its
+input accepts any combination of four optional arrays, with between 1 and 100
+non-blank values in total:
+
+```json
+{
+  "contract_version": "v1",
+  "operation": "get",
+  "input": {
+    "identity_keys": ["person:alice", "person:unknown"],
+    "ids": ["node--7"],
+    "relationship_identity_keys": ["alice-knows-bob"],
+    "relationship_ids": []
+  }
+}
+```
+
+```json
+{
+  "contract_version": "v1",
+  "result": {
+    "operation": "get",
+    "result": {
+      "records": [
+        {"id": "node--3", "identity_key": "person:alice", "lifecycle": "active", "recallable": true, "superseded_by": null, "version": 4},
+        {"id": "node--7", "identity_key": "person:al", "lifecycle": "superseded", "recallable": false, "superseded_by": "node--3", "version": 2}
+      ],
+      "relationships": [
+        {"id": "rel--1", "identity_key": "alice-knows-bob", "lifecycle": "active", "recallable": true, "version": 1}
+      ],
+      "missing": [{"field": "identity_keys", "value": "person:unknown"}]
+    }
+  }
+}
+```
+
+Records and relationships are returned in request order (identity keys before
+ids), each at most once, as complete typed records (abbreviated above). Expired
+and superseded records stay visible with their `lifecycle`, so a client can
+follow `superseded_by` to the canonical memory. Tombstoned and application-deleted
+records, unknown values, and records of another workspace all appear in
+`missing` with the field they were requested in; the response never reveals
+that another workspace owns a value. A lookup indexes the trusted workspace
+projection once, so its cost does not grow with the number of requested keys.
+
 ## Recall limits and bounded outcomes
 
 `recall` requires a non-empty objective plus positive limits for items,
@@ -132,7 +186,7 @@ records.
 ## Permissions and errors
 
 `read`, `write`, `trace`, `forget`, and `consolidate` permissions are resolved
-and enforced independently. Stable version-one error codes are:
+and enforced independently. `recall` and `get` require `read`. Stable version-one error codes are:
 
 - `INVALID_REQUEST`, `INVALID_BUDGET`, `PERMISSION_DENIED`, and `NOT_FOUND`;
 - `VERSION_CONFLICT`, `IDEMPOTENCY_CONFLICT`, and

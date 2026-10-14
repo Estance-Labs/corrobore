@@ -58,6 +58,18 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
 ### Added
 
+- Memory lookup by identity key or id (#309): the `memory/v1` contract gains a
+  read-only `get` operation. Its input takes any combination of
+  `identity_keys`, `ids`, `relationship_identity_keys`, and
+  `relationship_ids` (1 to 100 values in total) and returns the current
+  `records` and `relationships` in request order plus the unresolved values in
+  `missing`. Expired and superseded records stay visible with their lifecycle;
+  tombstoned, unknown, and other-workspace values share the not-found surface.
+  Records gain the read-only `superseded_by` and `recallable` fields, and
+  relationships gain `recallable`. `get` requires the `read` permission and no
+  idempotency key. The MCP bridge exposes it as `corrobore_get` (`memory.get`
+  in the capability catalogue) and the NLQ validator canonicalizes it as a
+  read. Existing requests and responses are unchanged.
 - Opt-in SQL frontend for the standalone server (epic #90, item #259): the
   `sql-frontend` crate compiles a documented PostgreSQL-flavoured subset
   (`SELECT` with relationship joins, aggregates, ordering, pagination and

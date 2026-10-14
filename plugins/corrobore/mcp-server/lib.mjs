@@ -19,6 +19,7 @@ const MEMORY_OPERATIONS = new Set([
   'forget',
   'consolidate',
   'trace',
+  'get',
 ]);
 const IDEMPOTENCY_REQUIRED = new Set(['remember', 'relate', 'update', 'forget']);
 
@@ -282,6 +283,16 @@ const memoryInputSchemas = {
     required: ['target'],
     properties: { target: targetSchema },
   },
+  get: {
+    type: 'object', additionalProperties: false,
+    description: 'Between 1 and 100 lookup values in total across the four fields.',
+    properties: {
+      identity_keys: stringArray('Application identity keys of memories.', { items: { type: 'string', minLength: 1 } }),
+      ids: stringArray('Engine identifiers of memories.', { items: { type: 'string', minLength: 1 } }),
+      relationship_identity_keys: stringArray('Application identity keys of relationships.', { items: { type: 'string', minLength: 1 } }),
+      relationship_ids: stringArray('Engine identifiers of relationships.', { items: { type: 'string', minLength: 1 } }),
+    },
+  },
 };
 
 function memoryTool(operation, description, annotations) {
@@ -341,6 +352,9 @@ const TOOLS = Object.freeze([
     readOnlyHint: false, destructiveHint: true, idempotentHint: true,
   }),
   memoryTool('trace', 'Read the bounded Corrobore provenance, selection, version, and policy trace for a target.', {
+    readOnlyHint: true, destructiveHint: false, idempotentHint: true,
+  }),
+  memoryTool('get', 'Read current Corrobore memories and relationships by application identity key or engine id, with lifecycle; unresolved values are reported as missing.', {
     readOnlyHint: true, destructiveHint: false, idempotentHint: true,
   }),
   {

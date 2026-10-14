@@ -43,6 +43,13 @@
       "runtime_operation": "memory.forget"
     },
     {
+      "id": "memory.get",
+      "summary": "Read current memories and relationships by identity key or id.",
+      "effect": "read",
+      "authorization": "session",
+      "runtime_operation": "memory.get"
+    },
+    {
       "id": "memory.recall",
       "summary": "Read a bounded explained working set.",
       "effect": "read",

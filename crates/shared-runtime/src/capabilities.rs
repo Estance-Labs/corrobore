@@ -204,6 +204,13 @@ impl CapabilityCatalogue {
                 "memory.forget",
             ),
             Capability::new(
+                "memory.get",
+                "Read current memories and relationships by identity key or id.",
+                CapabilityEffect::Read,
+                CapabilityAuthorization::Session,
+                "memory.get",
+            ),
+            Capability::new(
                 "memory.recall",
                 "Read a bounded explained working set.",
                 CapabilityEffect::Read,

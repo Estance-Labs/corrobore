@@ -194,6 +194,18 @@ fn memory_operations_deserialize_into_the_memory_v1_contract() {
     )
     .unwrap_err();
     assert_eq!(unknown.code, RejectionCode::UnknownMemoryOperation);
+
+    // `get` is a memory/v1 read: it canonicalizes through the engine type and
+    // never counts as a write.
+    let (canonical, writes, sources) =
+        corrobore_nlq::memory_canonical("get", &json!({"identity_keys": ["person:alice"]}))
+            .unwrap();
+    assert_eq!(
+        canonical,
+        r#"memory/v1 get {"identity_keys":["person:alice"]}"#
+    );
+    assert!(!writes);
+    assert!(sources.is_empty());
 }
 
 fn validated_kind(validated: &corrobore_nlq::ValidatedEnvelope) -> ActionKind {

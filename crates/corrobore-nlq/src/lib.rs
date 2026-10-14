@@ -644,8 +644,8 @@ pub fn memory_canonical(
     input: &serde_json::Value,
 ) -> Result<(String, bool, Vec<String>), Rejection> {
     use corrobore_engine::{
-        ConsolidateRequest, ForgetRequest, MemoryUpdateRequest, RecallRequest, RelateRequest,
-        RememberRequest, TraceRequest,
+        ConsolidateRequest, ForgetRequest, MemoryGetRequest, MemoryUpdateRequest, RecallRequest,
+        RelateRequest, RememberRequest, TraceRequest,
     };
     fn typed<T: serde::de::DeserializeOwned + Serialize>(
         operation: &str,
@@ -705,6 +705,11 @@ pub fn memory_canonical(
             Vec::new(),
         ),
         "trace" => (typed::<TraceRequest>(operation, input)?, false, Vec::new()),
+        "get" => (
+            typed::<MemoryGetRequest>(operation, input)?,
+            false,
+            Vec::new(),
+        ),
         other => {
             return Err(reject(
                 RejectionCode::UnknownMemoryOperation,
