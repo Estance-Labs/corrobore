@@ -569,6 +569,20 @@ pub struct MemoryRecord {
     /// Derived at read time; never accepted as input.
     #[serde(default = "default_recallable")]
     pub recallable: bool,
+    /// Number of distinct `provenance[].source_id`. Derived; read-only.
+    #[serde(default)]
+    pub evidence_count: u64,
+    /// Number of distinct UTC dates over each provenance entry's effective
+    /// observation time (`observed_at`, else the time the engine appended the
+    /// entry). Derived; read-only.
+    #[serde(default)]
+    pub distinct_observation_days: u64,
+    /// Earliest effective observation time (RFC 3339 UTC). Derived; read-only.
+    #[serde(default)]
+    pub first_observed_at: Option<String>,
+    /// Latest effective observation time (RFC 3339 UTC). Derived; read-only.
+    #[serde(default)]
+    pub last_observed_at: Option<String>,
 }
 
 /// One public relationship record with first-class metadata.
@@ -607,6 +621,18 @@ pub struct MemoryRelationship {
     /// Derived at read time; never accepted as input.
     #[serde(default = "default_recallable")]
     pub recallable: bool,
+    /// Number of distinct `provenance[].source_id`. Derived; read-only.
+    #[serde(default)]
+    pub evidence_count: u64,
+    /// Number of distinct UTC observation dates. Derived; read-only.
+    #[serde(default)]
+    pub distinct_observation_days: u64,
+    /// Earliest effective observation time (RFC 3339 UTC). Derived; read-only.
+    #[serde(default)]
+    pub first_observed_at: Option<String>,
+    /// Latest effective observation time (RFC 3339 UTC). Derived; read-only.
+    #[serde(default)]
+    pub last_observed_at: Option<String>,
 }
 
 /// Stable receipt returned only after the configured durability gate.
@@ -979,6 +1005,10 @@ const P_SCHEMA: &str = "corrobore.memory.schema_version";
 const P_CONTENT: &str = "corrobore.memory.content";
 const P_PROPERTIES: &str = "corrobore.memory.properties";
 const P_PROVENANCE: &str = "corrobore.memory.provenance";
+// Time each provenance entry was first appended, index-aligned with
+// `P_PROVENANCE`. Records written before it existed fall back to their
+// `recorded_at`.
+const P_PROVENANCE_RECORDED: &str = "corrobore.memory.provenance_recorded_at";
 const P_CONFIDENCE: &str = "corrobore.memory.confidence";
 const P_VALID_FROM: &str = "corrobore.memory.valid_from";
 const P_VALID_UNTIL: &str = "corrobore.memory.valid_until";
@@ -1403,10 +1433,9 @@ fn remember_operation(
     });
 
     let node = if let Some(existing) = existing {
-        let mut provenance =
-            json_property::<Vec<ProvenanceReference>>(existing.properties(), P_PROVENANCE)
-                .unwrap_or_default();
-        append_unique(&mut provenance, &input.provenance);
+        let mut ledger = EvidenceLedger::read(existing.properties());
+        ledger.append(&input.provenance, &now);
+        let provenance = &ledger.provenance;
         let mut patch = NodePatch::default()
             .set_property(P_KIND, PropertyValue::String(input.kind.clone()))
             .set_property(
@@ -1414,7 +1443,8 @@ fn remember_operation(
                 PropertyValue::String(input.schema_version.clone()),
             )
             .set_property(P_CONTENT, json_value(&input.content)?)
-            .set_property(P_PROVENANCE, json_value(&provenance)?)
+            .set_property(P_PROVENANCE, json_value(provenance)?)
+            .set_property(P_PROVENANCE_RECORDED, json_value(&ledger.recorded)?)
             .set_property(P_CONFIDENCE, optional_json_value(input.confidence))
             .set_property(
                 P_VALID_FROM,
@@ -1454,6 +1484,10 @@ fn remember_operation(
             )
             .with_property(P_CONTENT, json_value(&input.content)?)
             .with_property(P_PROVENANCE, json_value(&input.provenance)?)
+            .with_property(
+                P_PROVENANCE_RECORDED,
+                json_value(&vec![now.clone(); input.provenance.len()])?,
+            )
             .with_property(P_CONFIDENCE, optional_json_value(input.confidence))
             .with_property(
                 P_VALID_FROM,
@@ -1517,14 +1551,13 @@ fn relate_operation(
                 })
         });
     let relationship = if let Some(existing) = existing {
-        let mut provenance =
-            json_property::<Vec<ProvenanceReference>>(existing.properties(), P_PROVENANCE)
-                .unwrap_or_default();
-        append_unique(&mut provenance, &input.provenance);
+        let mut ledger = EvidenceLedger::read(existing.properties());
+        ledger.append(&input.provenance, &now);
         let mut patch = RelationshipPatch::default()
             .set_property(P_REL_KIND, PropertyValue::String(input.kind.clone()))
             .set_property(P_PROPERTIES, PropertyValue::Json(input.properties.clone()))
-            .set_property(P_PROVENANCE, json_value(&provenance)?)
+            .set_property(P_PROVENANCE, json_value(&ledger.provenance)?)
+            .set_property(P_PROVENANCE_RECORDED, json_value(&ledger.recorded)?)
             .set_property(P_CONFIDENCE, optional_json_value(input.confidence))
             .set_property(
                 P_VALID_FROM,
@@ -1561,6 +1594,10 @@ fn relate_operation(
                 .with_property(P_REL_KIND, PropertyValue::String(input.kind.clone()))
                 .with_property(P_PROPERTIES, PropertyValue::Json(input.properties.clone()))
                 .with_property(P_PROVENANCE, json_value(&input.provenance)?)
+                .with_property(
+                    P_PROVENANCE_RECORDED,
+                    json_value(&vec![now.clone(); input.provenance.len()])?,
+                )
                 .with_property(P_CONFIDENCE, optional_json_value(input.confidence))
                 .with_property(
                     P_VALID_FROM,
@@ -1927,18 +1964,16 @@ fn common_node_patch(
     context: &MemoryServiceContext,
     input: &UpdatePatch,
 ) -> Result<NodePatch, MemoryError> {
-    let mut provenance =
-        json_property::<Vec<ProvenanceReference>>(properties, P_PROVENANCE).unwrap_or_default();
-    append_unique(&mut provenance, &input.add_provenance);
+    let now = Utc::now().to_rfc3339();
+    let mut ledger = EvidenceLedger::read(properties);
+    ledger.append(&input.add_provenance, &now);
     let mut tags = json_property::<Vec<String>>(properties, P_TAGS).unwrap_or_default();
     append_unique(&mut tags, &input.add_tags);
     let mut patch = NodePatch::default()
-        .set_property(P_PROVENANCE, json_value(&provenance)?)
+        .set_property(P_PROVENANCE, json_value(&ledger.provenance)?)
+        .set_property(P_PROVENANCE_RECORDED, json_value(&ledger.recorded)?)
         .set_property(P_TAGS, json_value(&tags)?)
-        .set_property(
-            P_RECORDED_AT,
-            PropertyValue::String(Utc::now().to_rfc3339()),
-        )
+        .set_property(P_RECORDED_AT, PropertyValue::String(now))
         .set_property(P_ACTOR, PropertyValue::String(context.actor_id.clone()))
         .set_property(P_AGENT, optional_string_value(context.agent_id.as_deref()))
         .set_property(P_SESSION, PropertyValue::String(context.session_id.clone()))
@@ -1967,15 +2002,13 @@ fn common_relationship_patch(
     context: &MemoryServiceContext,
     input: &UpdatePatch,
 ) -> Result<RelationshipPatch, MemoryError> {
-    let mut provenance =
-        json_property::<Vec<ProvenanceReference>>(properties, P_PROVENANCE).unwrap_or_default();
-    append_unique(&mut provenance, &input.add_provenance);
+    let now = Utc::now().to_rfc3339();
+    let mut ledger = EvidenceLedger::read(properties);
+    ledger.append(&input.add_provenance, &now);
     let mut patch = RelationshipPatch::default()
-        .set_property(P_PROVENANCE, json_value(&provenance)?)
-        .set_property(
-            P_RECORDED_AT,
-            PropertyValue::String(Utc::now().to_rfc3339()),
-        )
+        .set_property(P_PROVENANCE, json_value(&ledger.provenance)?)
+        .set_property(P_PROVENANCE_RECORDED, json_value(&ledger.recorded)?)
+        .set_property(P_RECORDED_AT, PropertyValue::String(now))
         .set_property(P_ACTOR, PropertyValue::String(context.actor_id.clone()))
         .set_property(P_AGENT, optional_string_value(context.agent_id.as_deref()))
         .set_property(P_SESSION, PropertyValue::String(context.session_id.clone()))
@@ -2506,6 +2539,7 @@ fn memory_record(node: &Node) -> Result<MemoryRecord, MemoryError> {
 // Project one stored memory version at a read instant. Derived fields such as
 // `recallable` are evaluated against `now`, so one response is consistent.
 fn memory_record_at(node: &Node, now: &str) -> Result<MemoryRecord, MemoryError> {
+    let stats = EvidenceLedger::read(node.properties()).statistics();
     Ok(MemoryRecord {
         id: node.id().as_str().to_owned(),
         identity_key: string_property(node.properties(), P_IDENTITY).map(str::to_owned),
@@ -2524,6 +2558,10 @@ fn memory_record_at(node: &Node, now: &str) -> Result<MemoryRecord, MemoryError>
         tags: json_property(node.properties(), P_TAGS).unwrap_or_default(),
         superseded_by: string_property(node.properties(), P_SUPERSEDED_BY).map(str::to_owned),
         recallable: node.status() != RecordStatus::Tombstoned && visible_at(node.properties(), now),
+        evidence_count: stats.evidence_count,
+        distinct_observation_days: stats.distinct_observation_days,
+        first_observed_at: stats.first_observed_at,
+        last_observed_at: stats.last_observed_at,
     })
 }
 
@@ -2535,6 +2573,7 @@ fn memory_relationship_at(
     relationship: &Relationship,
     now: &str,
 ) -> Result<MemoryRelationship, MemoryError> {
+    let stats = EvidenceLedger::read(relationship.properties()).statistics();
     Ok(MemoryRelationship {
         id: relationship.id().as_str().to_owned(),
         identity_key: string_property(relationship.properties(), P_REL_IDENTITY).map(str::to_owned),
@@ -2556,6 +2595,10 @@ fn memory_relationship_at(
         version: relationship.version(),
         recallable: relationship.status() != RecordStatus::Tombstoned
             && visible_at(relationship.properties(), now),
+        evidence_count: stats.evidence_count,
+        distinct_observation_days: stats.distinct_observation_days,
+        first_observed_at: stats.first_observed_at,
+        last_observed_at: stats.last_observed_at,
     })
 }
 
@@ -2730,6 +2773,94 @@ fn not_found() -> MemoryError {
     )
 }
 
+/// Provenance plus, index-aligned, the time each entry was first appended.
+#[derive(Clone, Debug, Default)]
+struct EvidenceLedger {
+    provenance: Vec<ProvenanceReference>,
+    recorded: Vec<String>,
+}
+
+/// Read-only evidence statistics derived from one ledger.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct EvidenceStatistics {
+    evidence_count: u64,
+    distinct_observation_days: u64,
+    first_observed_at: Option<String>,
+    last_observed_at: Option<String>,
+}
+
+impl EvidenceLedger {
+    // Records written before per-entry recorded times existed, or whose
+    // aligned list is shorter, fall back to the record's own `recorded_at`.
+    fn read(properties: &std::collections::HashMap<String, PropertyValue>) -> Self {
+        let provenance =
+            json_property::<Vec<ProvenanceReference>>(properties, P_PROVENANCE).unwrap_or_default();
+        let mut recorded =
+            json_property::<Vec<String>>(properties, P_PROVENANCE_RECORDED).unwrap_or_default();
+        let fallback = string_property(properties, P_RECORDED_AT)
+            .unwrap_or_default()
+            .to_owned();
+        recorded.truncate(provenance.len());
+        recorded.resize(provenance.len(), fallback);
+        Self {
+            provenance,
+            recorded,
+        }
+    }
+
+    /// Append entries not already present, stamped with `now`; returns the
+    /// newly appended entries.
+    fn append(&mut self, values: &[ProvenanceReference], now: &str) -> Vec<ProvenanceReference> {
+        let mut added = Vec::new();
+        for value in values {
+            if !self.provenance.contains(value) {
+                self.provenance.push(value.clone());
+                self.recorded.push(now.to_owned());
+                added.push(value.clone());
+            }
+        }
+        added
+    }
+
+    /// Effective observation instant of each entry: `observed_at`, else the
+    /// time the engine appended it. Unparseable values are skipped.
+    fn observation_times(&self) -> Vec<DateTime<Utc>> {
+        self.provenance
+            .iter()
+            .zip(&self.recorded)
+            .filter_map(|(entry, recorded)| {
+                entry
+                    .observed_at
+                    .as_deref()
+                    .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+                    .or_else(|| DateTime::parse_from_rfc3339(recorded).ok())
+                    .map(|value| value.with_timezone(&Utc))
+            })
+            .collect()
+    }
+
+    fn statistics(&self) -> EvidenceStatistics {
+        let sources = self
+            .provenance
+            .iter()
+            .map(|entry| entry.source_id.as_str())
+            .collect::<BTreeSet<_>>();
+        let times = self.observation_times();
+        let days = times
+            .iter()
+            .map(DateTime::date_naive)
+            .collect::<BTreeSet<_>>();
+        let render =
+            |value: &DateTime<Utc>| value.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true);
+        EvidenceStatistics {
+            evidence_count: sources.len() as u64,
+            distinct_observation_days: days.len() as u64,
+            first_observed_at: times.iter().min().map(render),
+            last_observed_at: times.iter().max().map(render),
+        }
+    }
+}
+
 fn append_unique<T: Clone + PartialEq>(target: &mut Vec<T>, values: &[T]) {
     for value in values {
         if !target.contains(value) {
@@ -2780,4 +2911,59 @@ fn decode_page_token(
         return Err(not_found());
     }
     Ok(token.offset)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_ledgers_without_recorded_times_fall_back_to_record_time() {
+        let mut properties = std::collections::HashMap::new();
+        properties.insert(
+            P_PROVENANCE.to_owned(),
+            PropertyValue::Json(serde_json::json!([
+                {"source_id": "a", "locator": null, "observed_at": null},
+                {"source_id": "b", "locator": null, "observed_at": "2026-01-01T00:00:00Z"}
+            ])),
+        );
+        properties.insert(
+            P_RECORDED_AT.to_owned(),
+            PropertyValue::String("2026-03-04T05:06:07Z".to_owned()),
+        );
+        let mut ledger = EvidenceLedger::read(&properties);
+        assert_eq!(ledger.recorded.len(), 2);
+        let stats = ledger.statistics();
+        assert_eq!(stats.evidence_count, 2);
+        assert_eq!(stats.distinct_observation_days, 2);
+        assert_eq!(
+            stats.first_observed_at.as_deref(),
+            Some("2026-01-01T00:00:00Z")
+        );
+        assert_eq!(
+            stats.last_observed_at.as_deref(),
+            Some("2026-03-04T05:06:07Z")
+        );
+
+        let added = ledger.append(
+            &[
+                ProvenanceReference {
+                    source_id: "a".to_owned(),
+                    locator: None,
+                    observed_at: None,
+                },
+                ProvenanceReference {
+                    source_id: "c".to_owned(),
+                    locator: None,
+                    observed_at: None,
+                },
+            ],
+            "2026-05-01T00:00:00Z",
+        );
+        assert_eq!(added.len(), 1, "a known entry is not appended again");
+        assert_eq!(
+            ledger.recorded.last().map(String::as_str),
+            Some("2026-05-01T00:00:00Z")
+        );
+    }
 }

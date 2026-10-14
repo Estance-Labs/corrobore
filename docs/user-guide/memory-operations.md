@@ -43,6 +43,20 @@ Returned records also carry two read-only fields derived at read time:
 active lifecycle, not past `expires_at`, inside its validity window). Returned
 relationships carry `recallable` with the same meaning for recall traversal.
 
+Records and relationships also expose evidence statistics derived from their
+provenance (read-only, never accepted as input):
+
+| Field | Meaning |
+| :--- | :--- |
+| `evidence_count` | Number of distinct `provenance[].source_id`. |
+| `distinct_observation_days` | Number of distinct UTC calendar dates over each entry's effective observation time. |
+| `first_observed_at`, `last_observed_at` | Earliest and latest effective observation time, RFC 3339 UTC; `null` without provenance. |
+
+An entry's effective observation time is its `observed_at`, or the time the
+engine first appended the entry when the source gave none. The engine keeps
+that append time per entry; records written before this field existed fall back
+to their `recorded_at`.
+
 A relationship is a versioned record, not an anonymous edge. It owns its ID,
 optional application identity, endpoints, kind, structured properties,
 provenance, confidence, temporal metadata, expiry, lifecycle, and version.

@@ -58,6 +58,12 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
 ### Added
 
+- Evidence statistics on memory records and relationships (#310): responses
+  carry the read-only `evidence_count` (distinct `source_id`),
+  `distinct_observation_days` (distinct UTC dates of each entry's
+  `observed_at`, else the time the engine appended it), `first_observed_at`,
+  and `last_observed_at`. The engine now retains each provenance entry's append
+  time; older records fall back to their `recorded_at`.
 - Memory lookup by identity key or id (#309): the `memory/v1` contract gains a
   read-only `get` operation. Its input takes any combination of
   `identity_keys`, `ids`, `relationship_identity_keys`, and

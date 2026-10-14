@@ -202,6 +202,13 @@ async fn standalone_adapter_passes_the_shared_operation_conformance_journey() {
     assert_eq!(found["records"][0]["lifecycle"], "active");
     assert_eq!(found["records"][0]["recallable"], true);
     assert_eq!(found["records"][0]["superseded_by"], Value::Null);
+    assert_eq!(found["records"][0]["evidence_count"], 1);
+    assert_eq!(found["records"][0]["distinct_observation_days"], 1);
+    assert_eq!(
+        found["records"][0]["first_observed_at"],
+        "2026-07-26T00:00:00Z"
+    );
+    assert_eq!(found["relationships"][0]["evidence_count"], 1);
     assert_eq!(found["relationships"][0]["identity_key"], "http-relation");
     assert_eq!(
         found["missing"],
@@ -384,6 +391,14 @@ async fn standalone_adapter_reuses_contract_and_persists_memory_after_restart() 
     assert_eq!(
         lookup["result"]["result"]["records"][0]["identity_key"],
         "http-memory"
+    );
+    assert_eq!(
+        lookup["result"]["result"]["records"][0]["evidence_count"],
+        1
+    );
+    assert_eq!(
+        lookup["result"]["result"]["records"][0]["last_observed_at"],
+        "2026-07-26T00:00:00Z"
     );
 }
 

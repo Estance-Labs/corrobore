@@ -1320,6 +1320,10 @@ components:
         recallable:
           type: boolean
           description: Read-time derivation; whether ordinary recall currently considers the record (active lifecycle, not past expires_at, inside its validity window).
+        evidence_count: {type: integer, minimum: 0, description: Distinct provenance source_id values (read-only).}
+        distinct_observation_days: {type: integer, minimum: 0, description: Distinct UTC dates of each entry's observed_at, else the time the engine appended it (read-only).}
+        first_observed_at: {type: [string, 'null'], format: date-time, description: Earliest effective observation time, UTC (read-only).}
+        last_observed_at: {type: [string, 'null'], format: date-time, description: Latest effective observation time, UTC (read-only).}
     MemoryRelationship:
       type: object
       description: One current relationship record with first-class metadata. Unknown optional fields may be added within v1; clients should tolerate them.
@@ -1342,6 +1346,10 @@ components:
         recallable:
           type: boolean
           description: Read-time derivation; whether recall traversal currently considers the relationship.
+        evidence_count: {type: integer, minimum: 0, description: Distinct provenance source_id values (read-only).}
+        distinct_observation_days: {type: integer, minimum: 0, description: Distinct UTC dates of each entry's observed_at, else the time the engine appended it (read-only).}
+        first_observed_at: {type: [string, 'null'], format: date-time, description: Earliest effective observation time, UTC (read-only).}
+        last_observed_at: {type: [string, 'null'], format: date-time, description: Latest effective observation time, UTC (read-only).}
     GetMemoryResult:
       type: object
       required: [records, relationships, missing]
