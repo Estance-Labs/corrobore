@@ -44,6 +44,11 @@
       "required": [],
       "lookup_by": ["identity_keys", "ids", "relationship_identity_keys", "relationship_ids"],
       "max_values": 100
+    },
+    {
+      "operation": "reinforce",
+      "mutation": true,
+      "required": ["target", "amount"]
     }
   ],
   "invariants": [
@@ -52,6 +57,7 @@
     "workspace-hidden targets use the same not-found surface",
     "lookup by identity key or id reports unresolved values as missing and keeps lifecycle visible",
     "consolidation retains originals and disagreements",
+    "heat decays lazily with a configured half-life and only new evidence or reinforce deposits it",
     "application forgetting is distinct from regulatory erasure"
   ]
 }

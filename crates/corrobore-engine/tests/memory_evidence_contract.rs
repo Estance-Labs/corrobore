@@ -54,6 +54,7 @@ fn remember(
         valid_until: None,
         expires_at: None,
         tags: vec![],
+        durable: None,
     }))
     .with_idempotency_key(idempotency);
     match engine.execute_memory(&context(), &request).unwrap() {

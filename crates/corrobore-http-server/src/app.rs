@@ -239,6 +239,7 @@ impl AppState {
         ));
         let engine = initialize_engine(
             &runtime_store,
+            config.memory_heat_policy,
             config.storage_require_fsync,
             Arc::clone(&opencti_write),
         )?;
@@ -570,13 +571,21 @@ impl EnginePersistence for PersistentEnginePersistence {
 
 fn initialize_engine(
     runtime_store: &RuntimeStoreProvider,
+    memory_heat_policy: corrobore_engine::MemoryHeatPolicy,
     _require_fsync: bool,
     opencti_write: Arc<Mutex<OpenCtiWriteRuntime>>,
 ) -> Result<CorroboreEngine, AppStateInitError> {
     let RuntimeStoreProvider::Persistent(runtime) = runtime_store else {
-        return Ok(CorroboreEngine::strict_default());
+        return CorroboreEngine::builder()
+            .memory_heat_policy(memory_heat_policy)
+            .build()
+            .map_err(|error| AppStateInitError::PersistentStorageRecoveryFailed {
+                path: "ephemeral".to_owned(),
+                reason: error.to_string(),
+            });
     };
     CorroboreEngine::builder()
+        .memory_heat_policy(memory_heat_policy)
         .persistence(Box::new(PersistentEnginePersistence {
             store: Arc::clone(&runtime.canonical_store),
             opencti_write,

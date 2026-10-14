@@ -21,6 +21,7 @@ const expectedTools = [
   'corrobore_get',
   'corrobore_ready',
   'corrobore_recall',
+  'corrobore_reinforce',
   'corrobore_relate',
   'corrobore_remember',
   'corrobore_stix_export',
@@ -195,10 +196,11 @@ test('tools map to the documented HTTP methods, paths, bodies, query, and bearer
     await initialize(client);
     let id = 10;
     await callTool(client, id++, 'corrobore_ready');
-    const operations = ['remember', 'relate', 'recall', 'update', 'forget', 'consolidate', 'trace', 'get'];
+    const operations = ['remember', 'relate', 'recall', 'update', 'forget', 'consolidate', 'trace', 'get', 'reinforce'];
+    const mutations = ['remember', 'relate', 'update', 'forget', 'reinforce'];
     for (const operation of operations) {
       const args = { input: { marker: operation } };
-      if (['remember', 'relate', 'update', 'forget'].includes(operation)) {
+      if (mutations.includes(operation)) {
         args.idempotency_key = `idem-${operation}`;
       }
       const response = await callTool(client, id++, `corrobore_${operation}`, args);
@@ -229,7 +231,7 @@ test('tools map to the documented HTTP methods, paths, bodies, query, and bearer
         operation,
         input: { marker: operation },
       };
-      if (['remember', 'relate', 'update', 'forget'].includes(operation)) {
+      if (mutations.includes(operation)) {
         expected.idempotency_key = `idem-${operation}`;
       }
       assert.deepEqual(upstream.requests[index + 1], {

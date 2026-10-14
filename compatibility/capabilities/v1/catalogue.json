@@ -57,6 +57,13 @@
       "runtime_operation": "memory.recall"
     },
     {
+      "id": "memory.reinforce",
+      "summary": "Deposit a usage reward or penalty on a memory or relationship's decaying heat.",
+      "effect": "mutation",
+      "authorization": "mutation_permission",
+      "runtime_operation": "memory.reinforce"
+    },
+    {
       "id": "memory.relate",
       "summary": "Create or version an evidence-bearing relationship.",
       "effect": "mutation",

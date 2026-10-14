@@ -195,6 +195,28 @@ async fn standalone_adapter_passes_the_shared_operation_conformance_journey() {
     )
     .await;
     seen.insert("get".to_owned());
+
+    let reinforced = execute(
+        &app,
+        json!({
+            "contract_version": "v1",
+            "idempotency_key": "http:reinforce:1",
+            "operation": "reinforce",
+            "input": {"target": {"kind": "memory", "id": alpha_id}, "amount": 2.0, "reason": "used in an answer"}
+        }),
+        "corpus-reinforce",
+    )
+    .await;
+    seen.insert("reinforce".to_owned());
+    assert_eq!(reinforced["result"]["operation"], "reinforce");
+    let before = lookup["result"]["result"]["records"][0]["heat"]
+        .as_f64()
+        .unwrap();
+    let after = reinforced["result"]["result"]["record"]["heat"]
+        .as_f64()
+        .unwrap();
+    assert!((after - before - 2.0).abs() < 1e-3, "{before} -> {after}");
+    assert!(reinforced["result"]["result"]["record"]["heat_updated_at"].is_string());
     assert_eq!(lookup["result"]["operation"], "get");
     let found = &lookup["result"]["result"];
     assert_eq!(found["records"].as_array().unwrap().len(), 1);
@@ -245,7 +267,8 @@ async fn standalone_adapter_passes_the_shared_operation_conformance_journey() {
             "operation": "update",
             "input": {
                 "target": {"kind": "memory", "id": alpha_id},
-                "expected_version": 1,
+                // `reinforce` above committed version 2.
+                "expected_version": 2,
                 "patch": {
                     "content": null,
                     "confidence": 0.95,
@@ -418,4 +441,147 @@ async fn untrusted_payload_cannot_override_workspace_or_permissions() {
     let payload: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(payload["error"]["code"], "INVALID_REQUEST");
     assert_eq!(payload["correlation_id"], "memory-http-untrusted");
+}
+
+fn admin_state(storage_dir: &Path, extra: &[(&str, &str)]) -> AppState {
+    let runtime = storage_dir.parent().unwrap().join("runtime");
+    let mut vars = HashMap::from([
+        (
+            "CORROBORE_HTTP_AUTH_TOKEN".to_owned(),
+            "memory-token".to_owned(),
+        ),
+        (
+            "CORROBORE_HTTP_ADMIN_AUTH_TOKEN".to_owned(),
+            "memory-admin".to_owned(),
+        ),
+        ("CORROBORE_STORAGE_MODE".to_owned(), "persistent".to_owned()),
+        (
+            "CORROBORE_STORAGE_DIR".to_owned(),
+            storage_dir.display().to_string(),
+        ),
+        (
+            "CORROBORE_HTTP_SESSION_STORE_DIR".to_owned(),
+            runtime.display().to_string(),
+        ),
+    ]);
+    for (name, value) in extra {
+        vars.insert((*name).to_owned(), (*value).to_owned());
+    }
+    AppState::new(ServerConfig::from_map(&vars).unwrap()).unwrap()
+}
+
+#[test]
+fn heat_policy_configuration_has_defaults_and_rejects_invalid_values() {
+    let base = HashMap::from([(
+        "CORROBORE_HTTP_AUTH_TOKEN".to_owned(),
+        "memory-token".to_owned(),
+    )]);
+    let config = ServerConfig::from_map(&base).unwrap();
+    assert!((config.memory_heat_policy.half_life_days() - 21.0).abs() < f64::EPSILON);
+    assert!((config.memory_heat_policy.evidence_reward() - 1.0).abs() < f64::EPSILON);
+    assert!(config.memory_heat_policy.cold_threshold().abs() < f64::EPSILON);
+
+    let mut tuned = base.clone();
+    tuned.insert(
+        "CORROBORE_MEMORY_HEAT_HALF_LIFE_DAYS".to_owned(),
+        "7.5".to_owned(),
+    );
+    tuned.insert(
+        "CORROBORE_MEMORY_HEAT_EVIDENCE_REWARD".to_owned(),
+        "2".to_owned(),
+    );
+    tuned.insert(
+        "CORROBORE_MEMORY_HEAT_COLD_THRESHOLD".to_owned(),
+        "0.25".to_owned(),
+    );
+    let config = ServerConfig::from_map(&tuned).unwrap();
+    assert!((config.memory_heat_policy.half_life_days() - 7.5).abs() < f64::EPSILON);
+    assert!((config.memory_heat_policy.cold_threshold() - 0.25).abs() < f64::EPSILON);
+
+    for (name, value) in [
+        ("CORROBORE_MEMORY_HEAT_HALF_LIFE_DAYS", "0"),
+        ("CORROBORE_MEMORY_HEAT_HALF_LIFE_DAYS", "-3"),
+        ("CORROBORE_MEMORY_HEAT_HALF_LIFE_DAYS", "NaN"),
+        ("CORROBORE_MEMORY_HEAT_HALF_LIFE_DAYS", "soon"),
+        ("CORROBORE_MEMORY_HEAT_EVIDENCE_REWARD", "-1"),
+        ("CORROBORE_MEMORY_HEAT_COLD_THRESHOLD", "inf"),
+        ("CORROBORE_MEMORY_HEAT_COLD_THRESHOLD", "-0.5"),
+    ] {
+        let mut invalid = base.clone();
+        invalid.insert(name.to_owned(), value.to_owned());
+        assert!(
+            ServerConfig::from_map(&invalid).is_err(),
+            "{name}={value} must be rejected"
+        );
+    }
+}
+
+#[tokio::test]
+async fn heat_and_durability_survive_restart_and_snapshot_restore() {
+    let storage = temp_storage();
+    let app = build_router(admin_state(&storage, &[]));
+    let mut payload = remember_payload();
+    payload["input"]["durable"] = json!(true);
+    let remembered = execute(&app, payload, "heat-remember").await;
+    let memory_id = remembered["result"]["result"]["record"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(remembered["result"]["result"]["record"]["durable"], true);
+    let reinforced = execute(
+        &app,
+        json!({
+            "contract_version": "v1",
+            "idempotency_key": "heat:reinforce",
+            "operation": "reinforce",
+            "input": {"target": {"kind": "memory", "id": memory_id}, "amount": 3.0}
+        }),
+        "heat-reinforce",
+    )
+    .await;
+    let record = &reinforced["result"]["result"]["record"];
+    let heat = record["heat"].as_f64().unwrap();
+    let updated_at = record["heat_updated_at"].as_str().unwrap().to_owned();
+    assert!(heat > 3.0);
+
+    let snapshot = storage.parent().unwrap().join("snapshot");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/admin/storage/snapshots")
+                .header(header::AUTHORIZATION, "Bearer memory-admin")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"destination": snapshot, "retention_hook": "test"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    drop(app);
+
+    let lookup = json!({
+        "contract_version": "v1",
+        "operation": "get",
+        "input": {"identity_keys": ["http-memory"]}
+    });
+    let assert_retained = |payload: &Value| {
+        let record = &payload["result"]["result"]["records"][0];
+        assert_eq!(record["id"], memory_id.as_str());
+        assert_eq!(record["durable"], true);
+        assert_eq!(record["heat_updated_at"], updated_at.as_str());
+        // Lazy decay between the reinforce and this read is negligible.
+        assert!((record["heat"].as_f64().unwrap() - heat).abs() < 1e-3);
+    };
+    let restarted = build_router(admin_state(&storage, &[]));
+    assert_retained(&execute(&restarted, lookup.clone(), "heat-restart").await);
+    drop(restarted);
+
+    let restored = storage.parent().unwrap().join("restored");
+    graph_storage::restore_consistent_snapshot(&snapshot, &restored, None).unwrap();
+    let restored_app = build_router(admin_state(&restored, &[]));
+    assert_retained(&execute(&restored_app, lookup, "heat-restored").await);
 }

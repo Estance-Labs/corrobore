@@ -1163,10 +1163,10 @@ components:
           type: [string, 'null']
           minLength: 1
           maxLength: 256
-          description: Required for remember, relate, update, forget, and approved consolidation apply.
+          description: Required for remember, relate, update, forget, reinforce, and approved consolidation apply.
         operation:
           type: string
-          enum: [remember, relate, recall, update, forget, consolidate, trace, get]
+          enum: [remember, relate, recall, update, forget, consolidate, trace, get, reinforce]
         input:
           oneOf:
             - $ref: '#/components/schemas/RememberMemoryInput'
@@ -1177,6 +1177,7 @@ components:
             - $ref: '#/components/schemas/ConsolidateMemoryInput'
             - $ref: '#/components/schemas/TraceMemoryInput'
             - $ref: '#/components/schemas/GetMemoryInput'
+            - $ref: '#/components/schemas/ReinforceMemoryInput'
       description: Trusted workspace, actor, agent, session, permissions, request, and correlation fields are not accepted in this payload.
     RememberMemoryInput:
       type: object
@@ -1193,6 +1194,7 @@ components:
         valid_until: {type: [string, 'null'], format: date-time}
         expires_at: {type: [string, 'null'], format: date-time}
         tags: {type: array, items: {type: string}}
+        durable: {type: boolean, description: Exempt from cold expiry. Omit to keep the stored flag on an upsert (false on creation).}
     RelateMemoryInput:
       type: object
       additionalProperties: false
@@ -1235,6 +1237,7 @@ components:
             lifecycle: {type: string, enum: [active, expired, superseded, tombstoned]}
             expires_at: {type: string, format: date-time}
             add_tags: {type: array, items: {type: string}}
+            durable: {type: boolean, description: Set or clear the exemption from cold expiry (memories only).}
     ForgetMemoryInput:
       type: object
       additionalProperties: false
@@ -1283,6 +1286,21 @@ components:
       required: [target]
       properties:
         target: {$ref: '#/components/schemas/MemoryTarget'}
+    ReinforceMemoryInput:
+      type: object
+      additionalProperties: false
+      required: [target, amount]
+      description: Deposit a usage reward (positive) or penalty (negative) on a memory or relationship's decaying heat. Requires the write permission and an idempotency key; heat never goes below zero.
+      properties:
+        target:
+          type: object
+          additionalProperties: false
+          required: [kind, id]
+          properties:
+            kind: {type: string, enum: [memory, relationship]}
+            id: {type: string, minLength: 1}
+        amount: {type: number, minimum: -1000, maximum: 1000, not: {const: 0}}
+        reason: {type: string, minLength: 1}
     GetMemoryInput:
       type: object
       additionalProperties: false
@@ -1324,6 +1342,9 @@ components:
         distinct_observation_days: {type: integer, minimum: 0, description: Distinct UTC dates of each entry's observed_at, else the time the engine appended it (read-only).}
         first_observed_at: {type: [string, 'null'], format: date-time, description: Earliest effective observation time, UTC (read-only).}
         last_observed_at: {type: [string, 'null'], format: date-time, description: Latest effective observation time, UTC (read-only).}
+        heat: {type: number, minimum: 0, description: Current heat decayed to the response time (half-life CORROBORE_MEMORY_HEAT_HALF_LIFE_DAYS).}
+        heat_updated_at: {type: [string, 'null'], format: date-time, description: Time of the last heat deposit; null while heat is derived from provenance only.}
+        durable: {type: boolean, description: Exempt from cold expiry.}
     MemoryRelationship:
       type: object
       description: One current relationship record with first-class metadata. Unknown optional fields may be added within v1; clients should tolerate them.
@@ -1350,6 +1371,8 @@ components:
         distinct_observation_days: {type: integer, minimum: 0, description: Distinct UTC dates of each entry's observed_at, else the time the engine appended it (read-only).}
         first_observed_at: {type: [string, 'null'], format: date-time, description: Earliest effective observation time, UTC (read-only).}
         last_observed_at: {type: [string, 'null'], format: date-time, description: Latest effective observation time, UTC (read-only).}
+        heat: {type: number, minimum: 0, description: Current heat decayed to the response time (half-life CORROBORE_MEMORY_HEAT_HALF_LIFE_DAYS).}
+        heat_updated_at: {type: [string, 'null'], format: date-time, description: Time of the last heat deposit; null while heat is derived from provenance only.}
     GetMemoryResult:
       type: object
       required: [records, relationships, missing]
@@ -1374,7 +1397,7 @@ components:
           type: object
           required: [operation, result]
           properties:
-            operation: {type: string, enum: [remember, relate, recall, update, update_relationship, forget, consolidate, trace, get]}
+            operation: {type: string, enum: [remember, relate, recall, update, update_relationship, forget, consolidate, trace, get, reinforce, reinforce_relationship]}
             result:
               description: Typed record, relationship, recall, consolidation, trace, lookup (GetMemoryResult), or durability-gated mutation receipt result. Records follow MemoryRecord and relationships follow MemoryRelationship.
 

@@ -98,6 +98,7 @@ is restricted to HTTP and is not a tool.
 | `corrobore_forget` | `memory.forget` | `POST /v1/memory/operations` | Authorized expiry, tombstone, or application deletion semantics. |
 | `corrobore_consolidate` | `memory.consolidate` | `POST /v1/memory/operations` | Operator-approved proposal or approved apply; optional `authority_policy` cap and `revoked_source_ids` revocation. |
 | `corrobore_trace` | `memory.trace` | `POST /v1/memory/operations` | Bounded provenance and policy trace. |
+| `corrobore_reinforce` | `memory.reinforce` | `POST /v1/memory/operations` | Authorized usage reward or penalty on a memory or relationship's decaying heat. |
 | `corrobore_get` | `memory.get` | `POST /v1/memory/operations` | Current memories and relationships by identity key or id, lifecycle included. |
 | `corrobore_stix_import` | `stix.import` | `POST /v1/import/stix` | STIX 2.1 import with optional retained evidence. |
 | `corrobore_stix_validate` | `stix.validate` | `POST /v1/stix/validate` | Bundle or graph validation; supported playbooks may persist corrections. |

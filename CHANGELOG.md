@@ -58,6 +58,20 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
 ### Added
 
+- Memory heat with reinforcement, decay, and opt-in cold expiry (#311): every
+  memory and relationship carries a heat value that decays lazily with a
+  configurable half-life (`CORROBORE_MEMORY_HEAT_HALF_LIFE_DAYS`, default 21).
+  Each newly appended provenance entry deposits
+  `CORROBORE_MEMORY_HEAT_EVIDENCE_REWARD` (default 1.0) decayed from its
+  `observed_at`, and the new `reinforce` mutation (`target`, `amount`,
+  optional `reason`) deposits a usage reward or penalty. Records and
+  relationships expose `heat` and `heat_updated_at`; memories expose and accept
+  `durable` (`remember`, `update.patch`). With
+  `CORROBORE_MEMORY_HEAT_COLD_THRESHOLD` above its default `0`, recall treats
+  non-durable memories below the threshold as expired. Heat breaks ties
+  between equal objective matches. The MCP bridge exposes `corrobore_reinforce`
+  (`memory.reinforce`); embedded hosts use
+  `CorroboreEngineBuilder::memory_heat_policy`.
 - Evidence statistics on memory records and relationships (#310): responses
   carry the read-only `evidence_count` (distinct `source_id`),
   `distinct_observation_days` (distinct UTC dates of each entry's

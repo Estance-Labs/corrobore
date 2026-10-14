@@ -409,9 +409,17 @@ pub struct CorroboreEngineBuilder {
     budget: Option<RuntimeBudget>,
     execution_policy: Option<ExecutionPolicy>,
     persistence: Option<Box<dyn EnginePersistence>>,
+    memory_heat: MemoryHeatPolicy,
 }
 
 impl CorroboreEngineBuilder {
+    /// Configures the reinforcement, decay, and cold-expiry policy applied to
+    /// memory heat.
+    pub fn memory_heat_policy(mut self, policy: MemoryHeatPolicy) -> Self {
+        self.memory_heat = policy;
+        self
+    }
+
     /// Sets the workspace identifier used for every request.
     pub fn workspace_id(mut self, value: impl Into<String>) -> Self {
         self.workspace_id = Some(value.into());
@@ -527,6 +535,7 @@ impl CorroboreEngineBuilder {
             security_audit_events: Vec::new(),
             advanced_query_cache: BTreeMap::new(),
             memory_recall_traces: BTreeMap::new(),
+            memory_heat: self.memory_heat,
         })
     }
 }
@@ -545,6 +554,7 @@ pub struct CorroboreEngine {
     security_audit_events: Vec<SecurityAuditEvent>,
     advanced_query_cache: BTreeMap<String, AggregationResult>,
     memory_recall_traces: BTreeMap<String, RecallResult>,
+    memory_heat: MemoryHeatPolicy,
 }
 
 impl CorroboreEngine {

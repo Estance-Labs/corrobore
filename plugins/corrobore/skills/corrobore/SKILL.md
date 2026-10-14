@@ -66,7 +66,7 @@ Evidence and confidence remain owned by each assertion.
 When Corrobore is exposed as agent tools, preserve the transport boundary:
 
 - health, metrics, seed search, Cypher reads, claim audit, memory recall, trace and get, export, session health, and session logs are read operations;
-- candidate submission, repair, reviewed promotion, reconciliation application/undo, validation with correction persistence, memory remember/relate/update/forget/consolidate, session start, and session stop change durable state;
+- candidate submission, repair, reviewed promotion, reconciliation application/undo, validation with correction persistence, memory remember/relate/update/forget/reinforce/consolidate, session start, and session stop change durable state;
 - never route a mutation through a read tool or retry a policy rejection through a broader endpoint.
 
 The packaged MCP tools are the `mcp` projection of one runtime capability

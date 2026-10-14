@@ -27,8 +27,8 @@ Solve the assigned task by keeping state in Corrobore instead of context-only me
 When the host exposes the packaged MCP tools instead of raw HTTP, the memory
 contract is `corrobore_remember`, `corrobore_relate`, `corrobore_recall`,
 `corrobore_update`, `corrobore_forget`, `corrobore_consolidate`,
-`corrobore_trace`, and `corrobore_get` (read current records by identity key or
-id), with `corrobore_ready` first and `corrobore_claim_audit` before any
+`corrobore_trace`, `corrobore_get` (read current records by identity key or
+id), and `corrobore_reinforce` (deposit usage on a record's decaying heat), with `corrobore_ready` first and `corrobore_claim_audit` before any
 verdict. Mutations need an idempotency key; consolidation proposes
 first, applies only an approved proposal, names its `authority_policy`, and lists
 `revoked_source_ids` explicitly. Fused authority is the strongest justified

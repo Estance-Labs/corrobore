@@ -20,8 +20,9 @@ const MEMORY_OPERATIONS = new Set([
   'consolidate',
   'trace',
   'get',
+  'reinforce',
 ]);
-const IDEMPOTENCY_REQUIRED = new Set(['remember', 'relate', 'update', 'forget']);
+const IDEMPOTENCY_REQUIRED = new Set(['remember', 'relate', 'update', 'forget', 'reinforce']);
 
 class RpcError extends Error {
   constructor(code, message, data) {
@@ -177,6 +178,7 @@ const memoryInputSchemas = {
       valid_until: nullableString('Optional RFC 3339 validity end.'),
       expires_at: nullableString('Optional RFC 3339 expiry.'),
       tags: stringArray('Application-owned tags.'),
+      durable: { type: 'boolean', description: 'Exempt the memory from cold expiry. Omit to keep the stored flag on an upsert.' },
     },
   },
   relate: {
@@ -236,6 +238,7 @@ const memoryInputSchemas = {
           }),
           expires_at: string('RFC 3339 expiry.'),
           add_tags: stringArray('Tags to append.'),
+          durable: { type: 'boolean', description: 'Set or clear the exemption from cold expiry.' },
         },
       },
     },
@@ -282,6 +285,21 @@ const memoryInputSchemas = {
     type: 'object', additionalProperties: false,
     required: ['target'],
     properties: { target: targetSchema },
+  },
+  reinforce: {
+    type: 'object', additionalProperties: false,
+    required: ['target', 'amount'],
+    properties: {
+      target: {
+        type: 'object', additionalProperties: false, required: ['kind', 'id'],
+        properties: {
+          kind: string('Target kind.', { enum: ['memory', 'relationship'] }),
+          id: string('Visible memory or relationship identifier.', { minLength: 1 }),
+        },
+      },
+      amount: { type: 'number', minimum: -1000, maximum: 1000, description: 'Non-zero heat deposit; negative values are a penalty and heat never goes below zero.' },
+      reason: string('Optional auditable reason.', { minLength: 1 }),
+    },
   },
   get: {
     type: 'object', additionalProperties: false,
@@ -353,6 +371,9 @@ const TOOLS = Object.freeze([
   }),
   memoryTool('trace', 'Read the bounded Corrobore provenance, selection, version, and policy trace for a target.', {
     readOnlyHint: true, destructiveHint: false, idempotentHint: true,
+  }),
+  memoryTool('reinforce', 'Deposit a usage reward (or penalty) on the decaying heat of a Corrobore memory or relationship, for example after using it in an answer.', {
+    readOnlyHint: false, destructiveHint: false, idempotentHint: true,
   }),
   memoryTool('get', 'Read current Corrobore memories and relationships by application identity key or engine id, with lifecycle; unresolved values are reported as missing.', {
     readOnlyHint: true, destructiveHint: false, idempotentHint: true,

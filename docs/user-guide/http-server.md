@@ -51,6 +51,9 @@ Application errors use the JSON envelope above. Transport middleware can reject 
 | `CORROBORE_MEMORY_AGENT_ID` | unset | Optional trusted agent attribution for high-level memory operations. |
 | `CORROBORE_MEMORY_SESSION_ID` | `session--standalone-api` | Trusted session attribution for high-level memory operations. |
 | `CORROBORE_MEMORY_PERMISSIONS` | `read,write,trace,forget,consolidate` | Independently enabled high-level capabilities; omit a capability to deny it after bearer authentication. |
+| `CORROBORE_MEMORY_HEAT_HALF_LIFE_DAYS` | `21` | Half-life of memory and relationship heat, in days (positive, at most 36500). |
+| `CORROBORE_MEMORY_HEAT_EVIDENCE_REWARD` | `1.0` | Heat deposited per newly appended provenance entry, decayed from its observation time. |
+| `CORROBORE_MEMORY_HEAT_COLD_THRESHOLD` | `0` | Recall treats non-durable memories below this current heat as expired; `0` disables cold expiry. |
 | `CORROBORE_HTTP_HOST` | `127.0.0.1` | Bind host. Set `0.0.0.0` deliberately for containers or remote access. |
 | `CORROBORE_HTTP_PORT` | `8080` | Bind port. |
 | `CORROBORE_HTTP_SESSION_STORE_DIR` | `.corrobore-runtime` | Durable session-state directory. |

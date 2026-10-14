@@ -206,6 +206,14 @@ fn memory_operations_deserialize_into_the_memory_v1_contract() {
     );
     assert!(!writes);
     assert!(sources.is_empty());
+
+    // `reinforce` is a memory/v1 write.
+    let (_, writes, _) = corrobore_nlq::memory_canonical(
+        "reinforce",
+        &json!({"target": {"kind": "memory", "id": "node--1"}, "amount": 1.0}),
+    )
+    .unwrap();
+    assert!(writes);
 }
 
 fn validated_kind(validated: &corrobore_nlq::ValidatedEnvelope) -> ActionKind {

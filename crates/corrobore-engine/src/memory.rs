@@ -17,8 +17,8 @@ use crate::memory_fusion::{
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, FixedOffset, Utc};
 use graph_core::{
-    Confidence, Graph, Node, NodeId, NodeInput, NodePatch, PropertyValue, RecordStatus,
-    Relationship, RelationshipId, RelationshipInput, RelationshipPatch,
+    Confidence, Graph, Node, NodeId, NodeInput, NodePatch, PheromoneDecay, PropertyValue,
+    RecordStatus, Relationship, RelationshipId, RelationshipInput, RelationshipPatch,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -193,6 +193,8 @@ pub enum MemoryOperation {
     Trace(TraceRequest),
     /// Read current records and relationships by identity key or engine id.
     Get(MemoryGetRequest),
+    /// Deposit a usage reward (or penalty) on a memory or relationship's heat.
+    Reinforce(ReinforceRequest),
 }
 
 /// Domain-neutral memory content.
@@ -263,6 +265,10 @@ pub struct RememberRequest {
     pub expires_at: Option<String>,
     /// Application tags.
     pub tags: Vec<String>,
+    /// Exempt the memory from cold expiry. Absent keeps the stored flag on an
+    /// upsert and means `false` on creation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub durable: Option<bool>,
 }
 
 /// Input for `relate`.
@@ -369,6 +375,9 @@ pub struct UpdatePatch {
     pub expires_at: Option<String>,
     /// Tags appended to existing tags.
     pub add_tags: Vec<String>,
+    /// Set or clear the memory's exemption from cold expiry. Absent keeps it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub durable: Option<bool>,
 }
 
 /// Input for `update`.
@@ -454,6 +463,131 @@ pub struct ConsolidateRequest {
 pub struct TraceRequest {
     /// Record, recall, or mutation to explain.
     pub target: MemoryTarget,
+}
+
+/// Largest absolute amount accepted by one `reinforce` request.
+pub const MEMORY_REINFORCE_MAX_AMOUNT: f64 = 1_000.0;
+
+/// Input for `reinforce`: deposit a usage reward on a memory or relationship.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReinforceRequest {
+    /// Memory or relationship target.
+    pub target: MemoryTarget,
+    /// Non-zero finite deposit in `[-1000, 1000]`; negative values are a
+    /// penalty and heat never goes below zero.
+    pub amount: f64,
+    /// Optional audit reason retained on the new version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Wall-clock reinforcement and decay policy for memory heat.
+///
+/// Heat follows the pheromone law `τ(t+1) = λ·τ(t) + reward − penalty`
+/// evaluated lazily: a stored value decays as `heat · 0.5^(Δt / half_life)`.
+/// `cold_threshold` greater than zero hides non-durable memories whose current
+/// heat is below it from recall; `0` disables cold expiry.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MemoryHeatPolicy {
+    half_life_days: f64,
+    evidence_reward: f64,
+    cold_threshold: f64,
+}
+
+impl MemoryHeatPolicy {
+    /// Default half-life in days.
+    pub const DEFAULT_HALF_LIFE_DAYS: f64 = 21.0;
+    /// Default reward deposited per newly appended provenance entry.
+    pub const DEFAULT_EVIDENCE_REWARD: f64 = 1.0;
+    /// Default cold threshold (`0` disables cold expiry).
+    pub const DEFAULT_COLD_THRESHOLD: f64 = 0.0;
+
+    /// Validate a policy: a positive finite half-life (at most 100 years) and
+    /// finite, non-negative reward and threshold.
+    pub fn new(
+        half_life_days: f64,
+        evidence_reward: f64,
+        cold_threshold: f64,
+    ) -> Result<Self, MemoryError> {
+        if !half_life_days.is_finite() || half_life_days <= 0.0 || half_life_days > 36_500.0 {
+            return Err(invalid(
+                "memory heat half-life must be finite, positive, and at most 36500 days",
+            ));
+        }
+        if !evidence_reward.is_finite() || evidence_reward < 0.0 {
+            return Err(invalid(
+                "memory heat evidence reward must be finite and non-negative",
+            ));
+        }
+        if !cold_threshold.is_finite() || cold_threshold < 0.0 {
+            return Err(invalid(
+                "memory heat cold threshold must be finite and non-negative",
+            ));
+        }
+        let policy = Self {
+            half_life_days,
+            evidence_reward,
+            cold_threshold,
+        };
+        PheromoneDecay::new(policy.daily_factor())
+            .map_err(|_| invalid("memory heat half-life yields an invalid decay factor"))?;
+        Ok(policy)
+    }
+
+    /// Half-life in days.
+    pub fn half_life_days(&self) -> f64 {
+        self.half_life_days
+    }
+
+    /// Reward deposited per newly appended provenance entry.
+    pub fn evidence_reward(&self) -> f64 {
+        self.evidence_reward
+    }
+
+    /// Cold threshold; `0` disables cold expiry.
+    pub fn cold_threshold(&self) -> f64 {
+        self.cold_threshold
+    }
+
+    /// Per-day decay factor `λ = 0.5^(1 / half_life)` as a validated
+    /// pheromone decay.
+    pub fn daily_decay(&self) -> PheromoneDecay {
+        PheromoneDecay::new(self.daily_factor()).unwrap_or_else(|_| {
+            PheromoneDecay::new(1.0).expect("1.0 is a valid pheromone decay factor")
+        })
+    }
+
+    fn daily_factor(&self) -> f64 {
+        0.5_f64.powf(1.0 / self.half_life_days)
+    }
+
+    // Decay accumulated between two instants; a later `from` never amplifies.
+    fn decay(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> f64 {
+        let days = (to - from).num_milliseconds() as f64 / 86_400_000.0;
+        if days <= 0.0 {
+            1.0
+        } else {
+            0.5_f64.powf(days / self.half_life_days)
+        }
+    }
+
+    fn cold_expiry_enabled(&self) -> bool {
+        self.cold_threshold > 0.0
+    }
+}
+
+// Every field is validated finite, so equality is reflexive.
+impl Eq for MemoryHeatPolicy {}
+
+impl Default for MemoryHeatPolicy {
+    fn default() -> Self {
+        Self {
+            half_life_days: Self::DEFAULT_HALF_LIFE_DAYS,
+            evidence_reward: Self::DEFAULT_EVIDENCE_REWARD,
+            cold_threshold: Self::DEFAULT_COLD_THRESHOLD,
+        }
+    }
 }
 
 /// Maximum number of lookup values accepted by one `get` request.
@@ -583,6 +717,16 @@ pub struct MemoryRecord {
     /// Latest effective observation time (RFC 3339 UTC). Derived; read-only.
     #[serde(default)]
     pub last_observed_at: Option<String>,
+    /// Current heat, decayed to the response time.
+    #[serde(default)]
+    pub heat: f64,
+    /// Time of the last heat deposit; `null` while heat is derived from
+    /// provenance only (records written before heat existed).
+    #[serde(default)]
+    pub heat_updated_at: Option<String>,
+    /// Whether the memory is exempt from cold expiry.
+    #[serde(default)]
+    pub durable: bool,
 }
 
 /// One public relationship record with first-class metadata.
@@ -633,6 +777,12 @@ pub struct MemoryRelationship {
     /// Latest effective observation time (RFC 3339 UTC). Derived; read-only.
     #[serde(default)]
     pub last_observed_at: Option<String>,
+    /// Current heat, decayed to the response time.
+    #[serde(default)]
+    pub heat: f64,
+    /// Time of the last heat deposit; `null` while derived from provenance.
+    #[serde(default)]
+    pub heat_updated_at: Option<String>,
 }
 
 /// Stable receipt returned only after the configured durability gate.
@@ -838,6 +988,20 @@ pub enum MemoryResponse {
     Trace(TraceResult),
     /// Lookup result.
     Get(MemoryGetResult),
+    /// Reinforcement result for a memory record.
+    Reinforce {
+        /// Reinforced memory.
+        record: MemoryRecord,
+        /// Durable mutation receipt.
+        receipt: MutationReceipt,
+    },
+    /// Reinforcement result for a relationship record.
+    ReinforceRelationship {
+        /// Reinforced relationship.
+        relationship: MemoryRelationship,
+        /// Durable mutation receipt.
+        receipt: MutationReceipt,
+    },
 }
 
 /// Stable error taxonomy shared by embedded and standalone adapters.
@@ -963,9 +1127,14 @@ impl CorroboreEngine {
 
             let previous = self.gateway.graph().clone();
             let mut next = previous.clone();
-            let response =
-                execute_operation(&mut next, &mut self.memory_recall_traces, context, request)
-                    .map_err(|error| error.correlated(context))?;
+            let response = execute_operation(
+                &mut next,
+                &mut self.memory_recall_traces,
+                &self.memory_heat,
+                context,
+                request,
+            )
+            .map_err(|error| error.correlated(context))?;
             store_receipt(
                 &mut next,
                 context,
@@ -989,8 +1158,14 @@ impl CorroboreEngine {
         }
 
         let mut graph = self.gateway.graph().clone();
-        execute_operation(&mut graph, &mut self.memory_recall_traces, context, request)
-            .map_err(|error| error.correlated(context))
+        execute_operation(
+            &mut graph,
+            &mut self.memory_recall_traces,
+            &self.memory_heat,
+            context,
+            request,
+        )
+        .map_err(|error| error.correlated(context))
     }
 }
 
@@ -1016,6 +1191,10 @@ const P_RECORDED_AT: &str = "corrobore.memory.recorded_at";
 const P_EXPIRES_AT: &str = "corrobore.memory.expires_at";
 const P_LIFECYCLE: &str = "corrobore.memory.lifecycle";
 const P_SUPERSEDED_BY: &str = "corrobore.memory.superseded_by";
+const P_HEAT: &str = "corrobore.memory.heat";
+const P_HEAT_UPDATED_AT: &str = "corrobore.memory.heat_updated_at";
+const P_DURABLE: &str = "corrobore.memory.durable";
+const P_REINFORCEMENT_REASON: &str = "corrobore.memory.reinforcement_reason";
 const P_FUSION_ORIGINS: &str = "corrobore.memory.fusion_origins";
 const P_FUSED_AUTHORITY: &str = "corrobore.memory.fused_authority";
 const P_FUSION_POLICY: &str = "corrobore.memory.fusion_policy";
@@ -1037,6 +1216,7 @@ fn is_mutation(operation: &MemoryOperation) -> bool {
         MemoryOperation::Remember(_)
             | MemoryOperation::Relate(_)
             | MemoryOperation::Update(_)
+            | MemoryOperation::Reinforce(_)
             | MemoryOperation::Forget(_)
             | MemoryOperation::Consolidate(ConsolidateRequest {
                 mode: ConsolidateMode::ApplyApproved { .. },
@@ -1050,9 +1230,10 @@ fn validate_request_permission(
     operation: &MemoryOperation,
 ) -> Result<(), MemoryError> {
     let allowed = match operation {
-        MemoryOperation::Remember(_) | MemoryOperation::Relate(_) | MemoryOperation::Update(_) => {
-            context.permissions.write
-        }
+        MemoryOperation::Remember(_)
+        | MemoryOperation::Relate(_)
+        | MemoryOperation::Update(_)
+        | MemoryOperation::Reinforce(_) => context.permissions.write,
         MemoryOperation::Recall(_) | MemoryOperation::Get(_) => context.permissions.read,
         MemoryOperation::Forget(_) => context.permissions.forget,
         MemoryOperation::Consolidate(_) => context.permissions.consolidate,
@@ -1151,6 +1332,25 @@ fn validate_request(request: &MemoryRequest) -> Result<(), MemoryError> {
             | MemoryTarget::Mutation(id) => require_text("target.id", id)?,
         },
         MemoryOperation::Get(input) => validate_get(input)?,
+        MemoryOperation::Reinforce(input) => {
+            if !matches!(
+                input.target,
+                MemoryTarget::Memory(_) | MemoryTarget::Relationship(_)
+            ) {
+                return Err(invalid("reinforce target must be a memory or relationship"));
+            }
+            if !input.amount.is_finite()
+                || input.amount == 0.0
+                || input.amount.abs() > MEMORY_REINFORCE_MAX_AMOUNT
+            {
+                return Err(invalid(
+                    "reinforce amount must be finite, non-zero, and within [-1000, 1000]",
+                ));
+            }
+            if let Some(reason) = &input.reason {
+                require_text("reason", reason)?;
+            }
+        }
     }
     Ok(())
 }
@@ -1295,19 +1495,161 @@ fn hex_hash(bytes: &[u8]) -> String {
 fn execute_operation(
     graph: &mut Graph,
     recall_traces: &mut BTreeMap<String, RecallResult>,
+    heat: &MemoryHeatPolicy,
     context: &MemoryServiceContext,
     request: &MemoryRequest,
 ) -> Result<MemoryResponse, MemoryError> {
     match &request.operation {
-        MemoryOperation::Remember(input) => remember_operation(graph, context, input),
-        MemoryOperation::Relate(input) => relate_operation(graph, context, input),
-        MemoryOperation::Recall(input) => recall_operation(graph, recall_traces, context, input),
-        MemoryOperation::Update(input) => update_operation(graph, context, input),
+        MemoryOperation::Remember(input) => remember_operation(graph, heat, context, input),
+        MemoryOperation::Relate(input) => relate_operation(graph, heat, context, input),
+        MemoryOperation::Recall(input) => {
+            recall_operation(graph, recall_traces, heat, context, input)
+        }
+        MemoryOperation::Update(input) => update_operation(graph, heat, context, input),
         MemoryOperation::Forget(input) => forget_operation(graph, context, input),
-        MemoryOperation::Consolidate(input) => consolidate_operation(graph, context, input),
+        MemoryOperation::Consolidate(input) => consolidate_operation(graph, heat, context, input),
         MemoryOperation::Trace(input) => trace_operation(graph, recall_traces, context, input),
-        MemoryOperation::Get(input) => get_operation(graph, context, input),
+        MemoryOperation::Get(input) => get_operation(graph, heat, context, input),
+        MemoryOperation::Reinforce(input) => reinforce_operation(graph, heat, context, input),
     }
+}
+
+// Deposit a usage reward on the current (decayed) heat and record it as a new
+// auditable version. Heat never goes below zero.
+fn reinforce_operation(
+    graph: &mut Graph,
+    heat: &MemoryHeatPolicy,
+    context: &MemoryServiceContext,
+    input: &ReinforceRequest,
+) -> Result<MemoryResponse, MemoryError> {
+    let now = Utc::now();
+    let now_text = now.to_rfc3339();
+    let reason = optional_string_value(input.reason.as_deref());
+    match &input.target {
+        MemoryTarget::Memory(id) => {
+            let node = visible_memory_node(graph, &context.workspace_id, id)?;
+            let next = (current_heat(node.properties(), heat, now) + input.amount).max(0.0);
+            let patch = NodePatch::default()
+                .set_property(P_HEAT, PropertyValue::Float(next))
+                .set_property(P_HEAT_UPDATED_AT, PropertyValue::String(now_text.clone()))
+                .set_property(P_REINFORCEMENT_REASON, reason)
+                .set_property(P_RECORDED_AT, PropertyValue::String(now_text))
+                .set_property(P_ACTOR, PropertyValue::String(context.actor_id.clone()))
+                .set_property(P_AGENT, optional_string_value(context.agent_id.as_deref()))
+                .set_property(P_SESSION, PropertyValue::String(context.session_id.clone()))
+                .set_property(P_REQUEST, PropertyValue::String(context.request_id.clone()))
+                .set_property(
+                    P_CORRELATION,
+                    PropertyValue::String(context.correlation_id.clone()),
+                );
+            graph
+                .update_node(node.id(), patch)
+                .map_err(map_graph_error)?;
+            let current = graph
+                .get_node(node.id())
+                .map_err(map_graph_error)?
+                .ok_or_else(|| internal("reinforced memory disappeared"))?;
+            let record = memory_record(&current, heat)?;
+            Ok(MemoryResponse::Reinforce {
+                receipt: receipt(context, &record.id, record.version),
+                record,
+            })
+        }
+        MemoryTarget::Relationship(id) => {
+            let relationship = visible_memory_relationship(graph, &context.workspace_id, id)?;
+            let next = (current_heat(relationship.properties(), heat, now) + input.amount).max(0.0);
+            let patch = RelationshipPatch::default()
+                .set_property(P_HEAT, PropertyValue::Float(next))
+                .set_property(P_HEAT_UPDATED_AT, PropertyValue::String(now_text.clone()))
+                .set_property(P_REINFORCEMENT_REASON, reason)
+                .set_property(P_RECORDED_AT, PropertyValue::String(now_text))
+                .set_property(P_ACTOR, PropertyValue::String(context.actor_id.clone()))
+                .set_property(P_AGENT, optional_string_value(context.agent_id.as_deref()))
+                .set_property(P_SESSION, PropertyValue::String(context.session_id.clone()))
+                .set_property(P_REQUEST, PropertyValue::String(context.request_id.clone()))
+                .set_property(
+                    P_CORRELATION,
+                    PropertyValue::String(context.correlation_id.clone()),
+                );
+            graph
+                .update_relationship(relationship.id(), patch)
+                .map_err(map_graph_error)?;
+            let current = graph
+                .get_relationship(relationship.id())
+                .map_err(map_graph_error)?
+                .ok_or_else(|| internal("reinforced relationship disappeared"))?;
+            let relationship = memory_relationship(&current, heat)?;
+            Ok(MemoryResponse::ReinforceRelationship {
+                receipt: receipt(context, &relationship.id, relationship.version),
+                relationship,
+            })
+        }
+        _ => Err(invalid("reinforce target must be a memory or relationship")),
+    }
+}
+
+// Current heat at `now`: the stored value decayed since its last deposit, or,
+// for records written before heat existed, the evidence reward of every
+// provenance entry decayed from its effective observation time.
+fn current_heat(
+    properties: &std::collections::HashMap<String, PropertyValue>,
+    heat: &MemoryHeatPolicy,
+    now: DateTime<Utc>,
+) -> f64 {
+    let stored = match properties.get(P_HEAT) {
+        Some(PropertyValue::Float(value)) => Some(*value),
+        Some(PropertyValue::Integer(value)) => Some(*value as f64),
+        _ => None,
+    };
+    let updated = string_property(properties, P_HEAT_UPDATED_AT)
+        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+        .map(|value| value.with_timezone(&Utc));
+    match (stored, updated) {
+        (Some(value), Some(updated)) if value.is_finite() => {
+            (value * heat.decay(updated, now)).max(0.0)
+        }
+        _ => EvidenceLedger::read(properties)
+            .observation_times()
+            .into_iter()
+            .map(|observed| heat.evidence_reward * heat.decay(observed, now))
+            .sum(),
+    }
+}
+
+// Reward deposited by newly appended evidence, each entry decayed from its
+// `observed_at` (or now) so that replaying history in order matches live heat.
+fn evidence_deposit(
+    added: &[ProvenanceReference],
+    heat: &MemoryHeatPolicy,
+    now: DateTime<Utc>,
+) -> f64 {
+    added
+        .iter()
+        .map(|entry| {
+            let observed = entry
+                .observed_at
+                .as_deref()
+                .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+                .map_or(now, |value| value.with_timezone(&Utc));
+            heat.evidence_reward * heat.decay(observed, now)
+        })
+        .sum()
+}
+
+fn is_durable(properties: &std::collections::HashMap<String, PropertyValue>) -> bool {
+    matches!(properties.get(P_DURABLE), Some(PropertyValue::Bool(true)))
+}
+
+// Cold expiry: with a positive threshold, a non-durable memory whose current
+// heat is below it is treated as expired by recall.
+fn is_cold(
+    properties: &std::collections::HashMap<String, PropertyValue>,
+    heat: &MemoryHeatPolicy,
+    now: DateTime<Utc>,
+) -> bool {
+    heat.cold_expiry_enabled()
+        && !is_durable(properties)
+        && current_heat(properties, heat, now) < heat.cold_threshold
 }
 
 // Resolve every requested value against one pass over the trusted workspace
@@ -1317,10 +1659,11 @@ fn execute_operation(
 // workspace filter, so both surface as `missing` exactly like unknown values.
 fn get_operation(
     graph: &Graph,
+    heat: &MemoryHeatPolicy,
     context: &MemoryServiceContext,
     input: &MemoryGetRequest,
 ) -> Result<MemoryResponse, MemoryError> {
-    let now = Utc::now().to_rfc3339();
+    let now = ReadClock::new(heat);
     let workspace = context.workspace_id.as_str();
     let mut missing = Vec::new();
     let mut records = Vec::new();
@@ -1420,10 +1763,12 @@ fn get_operation(
 
 fn remember_operation(
     graph: &mut Graph,
+    heat: &MemoryHeatPolicy,
     context: &MemoryServiceContext,
     input: &RememberRequest,
 ) -> Result<MemoryResponse, MemoryError> {
-    let now = Utc::now().to_rfc3339();
+    let instant = Utc::now();
+    let now = instant.to_rfc3339();
     let existing = input.identity_key.as_deref().and_then(|identity| {
         graph.list_nodes().ok()?.into_iter().find(|node| {
             node.has_label(MEMORY_LABEL)
@@ -1434,7 +1779,7 @@ fn remember_operation(
 
     let node = if let Some(existing) = existing {
         let mut ledger = EvidenceLedger::read(existing.properties());
-        ledger.append(&input.provenance, &now);
+        let added = ledger.append(&input.provenance, &now);
         let provenance = &ledger.provenance;
         let mut patch = NodePatch::default()
             .set_property(P_KIND, PropertyValue::String(input.kind.clone()))
@@ -1463,6 +1808,16 @@ fn remember_operation(
             .set_property(P_RECORDED_AT, PropertyValue::String(now.clone()));
         if let Some(confidence) = input.confidence {
             patch = patch.set_confidence(map_confidence(confidence)?);
+        }
+        if let Some(durable) = input.durable {
+            patch = patch.set_property(P_DURABLE, PropertyValue::Bool(durable));
+        }
+        if !added.is_empty() {
+            let next = current_heat(existing.properties(), heat, instant)
+                + evidence_deposit(&added, heat, instant);
+            patch = patch
+                .set_property(P_HEAT, PropertyValue::Float(next))
+                .set_property(P_HEAT_UPDATED_AT, PropertyValue::String(now.clone()));
         }
         graph
             .update_node(existing.id(), patch)
@@ -1497,13 +1852,22 @@ fn remember_operation(
                 P_VALID_UNTIL,
                 optional_string_value(input.valid_until.as_deref()),
             )
-            .with_property(P_RECORDED_AT, PropertyValue::String(now))
+            .with_property(P_RECORDED_AT, PropertyValue::String(now.clone()))
             .with_property(
                 P_EXPIRES_AT,
                 optional_string_value(input.expires_at.as_deref()),
             )
             .with_property(P_LIFECYCLE, lifecycle_value(MemoryLifecycle::Active))
             .with_property(P_TAGS, json_value(&input.tags)?)
+            .with_property(
+                P_DURABLE,
+                PropertyValue::Bool(input.durable.unwrap_or(false)),
+            )
+            .with_property(
+                P_HEAT,
+                PropertyValue::Float(evidence_deposit(&input.provenance, heat, instant)),
+            )
+            .with_property(P_HEAT_UPDATED_AT, PropertyValue::String(now.clone()))
             .with_property(P_ACTOR, PropertyValue::String(context.actor_id.clone()))
             .with_property(P_AGENT, optional_string_value(context.agent_id.as_deref()))
             .with_property(P_SESSION, PropertyValue::String(context.session_id.clone()))
@@ -1525,7 +1889,7 @@ fn remember_operation(
             .map_err(map_graph_error)?
             .ok_or_else(|| internal("created memory disappeared"))?
     };
-    let record = memory_record(&node)?;
+    let record = memory_record(&node, heat)?;
     Ok(MemoryResponse::Remember {
         receipt: receipt(context, &record.id, record.version),
         record,
@@ -1534,12 +1898,14 @@ fn remember_operation(
 
 fn relate_operation(
     graph: &mut Graph,
+    heat: &MemoryHeatPolicy,
     context: &MemoryServiceContext,
     input: &RelateRequest,
 ) -> Result<MemoryResponse, MemoryError> {
     let source = visible_memory_node(graph, &context.workspace_id, &input.source_id)?;
     let target = visible_memory_node(graph, &context.workspace_id, &input.target_id)?;
-    let now = Utc::now().to_rfc3339();
+    let instant = Utc::now();
+    let now = instant.to_rfc3339();
     let existing = graph
         .list_relationships()
         .map_err(map_graph_error)?
@@ -1552,7 +1918,7 @@ fn relate_operation(
         });
     let relationship = if let Some(existing) = existing {
         let mut ledger = EvidenceLedger::read(existing.properties());
-        ledger.append(&input.provenance, &now);
+        let added = ledger.append(&input.provenance, &now);
         let mut patch = RelationshipPatch::default()
             .set_property(P_REL_KIND, PropertyValue::String(input.kind.clone()))
             .set_property(P_PROPERTIES, PropertyValue::Json(input.properties.clone()))
@@ -1572,9 +1938,16 @@ fn relate_operation(
                 optional_string_value(input.expires_at.as_deref()),
             )
             .set_property(P_LIFECYCLE, lifecycle_value(input.lifecycle))
-            .set_property(P_RECORDED_AT, PropertyValue::String(now));
+            .set_property(P_RECORDED_AT, PropertyValue::String(now.clone()));
         if let Some(confidence) = input.confidence {
             patch = patch.set_confidence(map_confidence(confidence)?);
+        }
+        if !added.is_empty() {
+            let next = current_heat(existing.properties(), heat, instant)
+                + evidence_deposit(&added, heat, instant);
+            patch = patch
+                .set_property(P_HEAT, PropertyValue::Float(next))
+                .set_property(P_HEAT_UPDATED_AT, PropertyValue::String(now));
         }
         graph
             .update_relationship(existing.id(), patch)
@@ -1612,6 +1985,11 @@ fn relate_operation(
                     optional_string_value(input.expires_at.as_deref()),
                 )
                 .with_property(P_LIFECYCLE, lifecycle_value(input.lifecycle))
+                .with_property(
+                    P_HEAT,
+                    PropertyValue::Float(evidence_deposit(&input.provenance, heat, instant)),
+                )
+                .with_property(P_HEAT_UPDATED_AT, PropertyValue::String(now.clone()))
                 .with_property(P_RECORDED_AT, PropertyValue::String(now))
                 .with_property(P_ACTOR, PropertyValue::String(context.actor_id.clone()))
                 .with_property(P_AGENT, optional_string_value(context.agent_id.as_deref()))
@@ -1636,7 +2014,7 @@ fn relate_operation(
             .map_err(map_graph_error)?
             .ok_or_else(|| internal("created relationship disappeared"))?
     };
-    let relationship = memory_relationship(&relationship)?;
+    let relationship = memory_relationship(&relationship, heat)?;
     Ok(MemoryResponse::Relate {
         receipt: receipt(context, &relationship.id, relationship.version),
         relationship,
@@ -1646,6 +2024,7 @@ fn relate_operation(
 fn recall_operation(
     graph: &Graph,
     recall_traces: &mut BTreeMap<String, RecallResult>,
+    heat: &MemoryHeatPolicy,
     context: &MemoryServiceContext,
     input: &RecallRequest,
 ) -> Result<MemoryResponse, MemoryError> {
@@ -1656,7 +2035,7 @@ fn recall_operation(
         &input.objective,
     )?;
     let objective = input.objective.to_ascii_lowercase();
-    let now = Utc::now().to_rfc3339();
+    let now = ReadClock::new(heat);
     let all_nodes = graph
         .list_nodes()
         .map_err(map_graph_error)?
@@ -1664,7 +2043,8 @@ fn recall_operation(
         .filter(|node| {
             node.has_label(MEMORY_LABEL)
                 && belongs_to_node(node, &context.workspace_id)
-                && visible_at(node.properties(), &now)
+                && visible_at(node.properties(), &now.text)
+                && !is_cold(node.properties(), heat, now.instant)
         })
         .collect::<Vec<_>>();
     let by_id = all_nodes
@@ -1697,11 +2077,20 @@ fn recall_operation(
                 .split_whitespace()
                 .filter(|term| haystack.contains(term))
                 .count();
-            (matches > 0).then_some((node.id().as_str().to_owned(), matches))
+            (matches > 0).then_some((node.id().as_str().to_owned(), matches, record.heat))
         })
         .collect::<Vec<_>>();
-    lexical.sort_by(|left, right| right.1.cmp(&left.1).then(left.0.cmp(&right.0)));
-    for (id, _) in &lexical {
+    // Match count first; heat breaks ties between equal matches, then the
+    // engine id. Every heat decays at the same rate, so this order does not
+    // drift with wall-clock time.
+    lexical.sort_by(|left, right| {
+        right
+            .1
+            .cmp(&left.1)
+            .then(right.2.total_cmp(&left.2))
+            .then(left.0.cmp(&right.0))
+    });
+    for (id, _, _) in &lexical {
         if !depths.contains_key(id) {
             queue.push_back(id.clone());
             depths.insert(id.clone(), 0);
@@ -1743,7 +2132,7 @@ fn recall_operation(
         edges.extend(graph.incoming(&node_id).map_err(map_graph_error)?);
         edges.retain(|relationship| {
             belongs_to_relationship(relationship, &context.workspace_id)
-                && visible_at(relationship.properties(), &now)
+                && visible_at(relationship.properties(), &now.text)
         });
         edges.sort_by(|left, right| left.id().as_str().cmp(right.id().as_str()));
         edges.dedup_by(|left, right| left.id() == right.id());
@@ -1777,7 +2166,10 @@ fn recall_operation(
         .take(input.limits.max_items)
         .cloned()
         .collect::<Vec<_>>();
-    let lexical_scores = lexical.into_iter().collect::<BTreeMap<_, _>>();
+    let lexical_scores = lexical
+        .into_iter()
+        .map(|(id, matches, _)| (id, matches))
+        .collect::<BTreeMap<_, _>>();
     let items = page_ids
         .iter()
         .filter_map(|id| by_id.get(id))
@@ -1892,6 +2284,7 @@ fn recall_operation(
 
 fn update_operation(
     graph: &mut Graph,
+    heat: &MemoryHeatPolicy,
     context: &MemoryServiceContext,
     input: &MemoryUpdateRequest,
 ) -> Result<MemoryResponse, MemoryError> {
@@ -1908,7 +2301,7 @@ fn update_operation(
                     false,
                 ));
             }
-            let mut patch = common_node_patch(node.properties(), context, &input.patch)?;
+            let mut patch = common_node_patch(node.properties(), heat, context, &input.patch)?;
             if let Some(confidence) = input.patch.confidence {
                 patch = patch.set_confidence(map_confidence(confidence)?);
             }
@@ -1919,7 +2312,7 @@ fn update_operation(
                 .get_node(node.id())
                 .map_err(map_graph_error)?
                 .ok_or_else(|| internal("updated memory disappeared"))?;
-            let record = memory_record(&current)?;
+            let record = memory_record(&current, heat)?;
             Ok(MemoryResponse::Update {
                 receipt: receipt(context, &record.id, record.version),
                 record,
@@ -1938,7 +2331,7 @@ fn update_operation(
                 ));
             }
             let mut patch =
-                common_relationship_patch(relationship.properties(), context, &input.patch)?;
+                common_relationship_patch(relationship.properties(), heat, context, &input.patch)?;
             if let Some(confidence) = input.patch.confidence {
                 patch = patch.set_confidence(map_confidence(confidence)?);
             }
@@ -1949,7 +2342,7 @@ fn update_operation(
                 .get_relationship(relationship.id())
                 .map_err(map_graph_error)?
                 .ok_or_else(|| internal("updated relationship disappeared"))?;
-            let relationship = memory_relationship(&current)?;
+            let relationship = memory_relationship(&current, heat)?;
             Ok(MemoryResponse::UpdateRelationship {
                 receipt: receipt(context, &relationship.id, relationship.version),
                 relationship,
@@ -1961,19 +2354,23 @@ fn update_operation(
 
 fn common_node_patch(
     properties: &std::collections::HashMap<String, PropertyValue>,
+    heat: &MemoryHeatPolicy,
     context: &MemoryServiceContext,
     input: &UpdatePatch,
 ) -> Result<NodePatch, MemoryError> {
-    let now = Utc::now().to_rfc3339();
+    let instant = Utc::now();
+    let now = instant.to_rfc3339();
     let mut ledger = EvidenceLedger::read(properties);
-    ledger.append(&input.add_provenance, &now);
+    let added = ledger.append(&input.add_provenance, &now);
+    let heat_deposit = (!added.is_empty())
+        .then(|| current_heat(properties, heat, instant) + evidence_deposit(&added, heat, instant));
     let mut tags = json_property::<Vec<String>>(properties, P_TAGS).unwrap_or_default();
     append_unique(&mut tags, &input.add_tags);
     let mut patch = NodePatch::default()
         .set_property(P_PROVENANCE, json_value(&ledger.provenance)?)
         .set_property(P_PROVENANCE_RECORDED, json_value(&ledger.recorded)?)
         .set_property(P_TAGS, json_value(&tags)?)
-        .set_property(P_RECORDED_AT, PropertyValue::String(now))
+        .set_property(P_RECORDED_AT, PropertyValue::String(now.clone()))
         .set_property(P_ACTOR, PropertyValue::String(context.actor_id.clone()))
         .set_property(P_AGENT, optional_string_value(context.agent_id.as_deref()))
         .set_property(P_SESSION, PropertyValue::String(context.session_id.clone()))
@@ -1994,21 +2391,33 @@ fn common_node_patch(
     if let Some(expires_at) = &input.expires_at {
         patch = patch.set_property(P_EXPIRES_AT, PropertyValue::String(expires_at.clone()));
     }
+    if let Some(durable) = input.durable {
+        patch = patch.set_property(P_DURABLE, PropertyValue::Bool(durable));
+    }
+    if let Some(next) = heat_deposit {
+        patch = patch
+            .set_property(P_HEAT, PropertyValue::Float(next))
+            .set_property(P_HEAT_UPDATED_AT, PropertyValue::String(now.clone()));
+    }
     Ok(patch)
 }
 
 fn common_relationship_patch(
     properties: &std::collections::HashMap<String, PropertyValue>,
+    heat: &MemoryHeatPolicy,
     context: &MemoryServiceContext,
     input: &UpdatePatch,
 ) -> Result<RelationshipPatch, MemoryError> {
-    let now = Utc::now().to_rfc3339();
+    let instant = Utc::now();
+    let now = instant.to_rfc3339();
     let mut ledger = EvidenceLedger::read(properties);
-    ledger.append(&input.add_provenance, &now);
+    let added = ledger.append(&input.add_provenance, &now);
+    let heat_deposit = (!added.is_empty())
+        .then(|| current_heat(properties, heat, instant) + evidence_deposit(&added, heat, instant));
     let mut patch = RelationshipPatch::default()
         .set_property(P_PROVENANCE, json_value(&ledger.provenance)?)
         .set_property(P_PROVENANCE_RECORDED, json_value(&ledger.recorded)?)
-        .set_property(P_RECORDED_AT, PropertyValue::String(now))
+        .set_property(P_RECORDED_AT, PropertyValue::String(now.clone()))
         .set_property(P_ACTOR, PropertyValue::String(context.actor_id.clone()))
         .set_property(P_AGENT, optional_string_value(context.agent_id.as_deref()))
         .set_property(P_SESSION, PropertyValue::String(context.session_id.clone()))
@@ -2028,6 +2437,11 @@ fn common_relationship_patch(
     }
     if let Some(expires_at) = &input.expires_at {
         patch = patch.set_property(P_EXPIRES_AT, PropertyValue::String(expires_at.clone()));
+    }
+    if let Some(next) = heat_deposit {
+        patch = patch
+            .set_property(P_HEAT, PropertyValue::Float(next))
+            .set_property(P_HEAT_UPDATED_AT, PropertyValue::String(now.clone()));
     }
     Ok(patch)
 }
@@ -2131,6 +2545,7 @@ fn fusion_lineage(
 
 fn consolidate_operation(
     graph: &mut Graph,
+    _heat: &MemoryHeatPolicy,
     context: &MemoryServiceContext,
     input: &ConsolidateRequest,
 ) -> Result<MemoryResponse, MemoryError> {
@@ -2455,6 +2870,8 @@ fn mark_replayed(mut response: MemoryResponse) -> MemoryResponse {
         | MemoryResponse::UpdateRelationship { receipt, .. }
         | MemoryResponse::Forget { receipt, .. } => Some(receipt),
         MemoryResponse::Consolidate(result) => result.receipt.as_mut(),
+        MemoryResponse::Reinforce { receipt, .. }
+        | MemoryResponse::ReinforceRelationship { receipt, .. } => Some(receipt),
         MemoryResponse::Recall(_) | MemoryResponse::Trace(_) | MemoryResponse::Get(_) => None,
     };
     if let Some(receipt) = receipt {
@@ -2532,13 +2949,32 @@ fn visible_relationship_versions(
     Ok(versions)
 }
 
-fn memory_record(node: &Node) -> Result<MemoryRecord, MemoryError> {
-    memory_record_at(node, &Utc::now().to_rfc3339())
+/// One read instant shared by every record projected in a response, with the
+/// heat policy needed to decay heat and evaluate cold expiry.
+struct ReadClock {
+    instant: DateTime<Utc>,
+    text: String,
+    heat: MemoryHeatPolicy,
+}
+
+impl ReadClock {
+    fn new(heat: &MemoryHeatPolicy) -> Self {
+        let instant = Utc::now();
+        Self {
+            text: instant.to_rfc3339(),
+            instant,
+            heat: *heat,
+        }
+    }
+}
+
+fn memory_record(node: &Node, heat: &MemoryHeatPolicy) -> Result<MemoryRecord, MemoryError> {
+    memory_record_at(node, &ReadClock::new(heat))
 }
 
 // Project one stored memory version at a read instant. Derived fields such as
 // `recallable` are evaluated against `now`, so one response is consistent.
-fn memory_record_at(node: &Node, now: &str) -> Result<MemoryRecord, MemoryError> {
+fn memory_record_at(node: &Node, now: &ReadClock) -> Result<MemoryRecord, MemoryError> {
     let stats = EvidenceLedger::read(node.properties()).statistics();
     Ok(MemoryRecord {
         id: node.id().as_str().to_owned(),
@@ -2557,21 +2993,29 @@ fn memory_record_at(node: &Node, now: &str) -> Result<MemoryRecord, MemoryError>
         version: node.version(),
         tags: json_property(node.properties(), P_TAGS).unwrap_or_default(),
         superseded_by: string_property(node.properties(), P_SUPERSEDED_BY).map(str::to_owned),
-        recallable: node.status() != RecordStatus::Tombstoned && visible_at(node.properties(), now),
+        recallable: node.status() != RecordStatus::Tombstoned
+            && visible_at(node.properties(), &now.text)
+            && !is_cold(node.properties(), &now.heat, now.instant),
         evidence_count: stats.evidence_count,
         distinct_observation_days: stats.distinct_observation_days,
         first_observed_at: stats.first_observed_at,
         last_observed_at: stats.last_observed_at,
+        heat: current_heat(node.properties(), &now.heat, now.instant),
+        heat_updated_at: string_property(node.properties(), P_HEAT_UPDATED_AT).map(str::to_owned),
+        durable: is_durable(node.properties()),
     })
 }
 
-fn memory_relationship(relationship: &Relationship) -> Result<MemoryRelationship, MemoryError> {
-    memory_relationship_at(relationship, &Utc::now().to_rfc3339())
+fn memory_relationship(
+    relationship: &Relationship,
+    heat: &MemoryHeatPolicy,
+) -> Result<MemoryRelationship, MemoryError> {
+    memory_relationship_at(relationship, &ReadClock::new(heat))
 }
 
 fn memory_relationship_at(
     relationship: &Relationship,
-    now: &str,
+    now: &ReadClock,
 ) -> Result<MemoryRelationship, MemoryError> {
     let stats = EvidenceLedger::read(relationship.properties()).statistics();
     Ok(MemoryRelationship {
@@ -2594,11 +3038,14 @@ fn memory_relationship_at(
         lifecycle: lifecycle_property(relationship.properties(), relationship.status()),
         version: relationship.version(),
         recallable: relationship.status() != RecordStatus::Tombstoned
-            && visible_at(relationship.properties(), now),
+            && visible_at(relationship.properties(), &now.text),
         evidence_count: stats.evidence_count,
         distinct_observation_days: stats.distinct_observation_days,
         first_observed_at: stats.first_observed_at,
         last_observed_at: stats.last_observed_at,
+        heat: current_heat(relationship.properties(), &now.heat, now.instant),
+        heat_updated_at: string_property(relationship.properties(), P_HEAT_UPDATED_AT)
+            .map(str::to_owned),
     })
 }
 

@@ -42,6 +42,7 @@ fn remember(identity_key: &str, text: &str) -> MemoryRequest {
         valid_until: None,
         expires_at: None,
         tags: vec!["contract".to_owned()],
+        durable: None,
     }))
     .with_idempotency_key(format!("remember:{identity_key}"))
 }
@@ -158,6 +159,7 @@ fn public_contract_is_versioned_domain_neutral_and_contains_no_cypher_field() {
             "consolidate",
             "trace",
             "get",
+            "reinforce",
         ])
     );
 }

@@ -72,6 +72,7 @@ provenance, confidence, temporal metadata, expiry, lifecycle, and version.
 | `forget` | Expire, tombstone, or apply application deletion semantics so ordinary recall no longer returns the memory. |
 | `consolidate` | Produce a non-destructive proposal, or apply a matching approved proposal while retaining originals and explicit disagreements. The fused memory retains back-pointers to every origin and an authority capped by the strongest justified source, never raised by repetition. |
 | `trace` | Explain memory/relationship versions, recall selection paths, evidence, actor/agent/session attribution, mutation correlation, and policy decisions. |
+| `reinforce` | Deposit a usage reward (or penalty) on a memory or relationship's decaying heat, as a new auditable version. |
 | `get` | Read current memories and relationships by application identity key or engine id. Expired and superseded records are returned with their lifecycle; unresolved values are listed in `missing`. |
 
 ## Example
@@ -130,6 +131,66 @@ The response includes the committed record and a stable receipt:
 
 The abbreviated record above omits fields only for readability; the actual
 response returns the complete typed record.
+
+## Heat: reinforcement, decay, and cold expiry
+
+Every memory and relationship carries a heat value that follows the pheromone
+law `τ(t+1) = λ·τ(t) + reward − penalty` with a wall-clock half-life. The engine
+stores the heat and the time of its last deposit and decays it lazily at read
+time: `heat(now) = heat(t) · 0.5^((now − t) / half_life)`.
+
+- Every provenance entry newly appended by `remember`, `relate`, or
+  `update.patch.add_provenance` deposits the evidence reward, decayed from that
+  entry's `observed_at` (or now when absent; future times never amplify). Replaying
+  history in any order therefore yields the same heat as live writes. Re-sending
+  an entry that is already present deposits nothing.
+- `reinforce` deposits an explicit amount, for example after a client used the
+  memory in an answer. It is a mutation: it needs the `write` permission and an
+  `idempotency_key`, creates a new version, and returns the record (operation
+  `reinforce`) or relationship (operation `reinforce_relationship`) with a
+  receipt.
+
+```json
+{
+  "contract_version": "v1",
+  "idempotency_key": "usage:answer-981:node--3",
+  "operation": "reinforce",
+  "input": {
+    "target": {"kind": "memory", "id": "node--3"},
+    "amount": 1.0,
+    "reason": "used in an answer"
+  }
+}
+```
+
+`amount` is a non-zero finite number in `[-1000, 1000]`; a negative amount is a
+penalty and heat never goes below zero. `reason` is optional.
+
+Records and relationships expose `heat` (decayed to the response time) and
+`heat_updated_at` (the last deposit; `null` for records written before heat
+existed, whose heat is derived from their provenance with the same law).
+Memories also expose `durable`.
+
+Cold expiry is opt-in. When the server's cold threshold is greater than zero, a
+memory that is not `durable` and whose current heat is below the threshold is
+treated as expired by `recall`: it is not a seed, lexical match, or neighbour.
+Its lifecycle is unchanged; `get` still returns it with `recallable: false`, and
+a deposit or `durable: true` makes it recallable again. Set `durable` on
+`remember` (absent keeps the stored flag on an upsert, `false` on creation) or
+through `update.patch.durable`. Relationships are never cold-expired.
+
+Recall ranks objective matches by match count, then by current heat, then by
+engine id. Because every heat decays at the same rate, this order does not drift
+with wall-clock time; the reported `score` is unchanged.
+
+| Standalone variable | Default | Meaning |
+| :--- | :--- | :--- |
+| `CORROBORE_MEMORY_HEAT_HALF_LIFE_DAYS` | `21` | Half-life of heat, in days (positive, at most 36500). |
+| `CORROBORE_MEMORY_HEAT_EVIDENCE_REWARD` | `1.0` | Reward per newly appended provenance entry (non-negative). |
+| `CORROBORE_MEMORY_HEAT_COLD_THRESHOLD` | `0` | Cold-expiry threshold; `0` disables cold expiry. |
+
+Embedded hosts pass the same policy with
+`CorroboreEngine::builder().memory_heat_policy(MemoryHeatPolicy::new(..)?)`.
 
 ## Lookup by identity key or id
 
@@ -200,7 +261,7 @@ records.
 ## Permissions and errors
 
 `read`, `write`, `trace`, `forget`, and `consolidate` permissions are resolved
-and enforced independently. `recall` and `get` require `read`. Stable version-one error codes are:
+and enforced independently. `recall` and `get` require `read`; `reinforce` requires `write`. Stable version-one error codes are:
 
 - `INVALID_REQUEST`, `INVALID_BUDGET`, `PERMISSION_DENIED`, and `NOT_FOUND`;
 - `VERSION_CONFLICT`, `IDEMPOTENCY_CONFLICT`, and

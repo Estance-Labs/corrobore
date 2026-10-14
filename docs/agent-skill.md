@@ -69,7 +69,7 @@ restricted to HTTP and is not a tool.
 | :--- | :--- | :--- | :--- |
 | Claim audit (current source) | `corrobore_claim_audit` | `claim.audit` | `GET /v1/claims/{id}/audit` |
 | Runtime | `corrobore_ready` | `runtime.ready` | `GET /health/ready` |
-| Memory writes | `corrobore_remember`, `corrobore_relate`, `corrobore_update`, `corrobore_forget` | `memory.remember`, `memory.relate`, `memory.update`, `memory.forget` | `POST /v1/memory/operations` |
+| Memory writes | `corrobore_remember`, `corrobore_relate`, `corrobore_update`, `corrobore_forget`, `corrobore_reinforce` | `memory.remember`, `memory.relate`, `memory.update`, `memory.forget`, `memory.reinforce` | `POST /v1/memory/operations` |
 | Memory reads | `corrobore_recall`, `corrobore_trace`, `corrobore_get` | `memory.recall`, `memory.trace`, `memory.get` | `POST /v1/memory/operations` |
 | Memory policy | `corrobore_consolidate` | `memory.consolidate` (operator approval) | `POST /v1/memory/operations` |
 | STIX | `corrobore_stix_import`, `corrobore_stix_validate`, `corrobore_stix_export` | `stix.import`, `stix.validate`, `stix.export` | `/v1/import/stix`, `/v1/stix/validate`, `/v1/export/stix` |

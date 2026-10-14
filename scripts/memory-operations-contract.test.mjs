@@ -21,6 +21,7 @@ test('engine contract owns the domain-neutral operations and trusted context', (
     'Consolidate',
     'Trace',
     'Get',
+    'Reinforce',
   ]) {
     assert.match(source, new RegExp(`\\b${operation}\\(`));
   }
@@ -95,7 +96,7 @@ test('shared v1 conformance corpus covers every operation without Cypher', () =>
   assert.equal(corpus.contract_version, 'v1');
   assert.deepEqual(
     new Set(corpus.operations.map((entry) => entry.operation)),
-    new Set(['remember', 'relate', 'recall', 'update', 'forget', 'consolidate', 'trace', 'get']),
+    new Set(['remember', 'relate', 'recall', 'update', 'forget', 'consolidate', 'trace', 'get', 'reinforce']),
   );
   assert.equal(JSON.stringify(corpus).toLowerCase().includes('cypher'), false);
 });

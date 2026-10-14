@@ -218,6 +218,13 @@ impl CapabilityCatalogue {
                 "memory.recall",
             ),
             Capability::new(
+                "memory.reinforce",
+                "Deposit a usage reward or penalty on a memory or relationship's decaying heat.",
+                CapabilityEffect::Mutation,
+                CapabilityAuthorization::MutationPermission,
+                "memory.reinforce",
+            ),
+            Capability::new(
                 "memory.relate",
                 "Create or version an evidence-bearing relationship.",
                 CapabilityEffect::Mutation,

@@ -20,7 +20,7 @@
 // THE SOFTWARE.
 use std::{collections::HashMap, env, fmt, fs, net::IpAddr};
 
-use corrobore_engine::MemoryPermissions;
+use corrobore_engine::{MemoryHeatPolicy, MemoryPermissions};
 use thiserror::Error;
 
 use crate::security::{AuthenticationMode, OperationalEndpointPolicy, SecretSource};
@@ -71,6 +71,8 @@ pub struct ServerConfig {
     pub memory_session_id: String,
     /// Independently configured high-level memory capabilities.
     pub memory_permissions: MemoryPermissions,
+    /// Reinforcement, decay, and cold-expiry policy for memory heat.
+    pub memory_heat_policy: MemoryHeatPolicy,
     pub session_store_dir: String,
     pub log_dir: String,
     pub request_timeout_ms: u64,
@@ -151,6 +153,7 @@ impl fmt::Debug for ServerConfig {
             .field("memory_agent_id", &self.memory_agent_id)
             .field("memory_session_id", &self.memory_session_id)
             .field("memory_permissions", &self.memory_permissions)
+            .field("memory_heat_policy", &self.memory_heat_policy)
             .field("session_store_dir", &self.session_store_dir)
             .field("log_dir", &self.log_dir)
             .field("request_timeout_ms", &self.request_timeout_ms)
@@ -469,6 +472,7 @@ impl ServerConfig {
             "session--standalone-api",
         )?;
         let memory_permissions = parse_memory_permissions(vars)?;
+        let memory_heat_policy = parse_memory_heat_policy(vars)?;
 
         let session_store_dir = vars
             .get("CORROBORE_HTTP_SESSION_STORE_DIR")
@@ -737,6 +741,7 @@ impl ServerConfig {
             memory_agent_id,
             memory_session_id,
             memory_permissions,
+            memory_heat_policy,
             session_store_dir,
             log_dir,
             request_timeout_ms,
@@ -861,6 +866,58 @@ fn trusted_memory_id(
         return Err(ConfigError::InvalidEnv { name, value });
     }
     Ok(value)
+}
+
+fn parse_memory_heat_number(
+    vars: &HashMap<String, String>,
+    name: &'static str,
+    default: f64,
+) -> Result<f64, ConfigError> {
+    let Some(raw) = vars.get(name) else {
+        return Ok(default);
+    };
+    raw.trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite())
+        .ok_or_else(|| ConfigError::InvalidEnv {
+            name,
+            value: raw.clone(),
+        })
+}
+
+fn parse_memory_heat_policy(
+    vars: &HashMap<String, String>,
+) -> Result<MemoryHeatPolicy, ConfigError> {
+    let half_life = parse_memory_heat_number(
+        vars,
+        "CORROBORE_MEMORY_HEAT_HALF_LIFE_DAYS",
+        MemoryHeatPolicy::DEFAULT_HALF_LIFE_DAYS,
+    )?;
+    let reward = parse_memory_heat_number(
+        vars,
+        "CORROBORE_MEMORY_HEAT_EVIDENCE_REWARD",
+        MemoryHeatPolicy::DEFAULT_EVIDENCE_REWARD,
+    )?;
+    let cold = parse_memory_heat_number(
+        vars,
+        "CORROBORE_MEMORY_HEAT_COLD_THRESHOLD",
+        MemoryHeatPolicy::DEFAULT_COLD_THRESHOLD,
+    )?;
+    MemoryHeatPolicy::new(half_life, reward, cold).map_err(|error| {
+        let (name, value) = if !(half_life.is_finite() && half_life > 0.0 && half_life <= 36_500.0)
+        {
+            ("CORROBORE_MEMORY_HEAT_HALF_LIFE_DAYS", half_life)
+        } else if reward < 0.0 {
+            ("CORROBORE_MEMORY_HEAT_EVIDENCE_REWARD", reward)
+        } else {
+            ("CORROBORE_MEMORY_HEAT_COLD_THRESHOLD", cold)
+        };
+        ConfigError::InvalidEnv {
+            name,
+            value: format!("{value} ({})", error.message),
+        }
+    })
 }
 
 fn parse_memory_permissions(

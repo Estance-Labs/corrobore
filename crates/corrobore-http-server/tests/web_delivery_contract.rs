@@ -55,6 +55,7 @@ fn config(web_dir: Option<String>) -> ServerConfig {
         memory_agent_id: None,
         memory_session_id: "session--standalone-api".to_owned(),
         memory_permissions: corrobore_engine::MemoryPermissions::all(),
+        memory_heat_policy: corrobore_engine::MemoryHeatPolicy::default(),
         session_store_dir: web_root().to_string_lossy().into_owned(),
         log_dir: web_root().join("logs").to_string_lossy().into_owned(),
         request_timeout_ms: 1_000,

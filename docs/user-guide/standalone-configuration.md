@@ -195,6 +195,9 @@ remain environment-only:
 | `CORROBORE_MEMORY_AGENT_ID` | unset | Optional trusted agent attribution for high-level memory operations. |
 | `CORROBORE_MEMORY_SESSION_ID` | `session--standalone-api` | Trusted session attribution for high-level memory operations. |
 | `CORROBORE_MEMORY_PERMISSIONS` | `read,write,trace,forget,consolidate` | Independently enabled high-level memory capabilities. |
+| `CORROBORE_MEMORY_HEAT_HALF_LIFE_DAYS` | `21` | Half-life of memory and relationship heat, in days (positive, at most 36500). |
+| `CORROBORE_MEMORY_HEAT_EVIDENCE_REWARD` | `1.0` | Heat deposited per newly appended provenance entry, decayed from its observation time. |
+| `CORROBORE_MEMORY_HEAT_COLD_THRESHOLD` | `0` | Recall treats non-durable memories below this current heat as expired; `0` disables cold expiry. |
 | `CORROBORE_OPENCTI_ELASTIC_FREE` | `false` | Require final operation without the reference search provider. |
 | `CORROBORE_OPENCTI_RATE_LIMIT_PER_SECOND` | `200` | Sustained rate reserved for authenticated OpenCTI provider traffic. |
 | `CORROBORE_OPENCTI_RATE_LIMIT_BURST` | `1000` | Burst allowance reserved for authenticated OpenCTI provider traffic. |

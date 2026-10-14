@@ -45,6 +45,7 @@ fn remember(engine: &mut CorroboreEngine, context: &MemoryServiceContext, key: &
         valid_until: None,
         expires_at: None,
         tags: vec![],
+        durable: None,
     }))
     .with_idempotency_key(format!("remember:{key}"));
     match engine.execute_memory(context, &request).unwrap() {

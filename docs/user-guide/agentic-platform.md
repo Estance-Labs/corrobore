@@ -41,7 +41,7 @@ exactly what it exposes to them.
 | `cypher.read` | read | session | `http` only |
 | `cypher.write` | mutation | mutation permission | `http` only |
 | `memory.get`, `memory.recall`, `memory.trace` | read | session | all adapters |
-| `memory.remember`, `memory.relate`, `memory.update`, `memory.forget` | mutation | mutation permission | all adapters |
+| `memory.remember`, `memory.relate`, `memory.update`, `memory.forget`, `memory.reinforce` | mutation | mutation permission | all adapters |
 | `memory.consolidate` | mutation | operator approval | all adapters |
 | `runtime.ready` | read | session | all adapters |
 | `stix.export` | read | session | all adapters |

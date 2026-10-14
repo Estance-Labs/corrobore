@@ -96,6 +96,7 @@ fn remember(identity_key: &str, source_id: &str, confidence: f64) -> MemoryReque
         valid_until: None,
         expires_at: None,
         tags: vec![],
+        durable: None,
     }))
     .with_idempotency_key(format!("remember:{identity_key}"))
 }
