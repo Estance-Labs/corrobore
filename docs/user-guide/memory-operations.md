@@ -311,6 +311,33 @@ omitted when unused, and part of the proposal identity, so a revocation is its
 own governed decision that an earlier approval never covers. See
 [Agentic Platform Foundations](agentic-platform.md#memory-fusion-back-pointers-and-the-authority-cap).
 
+### Merging evidence into the canonical memory
+
+`merge_provenance: true` (default `false`, omitted when false) makes an approved
+apply also merge the originals into the canonical memory, in the same commit and
+receipt:
+
+- every original's provenance is appended to the canonical memory,
+  deduplicated (canonical entries first, then originals in id order), with each
+  entry's recorded time, so evidence statistics stay exact;
+- the originals' current heat is added to the canonical memory's, tags are
+  unioned, and the canonical memory becomes `durable` if any original is;
+- each active relationship of a non-canonical original is re-pointed to the
+  canonical memory. When the canonical memory already has an equivalent
+  relationship (same kind, same direction, same other endpoint), the original's
+  provenance and heat merge into it; otherwise an equivalent relationship is
+  created. The original relationship becomes `superseded` with lineage to its
+  replacement, and its identity key moves to a replacement that has none.
+  Relationships between consolidated memories (which would become self-loops)
+  are left untouched.
+
+The result reports `merged_provenance_count` and `repointed_relationships`
+(`original_id`, `replacement_id`, `merged_into_existing`); a proposal reports
+what would merge without writing (`replacement_id` is `null` where a new
+relationship would be created). Canonical content and confidence are not
+modified. `merge_provenance` is part of the proposal identity, so an approval
+for a plain consolidation never covers a merging one.
+
 ## Compatibility and evolution
 
 `v1` is the compatibility key for both Rust and JSON schemas. Within `v1`, new

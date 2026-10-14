@@ -58,6 +58,15 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
 ### Added
 
+- Consolidation that merges evidence (#312): `consolidate` accepts the opt-in
+  `merge_provenance` flag (default false, part of the proposal identity). An
+  approved merging apply appends the originals' deduplicated provenance to the
+  canonical memory, adds their heat, unions tags and durability, and re-points
+  their active relationships to the canonical memory (merging into an
+  equivalent relationship when one exists, superseding the originals with
+  lineage and moving identity keys). The result reports
+  `merged_provenance_count` and `repointed_relationships`. Without the flag,
+  behaviour and proposal identities are unchanged.
 - Memory heat with reinforcement, decay, and opt-in cold expiry (#311): every
   memory and relationship carries a heat value that decays lazily with a
   configurable half-life (`CORROBORE_MEMORY_HEAT_HALF_LIFE_DAYS`, default 21).

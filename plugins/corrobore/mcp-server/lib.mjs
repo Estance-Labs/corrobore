@@ -279,6 +279,10 @@ const memoryInputSchemas = {
         'Sources withdrawn from the fused interpretation. A revocation recomputes the fusion, deletes no memory, and enters the proposal identity.',
         { items: { type: 'string', minLength: 1 } },
       ),
+      merge_provenance: {
+        type: 'boolean',
+        description: 'On approved apply, merge the originals\' provenance and heat into the canonical memory and re-point their active relationships to it. Part of the proposal identity; default false.',
+      },
     },
   },
   trace: {

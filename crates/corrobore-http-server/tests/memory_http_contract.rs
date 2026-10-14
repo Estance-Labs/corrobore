@@ -585,3 +585,75 @@ async fn heat_and_durability_survive_restart_and_snapshot_restore() {
     let restored_app = build_router(admin_state(&restored, &[]));
     assert_retained(&execute(&restored_app, lookup, "heat-restored").await);
 }
+
+#[tokio::test]
+async fn merging_consolidation_moves_evidence_and_survives_restart() {
+    let storage = temp_storage();
+    let app = build_router(persistent_state(&storage));
+    let alpha = execute(&app, remember_payload(), "merge-alpha").await;
+    let alpha_id = alpha["result"]["result"]["record"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut beta_payload = remember_payload();
+    beta_payload["idempotency_key"] = json!("merge:beta");
+    beta_payload["input"]["identity_key"] = json!("http-memory-duplicate");
+    beta_payload["input"]["provenance"] = json!([{
+        "source_id": "source--duplicate",
+        "locator": null,
+        "observed_at": "2026-07-27T00:00:00Z"
+    }]);
+    let beta = execute(&app, beta_payload, "merge-beta").await;
+    let beta_id = beta["result"]["result"]["record"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let input = |mode: Value| {
+        json!({
+            "mode": mode,
+            "memory_ids": [alpha_id, beta_id],
+            "canonical_id": alpha_id,
+            "reason": "duplicate identity",
+            "preserve_disagreements": true,
+            "merge_provenance": true
+        })
+    };
+    let proposal = execute(
+        &app,
+        json!({"contract_version": "v1", "operation": "consolidate", "input": input(json!({"mode": "propose"}))}),
+        "merge-propose",
+    )
+    .await;
+    assert_eq!(proposal["result"]["result"]["merged_provenance_count"], 1);
+    let proposal_id = proposal["result"]["result"]["proposal_id"].clone();
+    let applied = execute(
+        &app,
+        json!({
+            "contract_version": "v1",
+            "idempotency_key": "merge:apply",
+            "operation": "consolidate",
+            "input": input(json!({"mode": "apply_approved", "proposal_id": proposal_id, "approval_policy": "policy--merge"}))
+        }),
+        "merge-apply",
+    )
+    .await;
+    assert_eq!(applied["result"]["result"]["applied"], true);
+    drop(app);
+
+    let restarted = build_router(persistent_state(&storage));
+    let lookup = execute(
+        &restarted,
+        json!({
+            "contract_version": "v1",
+            "operation": "get",
+            "input": {"identity_keys": ["http-memory", "http-memory-duplicate"]}
+        }),
+        "merge-get",
+    )
+    .await;
+    let records = &lookup["result"]["result"]["records"];
+    assert_eq!(records[0]["evidence_count"], 2);
+    assert_eq!(records[0]["distinct_observation_days"], 2);
+    assert_eq!(records[1]["lifecycle"], "superseded");
+    assert_eq!(records[1]["superseded_by"], alpha_id.as_str());
+}

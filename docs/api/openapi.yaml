@@ -1280,6 +1280,10 @@ components:
           description: Optional sources withdrawn from the interpretation (WS-H). A revocation recomputes the fusion, deletes no memory, and enters the proposal identity.
           type: array
           items: {type: string, minLength: 1}
+        merge_provenance:
+          type: boolean
+          default: false
+          description: On approved apply, append the originals' provenance (deduplicated) to the canonical memory, add their current heat, union tags and durability, and re-point their active relationships to the canonical memory (merging into an equivalent relationship when one exists; originals superseded with lineage). Part of the proposal identity when true; the result reports merged_provenance_count and repointed_relationships.
     TraceMemoryInput:
       type: object
       additionalProperties: false

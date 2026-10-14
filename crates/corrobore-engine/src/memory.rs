@@ -455,6 +455,29 @@ pub struct ConsolidateRequest {
     /// fusion and deletes no observation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub revoked_source_ids: Vec<String>,
+    /// Merge the originals' provenance and heat into the canonical memory and
+    /// re-point their active relationships to it on approved apply. Omitted
+    /// when false; part of the proposal identity when true.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub merge_provenance: bool,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+/// One relationship moved to the canonical memory by a merging consolidation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepointedRelationship {
+    /// Relationship of a non-canonical original, superseded by the move.
+    pub original_id: String,
+    /// Relationship now carrying its evidence: an equivalent one the canonical
+    /// memory already had, or a newly created one. `null` in a proposal when a
+    /// new relationship would be created.
+    pub replacement_id: Option<String>,
+    /// Whether the evidence merged into an existing equivalent relationship.
+    pub merged_into_existing: bool,
 }
 
 /// Input for `trace`.
@@ -892,6 +915,14 @@ pub struct ConsolidationResult {
     /// justify. A proposal reports what the fusion would be without writing it.
     #[serde(default)]
     pub lineage: FusionLineage,
+    /// Provenance entries appended (or, in a proposal, to be appended) to the
+    /// canonical memory by `merge_provenance`.
+    #[serde(default)]
+    pub merged_provenance_count: u64,
+    /// Relationships re-pointed (or to be re-pointed) to the canonical memory
+    /// by `merge_provenance`.
+    #[serde(default)]
+    pub repointed_relationships: Vec<RepointedRelationship>,
     /// Optional mutation receipt for approved application.
     pub receipt: Option<MutationReceipt>,
 }
@@ -1206,6 +1237,8 @@ const P_REQUEST: &str = "corrobore.memory.request";
 const P_CORRELATION: &str = "corrobore.memory.correlation";
 const P_REL_IDENTITY: &str = "corrobore.memory.relationship.identity_key";
 const P_REL_KIND: &str = "corrobore.memory.relationship.kind";
+const P_REL_SUPERSEDED_BY: &str = "corrobore.memory.relationship.superseded_by";
+const P_REL_CONSOLIDATED_FROM: &str = "corrobore.memory.relationship.consolidated_from";
 const P_RECEIPT_KEY: &str = "corrobore.memory.receipt.key";
 const P_RECEIPT_HASH: &str = "corrobore.memory.receipt.hash";
 const P_RECEIPT_RESPONSE: &str = "corrobore.memory.receipt.response";
@@ -2545,7 +2578,7 @@ fn fusion_lineage(
 
 fn consolidate_operation(
     graph: &mut Graph,
-    _heat: &MemoryHeatPolicy,
+    heat: &MemoryHeatPolicy,
     context: &MemoryServiceContext,
     input: &ConsolidateRequest,
 ) -> Result<MemoryResponse, MemoryError> {
@@ -2568,15 +2601,33 @@ fn consolidate_operation(
     // The proposal identity covers the authority policy and the revoked
     // sources, so withdrawing a source is its own governed decision and an
     // earlier approval can never silently cover a different interpretation.
-    let proposal_material = serde_json::to_vec(&(
+    // `merge_provenance` enters the material only when requested, so existing
+    // proposal identities are unchanged.
+    let base = (
         context.workspace_id.as_str(),
         &ids,
         &canonical_id,
         input.preserve_disagreements,
         &input.authority_policy,
         &input.revoked_source_ids,
-    ))
+    );
+    let proposal_material = if input.merge_provenance {
+        serde_json::to_vec(&(base, "merge_provenance"))
+    } else {
+        serde_json::to_vec(&base)
+    }
     .map_err(|_| internal("consolidation proposal could not be canonicalized"))?;
+    let merge_plan = if input.merge_provenance {
+        Some(plan_evidence_merge(
+            graph,
+            heat,
+            &context.workspace_id,
+            canonical_id.as_deref().unwrap_or_default(),
+            &ids,
+        )?)
+    } else {
+        None
+    };
     let proposal_id = format!("consolidation--{}", &hex_hash(&proposal_material)[..24]);
     let originals = fusion_inputs(graph, &context.workspace_id, &ids)?;
     let lineage = fusion_lineage(
@@ -2593,6 +2644,12 @@ fn consolidate_operation(
             originals_retained: ids,
             disagreements_retained: input.preserve_disagreements,
             lineage,
+            merged_provenance_count: merge_plan
+                .as_ref()
+                .map_or(0, |plan| plan.merged_provenance_count),
+            repointed_relationships: merge_plan
+                .map(|plan| plan.proposed_relationships)
+                .unwrap_or_default(),
             receipt: None,
         })),
         ConsolidateMode::ApplyApproved {
@@ -2611,6 +2668,14 @@ fn consolidate_operation(
                 .ok_or_else(|| invalid("approved consolidation requires canonical_id"))?;
             let canonical_node = visible_memory_node(graph, &context.workspace_id, &canonical)?;
             let mut max_version = canonical_node.version();
+            // Relationships move before originals are superseded, while they
+            // are still the active endpoints being replaced.
+            let repointed = match &merge_plan {
+                Some(_) => {
+                    repoint_relationships(graph, heat, context, &canonical, &ids, &mut max_version)?
+                }
+                None => Vec::new(),
+            };
             for id in &ids {
                 if id == &canonical {
                     continue;
@@ -2662,13 +2727,24 @@ fn consolidate_operation(
             // Retain the back-pointers and the capped authority on the fused
             // memory itself, so a later read never has to re-derive where the
             // interpretation came from.
-            let lineage_patch = NodePatch::default()
+            let mut lineage_patch = NodePatch::default()
                 .set_property(P_FUSION_ORIGINS, json_value(&lineage.origins().to_vec())?)
                 .set_property(P_FUSED_AUTHORITY, optional_json_value(lineage.authority()))
                 .set_property(
                     P_FUSION_POLICY,
                     optional_string_value(lineage.policy_version()),
                 );
+            if let Some(plan) = &merge_plan {
+                let now = Utc::now().to_rfc3339();
+                lineage_patch = lineage_patch
+                    .set_property(P_PROVENANCE, json_value(&plan.ledger.provenance)?)
+                    .set_property(P_PROVENANCE_RECORDED, json_value(&plan.ledger.recorded)?)
+                    .set_property(P_HEAT, PropertyValue::Float(plan.heat))
+                    .set_property(P_HEAT_UPDATED_AT, PropertyValue::String(now.clone()))
+                    .set_property(P_TAGS, json_value(&plan.tags)?)
+                    .set_property(P_DURABLE, PropertyValue::Bool(plan.durable))
+                    .set_property(P_RECORDED_AT, PropertyValue::String(now));
+            }
             graph
                 .update_node(canonical_node.id(), lineage_patch)
                 .map_err(map_graph_error)?;
@@ -2680,10 +2756,289 @@ fn consolidate_operation(
                 originals_retained: ids,
                 disagreements_retained: true,
                 lineage,
+                merged_provenance_count: merge_plan
+                    .as_ref()
+                    .map_or(0, |plan| plan.merged_provenance_count),
+                repointed_relationships: repointed,
                 receipt: Some(receipt(context, &proposal_id, max_version)),
             }))
         }
     }
+}
+
+/// What a merging consolidation writes on the canonical memory.
+struct EvidenceMergePlan {
+    ledger: EvidenceLedger,
+    merged_provenance_count: u64,
+    heat: f64,
+    tags: Vec<String>,
+    durable: bool,
+    proposed_relationships: Vec<RepointedRelationship>,
+}
+
+// Canonical evidence first, then each original's in id order, deduplicated
+// with each entry's recorded time; heat is the sum of current heats.
+fn plan_evidence_merge(
+    graph: &Graph,
+    heat: &MemoryHeatPolicy,
+    workspace: &str,
+    canonical: &str,
+    ids: &[String],
+) -> Result<EvidenceMergePlan, MemoryError> {
+    let now = Utc::now();
+    let canonical_node = visible_memory_node(graph, workspace, canonical)?;
+    let mut ledger = EvidenceLedger::read(canonical_node.properties());
+    let mut merged = 0_u64;
+    let mut total_heat = current_heat(canonical_node.properties(), heat, now);
+    let mut tags =
+        json_property::<Vec<String>>(canonical_node.properties(), P_TAGS).unwrap_or_default();
+    let mut durable = is_durable(canonical_node.properties());
+    let mut proposed = Vec::new();
+    let members = ids.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    for id in ids.iter().filter(|id| id.as_str() != canonical) {
+        let node = visible_memory_node(graph, workspace, id)?;
+        let original = EvidenceLedger::read(node.properties());
+        for (entry, recorded) in original.provenance.iter().zip(&original.recorded) {
+            if !ledger.provenance.contains(entry) {
+                ledger.provenance.push(entry.clone());
+                ledger.recorded.push(recorded.clone());
+                merged += 1;
+            }
+        }
+        total_heat += current_heat(node.properties(), heat, now);
+        append_unique(
+            &mut tags,
+            &json_property::<Vec<String>>(node.properties(), P_TAGS).unwrap_or_default(),
+        );
+        durable |= is_durable(node.properties());
+        for relationship in movable_relationships(graph, workspace, node.id())? {
+            let (source, target) = repointed_endpoints(&relationship, &members, canonical);
+            if source == target {
+                continue;
+            }
+            let existing =
+                equivalent_relationship(graph, workspace, &relationship, &source, &target)?;
+            proposed.push(RepointedRelationship {
+                original_id: relationship.id().as_str().to_owned(),
+                merged_into_existing: existing.is_some(),
+                replacement_id: existing.map(|found| found.id().as_str().to_owned()),
+            });
+        }
+    }
+    Ok(EvidenceMergePlan {
+        ledger,
+        merged_provenance_count: merged,
+        heat: total_heat,
+        tags,
+        durable,
+        proposed_relationships: proposed,
+    })
+}
+
+// Active, evidence-bearing memory relationships touching one original.
+fn movable_relationships(
+    graph: &Graph,
+    workspace: &str,
+    node: &NodeId,
+) -> Result<Vec<Relationship>, MemoryError> {
+    let mut edges = graph.outgoing(node).map_err(map_graph_error)?;
+    edges.extend(graph.incoming(node).map_err(map_graph_error)?);
+    edges.retain(|relationship| {
+        relationship.rel_type().as_str() == RELATIONSHIP_KIND
+            && belongs_to_relationship(relationship, workspace)
+            && lifecycle_property(relationship.properties(), relationship.status())
+                == MemoryLifecycle::Active
+    });
+    edges.sort_by(|left, right| left.id().as_str().cmp(right.id().as_str()));
+    edges.dedup_by(|left, right| left.id() == right.id());
+    Ok(edges)
+}
+
+// Endpoints after replacing every consolidated memory with the canonical one.
+fn repointed_endpoints(
+    relationship: &Relationship,
+    members: &BTreeSet<&str>,
+    canonical: &str,
+) -> (String, String) {
+    let map = |id: &str| {
+        if members.contains(id) {
+            canonical.to_owned()
+        } else {
+            id.to_owned()
+        }
+    };
+    (
+        map(relationship.source().as_str()),
+        map(relationship.target().as_str()),
+    )
+}
+
+// An active relationship with the same kind and the same endpoints, other
+// than the one being moved.
+fn equivalent_relationship(
+    graph: &Graph,
+    workspace: &str,
+    moving: &Relationship,
+    source: &str,
+    target: &str,
+) -> Result<Option<Relationship>, MemoryError> {
+    let kind = string_property(moving.properties(), P_REL_KIND);
+    let source_id = NodeId::new(source.to_owned()).map_err(map_graph_error)?;
+    Ok(graph
+        .outgoing(&source_id)
+        .map_err(map_graph_error)?
+        .into_iter()
+        .filter(|candidate| {
+            candidate.id() != moving.id()
+                && candidate.target().as_str() == target
+                && candidate.rel_type().as_str() == RELATIONSHIP_KIND
+                && belongs_to_relationship(candidate, workspace)
+                && string_property(candidate.properties(), P_REL_KIND) == kind
+                && lifecycle_property(candidate.properties(), candidate.status())
+                    == MemoryLifecycle::Active
+        })
+        .min_by(|left, right| left.id().as_str().cmp(right.id().as_str())))
+}
+
+// Move every active relationship of the non-canonical originals to the
+// canonical memory: merge into an equivalent relationship when one exists,
+// otherwise create one; supersede the original with lineage to its
+// replacement. Identity keys move to a replacement that has none.
+fn repoint_relationships(
+    graph: &mut Graph,
+    heat: &MemoryHeatPolicy,
+    context: &MemoryServiceContext,
+    canonical: &str,
+    ids: &[String],
+    max_version: &mut u64,
+) -> Result<Vec<RepointedRelationship>, MemoryError> {
+    let workspace = context.workspace_id.as_str();
+    let instant = Utc::now();
+    let now = instant.to_rfc3339();
+    let members = ids.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    let mut repointed = Vec::new();
+    for id in ids.iter().filter(|id| id.as_str() != canonical) {
+        let node_id = NodeId::new(id.clone()).map_err(map_graph_error)?;
+        for relationship in movable_relationships(graph, workspace, &node_id)? {
+            // Re-read: an earlier move in this loop may have superseded it.
+            let Some(relationship) = graph
+                .get_relationship(relationship.id())
+                .map_err(map_graph_error)?
+                .filter(|current| {
+                    lifecycle_property(current.properties(), current.status())
+                        == MemoryLifecycle::Active
+                })
+            else {
+                continue;
+            };
+            let (source, target) = repointed_endpoints(&relationship, &members, canonical);
+            if source == target {
+                continue;
+            }
+            let moving_heat = current_heat(relationship.properties(), heat, instant);
+            let moving_ledger = EvidenceLedger::read(relationship.properties());
+            let identity =
+                string_property(relationship.properties(), P_REL_IDENTITY).map(str::to_owned);
+            let existing =
+                equivalent_relationship(graph, workspace, &relationship, &source, &target)?;
+            let mut moved_identity = false;
+            let (replacement_id, merged_into_existing) = if let Some(existing) = existing {
+                let mut ledger = EvidenceLedger::read(existing.properties());
+                for (entry, recorded) in
+                    moving_ledger.provenance.iter().zip(&moving_ledger.recorded)
+                {
+                    if !ledger.provenance.contains(entry) {
+                        ledger.provenance.push(entry.clone());
+                        ledger.recorded.push(recorded.clone());
+                    }
+                }
+                let mut patch = RelationshipPatch::default()
+                    .set_property(P_PROVENANCE, json_value(&ledger.provenance)?)
+                    .set_property(P_PROVENANCE_RECORDED, json_value(&ledger.recorded)?)
+                    .set_property(
+                        P_HEAT,
+                        PropertyValue::Float(
+                            current_heat(existing.properties(), heat, instant) + moving_heat,
+                        ),
+                    )
+                    .set_property(P_HEAT_UPDATED_AT, PropertyValue::String(now.clone()))
+                    .set_property(P_RECORDED_AT, PropertyValue::String(now.clone()))
+                    .set_property(
+                        P_CORRELATION,
+                        PropertyValue::String(context.correlation_id.clone()),
+                    );
+                if string_property(existing.properties(), P_REL_IDENTITY).is_none()
+                    && let Some(identity) = &identity
+                {
+                    patch =
+                        patch.set_property(P_REL_IDENTITY, PropertyValue::String(identity.clone()));
+                    moved_identity = true;
+                }
+                graph
+                    .update_relationship(existing.id(), patch)
+                    .map_err(map_graph_error)?;
+                *max_version = (*max_version).max(existing.version().saturating_add(1));
+                (existing.id().as_str().to_owned(), true)
+            } else {
+                let mut input = RelationshipInput::new(
+                    NodeId::new(source).map_err(map_graph_error)?,
+                    RELATIONSHIP_KIND,
+                    NodeId::new(target).map_err(map_graph_error)?,
+                )
+                .map_err(map_graph_error)?;
+                for (key, value) in relationship.properties() {
+                    input = input.with_property(key.clone(), value.clone());
+                }
+                input = input
+                    .with_property(P_HEAT, PropertyValue::Float(moving_heat))
+                    .with_property(P_HEAT_UPDATED_AT, PropertyValue::String(now.clone()))
+                    .with_property(P_RECORDED_AT, PropertyValue::String(now.clone()))
+                    .with_property(P_LIFECYCLE, lifecycle_value(MemoryLifecycle::Active))
+                    .with_property(
+                        P_REL_CONSOLIDATED_FROM,
+                        PropertyValue::String(relationship.id().as_str().to_owned()),
+                    )
+                    .with_property(P_ACTOR, PropertyValue::String(context.actor_id.clone()))
+                    .with_property(P_AGENT, optional_string_value(context.agent_id.as_deref()))
+                    .with_property(P_SESSION, PropertyValue::String(context.session_id.clone()))
+                    .with_property(P_REQUEST, PropertyValue::String(context.request_id.clone()))
+                    .with_property(
+                        P_CORRELATION,
+                        PropertyValue::String(context.correlation_id.clone()),
+                    );
+                if let Some(confidence) = relationship.confidence() {
+                    input = input.with_confidence(confidence);
+                }
+                moved_identity = identity.is_some();
+                let created = graph.create_relationship(input).map_err(map_graph_error)?;
+                (created.as_str().to_owned(), false)
+            };
+            let mut superseded = RelationshipPatch::default()
+                .set_property(P_LIFECYCLE, lifecycle_value(MemoryLifecycle::Superseded))
+                .set_property(
+                    P_REL_SUPERSEDED_BY,
+                    PropertyValue::String(replacement_id.clone()),
+                )
+                .set_property(P_RECORDED_AT, PropertyValue::String(now.clone()))
+                .set_property(
+                    P_CORRELATION,
+                    PropertyValue::String(context.correlation_id.clone()),
+                );
+            if moved_identity {
+                superseded = superseded.set_property(P_REL_IDENTITY, PropertyValue::Null);
+            }
+            graph
+                .update_relationship(relationship.id(), superseded)
+                .map_err(map_graph_error)?;
+            *max_version = (*max_version).max(relationship.version().saturating_add(1));
+            repointed.push(RepointedRelationship {
+                original_id: relationship.id().as_str().to_owned(),
+                replacement_id: Some(replacement_id),
+                merged_into_existing,
+            });
+        }
+    }
+    Ok(repointed)
 }
 
 fn trace_operation(

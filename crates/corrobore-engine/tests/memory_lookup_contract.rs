@@ -202,6 +202,7 @@ fn get_keeps_expired_and_superseded_records_visible_with_their_lifecycle() {
             preserve_disagreements: true,
             authority_policy: None,
             revoked_source_ids: vec![],
+            merge_provenance: false,
         }))
     };
     let proposal_id = match engine

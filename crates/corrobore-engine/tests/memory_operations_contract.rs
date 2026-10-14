@@ -98,6 +98,7 @@ fn public_contract_is_versioned_domain_neutral_and_contains_no_cypher_field() {
             preserve_disagreements: true,
             authority_policy: None,
             revoked_source_ids: vec![],
+            merge_provenance: false,
         })),
         MemoryRequest::new(MemoryOperation::Trace(TraceRequest {
             target: MemoryTarget::Memory("memory--alpha".to_owned()),
@@ -435,6 +436,7 @@ fn consolidation_proposal_and_approved_apply_preserve_originals_and_disagreement
                 preserve_disagreements: true,
                 authority_policy: None,
                 revoked_source_ids: vec![],
+                merge_provenance: false,
             })),
         )
         .expect("proposal mode should not destroy evidence");
@@ -462,6 +464,7 @@ fn consolidation_proposal_and_approved_apply_preserve_originals_and_disagreement
                 preserve_disagreements: true,
                 authority_policy: None,
                 revoked_source_ids: vec![],
+                merge_provenance: false,
             }))
             .with_idempotency_key("consolidate:approved"),
         )

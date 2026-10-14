@@ -131,6 +131,7 @@ fn consolidate(
             predicate_class: PREDICATE.to_owned(),
         }),
         revoked_source_ids: revoked,
+        merge_provenance: false,
     }))
     .with_idempotency_key(idempotency_key.to_owned())
 }
