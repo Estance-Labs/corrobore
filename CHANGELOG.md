@@ -11,6 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
+### Added
+
+- **Graph commit history (#317).** In persistent mode every applied write on
+  `main` is an addressable graph commit (`gc` + 40 hex digits) with its parents,
+  generation, transaction id and the record versions it published, kept in an
+  append-only, checksummed `history/graph_history.log`. Stores that predate the
+  history start it with a genesis commit; a commit lost between the WAL apply
+  and the history append is republished from the transaction journals on the
+  next open, and a torn final line is truncated. New routes
+  `GET /v1/graph/commits` and `GET /v1/graph/commits/{commit_id}`. Snapshots
+  and restores carry the history.
+
 ### Removed
 
 - **Breaking:** the enterprise edition and its license gate leave Corrobore,

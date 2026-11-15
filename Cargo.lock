@@ -1409,6 +1409,7 @@ dependencies = [
 name = "graph-storage"
 version = "0.3.3"
 dependencies = [
+ "chrono",
  "criterion",
  "getrandom 0.4.3",
  "graph-core",

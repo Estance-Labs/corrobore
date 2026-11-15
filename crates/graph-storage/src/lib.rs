@@ -66,6 +66,7 @@ mod database_operations;
 mod engine_snapshot;
 mod error;
 mod filesystem_object_store;
+mod graph_history;
 mod graph_pager;
 mod log;
 mod manifest;
@@ -101,7 +102,7 @@ pub use backup_restore::{
 pub use canonical_engine_store::{
     CanonicalAdjacencyProjection, CanonicalEngineStore, CanonicalProjectionRequest,
     CanonicalProjectionStats, CanonicalPropertyFilter, CanonicalPropertyOperator,
-    CanonicalStartupReport, CanonicalStoreOptions, CanonicalStoreStats,
+    CanonicalStartupReport, CanonicalStoreOptions, CanonicalStoreStats, TransitionCommitContext,
 };
 pub use catalog::{
     GraphCatalog, HistoricalRecordCatalogEntry, LatestRecordCatalogEntry,
@@ -148,6 +149,11 @@ pub use database_operations::{
 pub use engine_snapshot::{load_engine_graph_snapshot, persist_engine_graph_snapshot};
 pub use error::{GraphStorageError, GraphStorageResult};
 pub use filesystem_object_store::FilesystemObjectStore;
+pub use graph_history::{
+    CommitPayloadRef, CommitRecordChange, CommitView, CommitViewEntry, GraphBranchInfo,
+    GraphCommit, GraphCommitDraft, GraphCommitId, GraphCommitPage, GraphHistory, HistoryIdFloor,
+    HistoryRecordKind, MAIN_BRANCH, validate_branch_name,
+};
 pub use graph_pager::{
     FileBackedGraphPager, FileBackedGraphStore, create_file_backed_graph_pager,
     create_file_backed_graph_store, map_storage_error_to_graph_pager_error,

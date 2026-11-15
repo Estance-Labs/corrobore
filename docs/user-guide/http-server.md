@@ -1059,6 +1059,38 @@ cross-session boundaries all return the leak-safe `TEMPORAL_BOUNDARY_NOT_FOUND`.
 Invalid selections return `INVALID_TEMPORAL_BOUNDARY`; invalid budgets return
 `INVALID_VISUALIZATION_PROJECTION`.
 
+## Graph history API
+
+In persistent mode every applied write on `main` becomes an addressable graph
+commit. The WAL keeps making the write durable; the commit gives it an identity
+that later reads, diffs and branches refer to. A commit lists the record
+versions it published, relative to its first parent, which is the previous
+head of its branch. Commit ids are `gc` followed by 40 lowercase hex digits.
+
+A store that predates the history starts it with one genesis commit holding the
+records present at the first open. If the process stops after the WAL apply and
+before the commit is appended, the next open publishes the missing commit from
+the transaction journals. In ephemeral mode these routes return
+`409 PERSISTENT_STORAGE_REQUIRED`.
+
+### `GET /v1/graph/commits`
+
+Lists the first-parent history of a branch, newest first. Query parameters:
+`branch` (default `main`), `limit` (1-500, default 50) and `cursor`, the
+`next_cursor` of the previous page. The result holds `branch`, `head`,
+`commits` and `next_cursor`. Each commit carries `commit_id`, `parents`,
+`branch`, `generation`, `created_at`, optional `transaction_id`,
+`mutation_sequence_number`, `actor` and `message`, and the counts
+`node_changes`, `relationship_changes` and `deletions`. An unknown branch
+returns `404 GRAPH_BRANCH_NOT_FOUND`.
+
+### `GET /v1/graph/commits/{commit_id}`
+
+Returns one commit with its `changes`. Each change has `kind` (`node` or
+`relationship`), `record_id`, `version_id`, `deleted`, `labels` (the
+relationship type for a relationship), and `source` and `target` for
+relationships. An unknown or malformed id returns `404 GRAPH_COMMIT_NOT_FOUND`.
+
 ## Explorer frontend split
 
 The browser explorer is maintained in a dedicated repository:

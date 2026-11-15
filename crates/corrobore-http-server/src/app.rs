@@ -1071,6 +1071,14 @@ pub fn build_router(state: AppState) -> Router {
             get(explorer_graph),
         )
         .route("/v1/export/stix", get(export_stix))
+        .route(
+            "/v1/graph/commits",
+            get(crate::handlers::graph_history::list_commits),
+        )
+        .route(
+            "/v1/graph/commits/{commit_id}",
+            get(crate::handlers::graph_history::get_commit),
+        )
         // 2.3: standard JSON routes get a tight body limit.
         .layer(DefaultBodyLimit::max(state.config.max_body_bytes));
 

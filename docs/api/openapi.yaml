@@ -2744,6 +2744,50 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
 
+  /v1/graph/commits:
+    get:
+      operationId: listGraphCommits
+      summary: List the first-parent commit history of a branch, newest first
+      tags: [GraphHistory]
+      parameters:
+        - {name: branch, in: query, schema: {type: string, default: main}}
+        - {name: cursor, in: query, description: next_cursor of the previous page, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 500, default: 50}}
+      responses:
+        '200':
+          description: One page of commits with the branch head and the next cursor
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: PERSISTENT_STORAGE_REQUIRED in ephemeral mode
+          content:
+            application/json:
+              schema: {type: object}
+
+  /v1/graph/commits/{commit_id}:
+    get:
+      operationId: getGraphCommit
+      summary: Read one graph commit and the record versions it published
+      tags: [GraphHistory]
+      parameters:
+        - {name: commit_id, in: path, required: true, schema: {type: string, pattern: '^gc[0-9a-f]{40}$'}}
+      responses:
+        '200':
+          description: Commit summary with its record changes
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: PERSISTENT_STORAGE_REQUIRED in ephemeral mode
+          content:
+            application/json:
+              schema: {type: object}
+
   /v1/sessions/{session_id}/health:
     get:
       operationId: getSessionHealth
@@ -2802,6 +2846,7 @@ tags:
   - {name: Operations, description: Public health and observability}
   - {name: Memory, description: Versioned domain-neutral high-level memory operations}
   - {name: Database Operations, description: Administrative snapshot and derived-index operations}
+  - {name: GraphHistory, description: Addressable graph commits, branches, diffs and merges of the persistent store}
   - {name: Cypher, description: Graph reads and mutations}
   - {name: Seeds, description: Semantic working-set entry points}
   - {name: STIX, description: "Import, validation, and export"}
