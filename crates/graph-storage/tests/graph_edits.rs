@@ -19,8 +19,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-//! Issue #352: batches of record edits published as one commit, on main
-//! through the canonical WAL and on branches through branch payloads.
+//! Issues #352 and #366: batches of node and relationship edits published as
+//! one commit, on main through the canonical WAL and on branches through
+//! branch payloads.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::{
@@ -322,4 +323,176 @@ fn edits_are_refused_on_a_moved_head_or_a_linked_node() {
         matches!(error, GraphStorageError::UnknownGraphBranch { .. }),
         "{error:?}"
     );
+}
+
+fn relationships_at(
+    store: &mut CanonicalEngineStore,
+    branch: &str,
+) -> BTreeMap<String, (String, String, String, BTreeMap<String, PropertyValue>)> {
+    let head = store.graph_head(branch).unwrap();
+    store
+        .load_commit_projection(&head, &CanonicalProjectionRequest::all())
+        .unwrap()
+        .current_relationship_records()
+        .unwrap()
+        .into_iter()
+        .filter(|relationship| relationship.status() != graph_core::RecordStatus::Tombstoned)
+        .map(|relationship| {
+            (
+                relationship.id().as_str().to_owned(),
+                (
+                    relationship.source().as_str().to_owned(),
+                    relationship.rel_type().as_str().to_owned(),
+                    relationship.target().as_str().to_owned(),
+                    relationship
+                        .properties()
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect(),
+                ),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn relationships_are_created_edited_and_deleted_in_one_batch() {
+    let (_root, mut store, a, b) = fixture("relationships");
+    // One batch: a new node, a relationship to it ($0), one between a and b.
+    let report = store
+        .apply_graph_edits(request(
+            MAIN_BRANCH,
+            vec![
+                GraphEdit::CreateNode {
+                    labels: vec!["Malware".to_owned()],
+                    properties: BTreeMap::from([("name".to_owned(), text("m"))]),
+                },
+                GraphEdit::CreateRelationship {
+                    source_id: a.as_str().to_owned(),
+                    target_id: "$0".to_owned(),
+                    rel_type: "INDICATES".to_owned(),
+                    properties: BTreeMap::from([("weight".to_owned(), PropertyValue::Integer(2))]),
+                },
+                GraphEdit::CreateRelationship {
+                    source_id: a.as_str().to_owned(),
+                    target_id: b.as_str().to_owned(),
+                    rel_type: "LINKS".to_owned(),
+                    properties: BTreeMap::new(),
+                },
+            ],
+        ))
+        .unwrap();
+    assert_eq!(report.created.len(), 1);
+    assert_eq!(report.created_relationships.len(), 2);
+    let relationships = relationships_at(&mut store, MAIN_BRANCH);
+    let indicates = &relationships[&report.created_relationships[0]];
+    assert_eq!(
+        (
+            indicates.0.as_str(),
+            indicates.1.as_str(),
+            indicates.2.as_str()
+        ),
+        (a.as_str(), "INDICATES", report.created[0].as_str())
+    );
+    assert_eq!(indicates.3["weight"], PropertyValue::Integer(2));
+
+    // Edit one relationship and delete the other; then b can be deleted
+    // together with its last relationship.
+    let links = report.created_relationships[1].clone();
+    store
+        .apply_graph_edits(request(
+            MAIN_BRANCH,
+            vec![
+                GraphEdit::SetRelationshipProperties {
+                    relationship_id: report.created_relationships[0].clone(),
+                    set: BTreeMap::from([("weight".to_owned(), PropertyValue::Integer(5))]),
+                    remove: Vec::new(),
+                },
+                GraphEdit::DeleteRelationship {
+                    relationship_id: links.clone(),
+                },
+                GraphEdit::DeleteNode {
+                    node_id: b.as_str().to_owned(),
+                },
+            ],
+        ))
+        .unwrap();
+    let relationships = relationships_at(&mut store, MAIN_BRANCH);
+    assert_eq!(relationships.len(), 1);
+    assert_eq!(
+        relationships[&report.created_relationships[0]].3["weight"],
+        PropertyValue::Integer(5)
+    );
+    assert!(!nodes_at(&mut store, MAIN_BRANCH).contains_key(b.as_str()));
+}
+
+#[test]
+fn relationship_edits_are_validated_before_writing() {
+    let (_root, mut store, a, b) = fixture("relationship-refusals");
+    let before = store.graph_head(MAIN_BRANCH).unwrap();
+    let link = GraphEdit::CreateRelationship {
+        source_id: a.as_str().to_owned(),
+        target_id: b.as_str().to_owned(),
+        rel_type: "LINKS".to_owned(),
+        properties: BTreeMap::new(),
+    };
+    let error = store
+        .apply_graph_edits(request(
+            MAIN_BRANCH,
+            vec![GraphEdit::DeleteRelationship {
+                relationship_id: "relationship--missing".to_owned(),
+            }],
+        ))
+        .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            GraphStorageError::GraphEditRelationshipNotFound { .. }
+        ),
+        "{error:?}"
+    );
+    for edits in [
+        vec![GraphEdit::CreateRelationship {
+            source_id: a.as_str().to_owned(),
+            target_id: "$0".to_owned(),
+            rel_type: "LINKS".to_owned(),
+            properties: BTreeMap::new(),
+        }],
+        vec![GraphEdit::CreateRelationship {
+            source_id: a.as_str().to_owned(),
+            target_id: b.as_str().to_owned(),
+            rel_type: " ".to_owned(),
+            properties: BTreeMap::new(),
+        }],
+        vec![
+            link.clone(),
+            GraphEdit::DeleteNode {
+                node_id: b.as_str().to_owned(),
+            },
+        ],
+    ] {
+        let error = store
+            .apply_graph_edits(request(MAIN_BRANCH, edits.clone()))
+            .unwrap_err();
+        assert!(
+            matches!(error, GraphStorageError::GraphEditInvalid { .. }),
+            "{edits:?}: {error:?}"
+        );
+    }
+    let error = store
+        .apply_graph_edits(request(
+            MAIN_BRANCH,
+            vec![GraphEdit::CreateRelationship {
+                source_id: a.as_str().to_owned(),
+                target_id: "node--missing".to_owned(),
+                rel_type: "LINKS".to_owned(),
+                properties: BTreeMap::new(),
+            }],
+        ))
+        .unwrap_err();
+    assert!(
+        matches!(error, GraphStorageError::GraphEditNodeNotFound { .. }),
+        "{error:?}"
+    );
+    assert_eq!(store.graph_head(MAIN_BRANCH).unwrap(), before);
 }

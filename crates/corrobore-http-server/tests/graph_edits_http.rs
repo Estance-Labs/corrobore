@@ -201,3 +201,61 @@ async fn invalid_batches_are_rejected_without_writing() {
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert_eq!(body["error"]["code"], "PERSISTENT_STORAGE_REQUIRED");
 }
+
+/// Issue #366: relationships are created (also to nodes of the same batch),
+/// edited and deleted through the same route.
+#[tokio::test]
+async fn relationships_are_edited_through_the_batch_route() {
+    let app = fixture("edits-relationships").await;
+    let alpha = node_id(&app, "alpha").await;
+    let beta = node_id(&app, "beta").await;
+    let (status, body) = post(
+        &app,
+        "/v1/graph/edits",
+        json!({"edits": [
+            {"op": "create_node", "labels": ["Malware"], "properties": {"name": "m"}},
+            {"op": "create_relationship", "source_id": alpha, "target_id": "$0", "type": "INDICATES", "properties": {"weight": 2}},
+            {"op": "create_relationship", "source_id": alpha, "target_id": beta, "type": "LINKS"}
+        ]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let created = body["result"]["created_relationships"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(created.len(), 2);
+    let (status, page) = get(&app, "/v1/graph/records?kind=relationship&label=INDICATES").await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(
+        page["result"]["relationships"][0]["properties"]["weight"],
+        2
+    );
+
+    let (status, body) = post(
+        &app,
+        "/v1/graph/edits",
+        json!({"edits": [
+            {"op": "set_relationship_properties", "relationship_id": created[0], "set": {"weight": 7}},
+            {"op": "delete_relationship", "relationship_id": created[1]},
+            {"op": "delete_node", "node_id": beta}
+        ]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(names(&app, None).await, ["alpha"]);
+    let (_, page) = get(&app, "/v1/graph/records?kind=relationship&label=INDICATES").await;
+    assert_eq!(
+        page["result"]["relationships"][0]["properties"]["weight"],
+        7
+    );
+
+    let (status, body) = post(
+        &app,
+        "/v1/graph/edits",
+        json!({"edits": [{"op": "delete_relationship", "relationship_id": "relationship--missing"}]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["error"]["code"], "GRAPH_RELATIONSHIP_NOT_FOUND");
+}

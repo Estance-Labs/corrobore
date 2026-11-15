@@ -402,6 +402,15 @@ pub enum GraphStorageError {
         node_id: String,
     },
 
+    /// An edit names a relationship that is not live at the head it applies to.
+    #[error("relationship {relationship_id} is not on branch {branch}")]
+    GraphEditRelationshipNotFound {
+        /// Branch edited.
+        branch: String,
+        /// Relationship the edit names.
+        relationship_id: String,
+    },
+
     /// An edit would leave the branch inconsistent.
     #[error("node {node_id} on branch {branch} cannot be deleted: {reason}")]
     GraphEditBlocked {
