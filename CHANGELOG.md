@@ -114,6 +114,14 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   relationship type, with typed `prop_<key>` columns, through
   `corrobore server export-parquet` and `POST /v1/admin/storage/export/parquet`.
 
+- **Deterministic simulation of the persistence layer (#328).**
+  `crates/graph-storage/tests/deterministic_simulation.rs` drives seeded
+  universes of main writes, crashes at every mutation stage, branch writes,
+  merges, history cleanup, reopens and torn history tails, and checks each step
+  against an in-memory model: visible records, history continuity, the `main`
+  head view against the canonical catalog, and atomicity after a crash. A
+  failing seed replays exactly.
+
 ### Removed
 
 - **Breaking:** the enterprise edition and its license gate leave Corrobore,
@@ -136,6 +144,12 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
 ### Fixed
 
+- History cleanup kept the commits each live branch can reach but could prune
+  the commit where that branch split from `main`, so its next merge found no
+  merge base. Cleanup now keeps the whole merge-base closure of every live
+  branch (#328, found by the simulator).
+- A three-way merge reported a conflict when both branches deleted the same
+  record; that agreement now merges cleanly (#328, found by the simulator).
 - Workspace compatibility after the `hmac` 0.13 and `fs4` 1.1 upgrades:
   direct SHA-2 consumers now share `digest` 0.11 with HMAC, hexadecimal digest
   rendering and key initialization use the current APIs, and file-worker
