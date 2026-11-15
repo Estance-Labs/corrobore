@@ -108,6 +108,7 @@ impl S3SnapshotArtifactStore {
             "AWS4-HMAC-SHA256 Credential={}/{scope}, SignedHeaders={signed_headers}, Signature={signature}",
             self.config.access_key
         );
+        let is_put = method == Method::PUT;
         let mut request = self
             .client
             .request(method, parsed)
@@ -118,8 +119,12 @@ impl S3SnapshotArtifactStore {
         if let Some(token) = &self.config.session_token {
             request = request.header("x-amz-security-token", token.trim());
         }
-        if !body.is_empty() {
-            request = request.body(body.to_vec());
+        // A PUT always states its length, even for an empty file: AWS S3
+        // answers 411 Length Required otherwise (issue #380).
+        if is_put || !body.is_empty() {
+            request = request
+                .header("content-length", body.len().to_string())
+                .body(body.to_vec());
         }
         let response = request
             .send()
@@ -221,6 +226,50 @@ fn xml_unescape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #380: AWS S3 refuses a PUT without Content-Length (411), and
+    /// snapshots hold empty files.
+    #[test]
+    fn an_empty_put_carries_a_zero_content_length() {
+        use std::io::{BufRead, BufReader, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("connection");
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            let mut headers = Vec::new();
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).expect("header line");
+                if line.trim().is_empty() {
+                    break;
+                }
+                headers.push(line.trim().to_ascii_lowercase());
+            }
+            let mut stream = stream;
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                .expect("response");
+            headers
+        });
+        let mut store = S3SnapshotArtifactStore::new(S3SnapshotStoreConfig {
+            endpoint: format!("http://{address}"),
+            bucket: "bucket".to_owned(),
+            region: "us-east-1".to_owned(),
+            access_key: "access".to_owned(),
+            secret_key: "secret".to_owned(),
+            session_token: None,
+        })
+        .expect("store");
+        store.put("snapshot/empty.lock", &[]).expect("empty put");
+        let headers = server.join().expect("server");
+        assert!(headers[0].starts_with("put "), "{headers:?}");
+        assert!(
+            headers.iter().any(|header| header == "content-length: 0"),
+            "an empty PUT must state its length: {headers:?}"
+        );
+    }
 
     #[test]
     fn aws_encoding_and_signing_are_deterministic() {
