@@ -335,6 +335,17 @@ one exists.
 - `UNSTRUCTURED_QUERY` is a warning: the clauses were recognised but not their
   structure.
 
+A query that parses also returns its logical `plan`, for Explain: the
+`operators` in execution order (`node_scan`, `expand_relationship`, `filter`,
+`projection`, `sort`, `skip`, `limit`, `mutation`, `function_call`), the
+`query_kind`, and the pattern `bindings` (`variable`, `element` `node` or
+`relationship`, and whether it is `projected`). `plan` is `null` when the query
+does not parse or its parameters are not bound yet.
+
+```json
+{ "operators": ["node_scan", "expand_relationship", "filter", "projection", "limit"], "query_kind": "read", "bindings": [{ "variable": "a", "element": "node", "projected": true }] }
+```
+
 Queries longer than 64 KiB answer `400 QUERY_TOO_LARGE`.
 
 ## `POST /v1/cypher/write`

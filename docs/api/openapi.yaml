@@ -1718,11 +1718,38 @@ paths:
       responses:
         '200':
           description: >-
-            valid, kind (read, mutation, mixed or null), clauses and diagnostics
-            with severity (error or warning), code, message and suggestion
+            valid, kind (read, mutation, mixed or null), clauses, diagnostics
+            with severity (error or warning), code, message and suggestion, and
+            the logical plan of a parsed query
           content:
             application/json:
-              schema: {type: object}
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: true}
+                  result:
+                    type: object
+                    properties:
+                      valid: {type: boolean}
+                      kind: {type: string, nullable: true, enum: [read, mutation, mixed]}
+                      clauses: {type: array, items: {type: string}}
+                      diagnostics: {type: array, items: {type: object}}
+                      plan:
+                        type: object
+                        nullable: true
+                        properties:
+                          operators:
+                            type: array
+                            items: {type: string, enum: [node_scan, expand_relationship, filter, projection, sort, skip, limit, mutation, function_call]}
+                          query_kind: {type: string, enum: [read, mutation, mixed]}
+                          bindings:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                variable: {type: string}
+                                element: {type: string, enum: [node, relationship]}
+                                projected: {type: boolean}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
 

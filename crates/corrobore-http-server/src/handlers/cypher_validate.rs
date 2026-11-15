@@ -26,6 +26,7 @@
 
 use axum::Json;
 use cypher_parser::{ClauseKind, ParseErrorCode, QueryKind, parse_query};
+use cypher_planner::{PlanOperator, PlannedElement, build_logical_plan};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -57,6 +58,63 @@ pub struct ValidateCypherResult {
     pub kind: Option<&'static str>,
     pub clauses: Vec<&'static str>,
     pub diagnostics: Vec<CypherDiagnosticView>,
+    /// Logical plan of a parsed query (issue #360); null otherwise.
+    pub plan: Option<PlanView>,
+}
+
+/// The logical plan Corrobore builds for a query, for Explain.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct PlanView {
+    /// Operators in execution order.
+    pub operators: Vec<&'static str>,
+    /// `read`, `mutation` or `mixed`.
+    pub query_kind: &'static str,
+    /// Pattern variables, what they bind and whether they are returned.
+    pub bindings: Vec<PlanBindingView>,
+}
+
+/// One pattern variable of a plan.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct PlanBindingView {
+    pub variable: String,
+    /// `node` or `relationship`.
+    pub element: &'static str,
+    pub projected: bool,
+}
+
+fn operator_name(operator: &PlanOperator) -> &'static str {
+    match operator {
+        PlanOperator::NodeScan => "node_scan",
+        PlanOperator::ExpandRelationship => "expand_relationship",
+        PlanOperator::Filter => "filter",
+        PlanOperator::Projection => "projection",
+        PlanOperator::Sort => "sort",
+        PlanOperator::Skip => "skip",
+        PlanOperator::Limit => "limit",
+        PlanOperator::Mutation => "mutation",
+        PlanOperator::FunctionCall => "function_call",
+    }
+}
+
+fn plan_view(ast: &cypher_parser::QueryAst) -> PlanView {
+    let plan = build_logical_plan(ast);
+    PlanView {
+        operators: plan.operators.iter().map(operator_name).collect(),
+        query_kind: kind_name(&plan.query_kind),
+        bindings: plan
+            .provenance
+            .declared_bindings()
+            .iter()
+            .map(|binding| PlanBindingView {
+                variable: binding.variable().to_owned(),
+                element: match binding.element() {
+                    PlannedElement::Node => "node",
+                    PlannedElement::Relationship => "relationship",
+                },
+                projected: binding.projected(),
+            })
+            .collect(),
+    }
 }
 
 fn kind_name(kind: &QueryKind) -> &'static str {
@@ -123,6 +181,7 @@ pub fn validate_query(query: &str) -> ValidateCypherResult {
                 kind: Some(kind_name(&ast.kind)),
                 clauses: ast.clauses.iter().map(clause_name).collect(),
                 diagnostics,
+                plan: Some(plan_view(&ast)),
             }
         }
         Err(error) if error.code == ParseErrorCode::InvalidParameter => ValidateCypherResult {
@@ -141,6 +200,7 @@ pub fn validate_query(query: &str) -> ValidateCypherResult {
                 message: error.message,
                 suggestion: error.suggestion,
             }],
+            plan: None,
         },
         Err(error) => ValidateCypherResult {
             valid: false,
@@ -157,6 +217,7 @@ pub fn validate_query(query: &str) -> ValidateCypherResult {
                 message: error.message,
                 suggestion: error.suggestion,
             }],
+            plan: None,
         },
     }
 }
