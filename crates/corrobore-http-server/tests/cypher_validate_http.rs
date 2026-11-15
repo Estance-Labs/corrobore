@@ -123,3 +123,63 @@ async fn validating_a_write_never_executes_it() {
 
     let _ = std::fs::remove_dir_all(storage);
 }
+
+/// Issue #360: a valid query's result carries its logical plan.
+#[tokio::test]
+async fn a_valid_query_explains_its_logical_plan() {
+    let app = ephemeral_app();
+    let (status, body) = post(
+        &app,
+        "/v1/cypher/validate",
+        json!({"query": "MATCH (a:Actor)-[r:USES]->(m:Malware) WHERE m.name = 'X' RETURN a, m LIMIT 5"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let plan = &body["result"]["plan"];
+    assert_eq!(plan["query_kind"], "read");
+    assert_eq!(
+        plan["operators"],
+        json!([
+            "node_scan",
+            "expand_relationship",
+            "filter",
+            "projection",
+            "limit"
+        ])
+    );
+    let bindings = plan["bindings"].as_array().unwrap();
+    let find = |variable: &str| {
+        bindings
+            .iter()
+            .find(|binding| binding["variable"] == variable)
+            .unwrap_or_else(|| panic!("no binding {variable}: {plan}"))
+            .clone()
+    };
+    assert_eq!(
+        find("a"),
+        json!({"variable": "a", "element": "node", "projected": true})
+    );
+    assert_eq!(
+        find("r"),
+        json!({"variable": "r", "element": "relationship", "projected": false})
+    );
+    assert_eq!(find("m")["projected"], true);
+
+    let (_, body) = post(
+        &app,
+        "/v1/cypher/validate",
+        json!({"query": "CREATE (n:Indicator {name: 'x'})"}),
+    )
+    .await;
+    assert_eq!(body["result"]["plan"]["query_kind"], "mutation");
+    assert!(
+        body["result"]["plan"]["operators"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("mutation"))
+    );
+
+    let (_, body) = post(&app, "/v1/cypher/validate", json!({"query": "CALL {"})).await;
+    assert_eq!(body["result"]["valid"], false);
+    assert!(body["result"]["plan"].is_null());
+}
