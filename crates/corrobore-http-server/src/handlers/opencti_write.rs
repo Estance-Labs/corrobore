@@ -14,7 +14,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     app::{AppState, RuntimeStoreProvider},
-    auth::require_admin_auth,
     error::ApiError,
     opencti_write::{
         AuthorityTransitionReadiness, OpenCtiWriteAuditRecord, OpenCtiWriteStatus,
@@ -295,7 +294,12 @@ pub async fn suspend_opencti_writes(
     headers: HeaderMap,
     Json(request): Json<SuspendOpenCtiWritesRequest>,
 ) -> Result<Json<OpenCtiWriteAuthorityResponse>, ApiError> {
-    require_admin_auth(&state, &headers)?;
+    crate::auth::require_admin_or_policy(
+        &state,
+        &headers,
+        crate::policy::PolicyRequest::graph_wide(crate::policy::PolicyAction::Admin),
+    )
+    .await?;
     let mut runtime = state
         .opencti_write
         .lock()
@@ -315,7 +319,12 @@ pub async fn transition_opencti_write_authority(
     headers: HeaderMap,
     Json(request): Json<TransitionOpenCtiWriteAuthorityRequest>,
 ) -> Result<Json<OpenCtiWriteAuthorityResponse>, ApiError> {
-    require_admin_auth(&state, &headers)?;
+    crate::auth::require_admin_or_policy(
+        &state,
+        &headers,
+        crate::policy::PolicyRequest::graph_wide(crate::policy::PolicyAction::Admin),
+    )
+    .await?;
     let mut runtime = state
         .opencti_write
         .lock()
@@ -334,7 +343,12 @@ pub async fn drain_opencti_projection(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<OpenCtiWriteStatusResponse>, ApiError> {
-    require_admin_auth(&state, &headers)?;
+    crate::auth::require_admin_or_policy(
+        &state,
+        &headers,
+        crate::policy::PolicyRequest::graph_wide(crate::policy::PolicyAction::Admin),
+    )
+    .await?;
     drain_reference_projection(&state).await?;
     write_status_response(&state)
 }
@@ -344,7 +358,12 @@ pub async fn reconstruct_opencti_reference(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<OpenCtiReconstructionResponse>, ApiError> {
-    require_admin_auth(&state, &headers)?;
+    crate::auth::require_admin_or_policy(
+        &state,
+        &headers,
+        crate::policy::PolicyRequest::graph_wide(crate::policy::PolicyAction::Admin),
+    )
+    .await?;
     let RuntimeStoreProvider::Persistent(store) = &state.runtime_store else {
         return Err(ApiError::service_unavailable(
             "OPENCTI_RECONSTRUCTION_REQUIRES_PERSISTENCE",

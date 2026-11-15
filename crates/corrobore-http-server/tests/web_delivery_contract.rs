@@ -86,6 +86,8 @@ fn config(web_dir: Option<String>) -> ServerConfig {
         embedding: corrobore_http_server::config::EmbeddingConfig::default(),
         cors_allowed_origins: Vec::new(),
         identity: Default::default(),
+        policy_file: None,
+        policy_shared_token_actor: None,
     }
 }
 

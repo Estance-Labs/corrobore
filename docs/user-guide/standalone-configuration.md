@@ -27,6 +27,9 @@ corrobore server validate-config --config /etc/corrobore/corrobore.toml
 | `corrobore server cleanup` | Offline storage | Prunes graph history outside a retention window and compacts branch payloads and the WAL. |
 | `corrobore server import-snapshot` | Object store URL | Downloads and validates a snapshot from `s3://`, `file://` or `memory://` into a new local snapshot directory. |
 | `corrobore server export-parquet` | Offline storage | Exports one commit to Apache Parquet files, one per label and relationship type. |
+| `corrobore policy validate` | Policy file | Compiles a graph policy and reports whether it is valid. |
+| `corrobore policy test` | Policy and test files | Runs allow/deny cases against a policy; exits 1 when a case fails. |
+| `corrobore policy explain` | Policy file | Decides one request and prints the decision with the rules that allow it. |
 
 `validate-config --print-effective` prints only non-secret effective settings.
 `status` exits `8` when the endpoint is unavailable and `9` when the remote
@@ -107,8 +110,13 @@ complete procedures and validation steps.
 | `--storage-dir` | `snapshot`, `migrate`, `rollback`, `rebuild-indexes`, `cancel-rebuild`, `cleanup`, `export-parquet` | Select the offline persistent storage root. |
 | `--destination` | `snapshot`, `import-snapshot`, `export-parquet` | Select the new local snapshot or export directory. |
 | `--source` | `import-snapshot` | Set the object store URL: `s3://bucket`, `file:///path` or `memory://`. |
-| `--branch` | `export-parquet` | Export the head of this branch; the default is `main`. |
+| `--branch` | `export-parquet`, `policy explain` | Export the head of this branch (the default is `main`), or the branch a policy decision is about. |
 | `--commit` | `export-parquet` | Export this graph commit. |
+| `--file` | `policy validate`, `policy test`, `policy explain` | Select the policy file. |
+| `--tests` | `policy test` | Select the YAML test cases. |
+| `--actor` | `policy explain` | Actor the request is decided for. |
+| `--action` | `policy explain` | Action to decide, such as `read` or `change`. |
+| `--target-branch` | `policy explain` | Branch a creation, merge or deletion targets. |
 | `--encryption-key-id` | `snapshot`, `validate-snapshot`, `restore`, `import-snapshot` | Record or verify the external key-provider identity without storing key material. |
 | `--retention-hook` | `snapshot` | Invoke an optional provider lifecycle or retention hook. |
 | `--snapshot` | `validate-snapshot`, `export-snapshot-s3`, `restore` | Select the local snapshot artifact directory. |
@@ -217,6 +225,8 @@ remain environment-only:
 | `CORROBORE_HTTP_OAUTH_SCOPES` | unset | Scopes advertised in the resource metadata. |
 | `CORROBORE_HTTP_OAUTH_CLIENT_IDS` | unset | Only tokens issued to these clients are accepted. |
 | `CORROBORE_HTTP_OAUTH_JWKS_MIN_REFRESH_SECONDS` | `30` | Shortest pause between two key-set fetches caused by an unknown key id. |
+| `CORROBORE_HTTP_POLICY_FILE` | unset | Graph policy (YAML, compiled to Cedar) deciding what each actor may do. See [Graph policy](http-server.md#graph-policy). |
+| `CORROBORE_HTTP_POLICY_SHARED_TOKEN_ACTOR` | unset | Actor the shared token stands for under a policy. |
 | `CORROBORE_HTTP_CORS_ALLOWED_ORIGINS` | unset | Exact browser origins allowed to call the server (CORS), comma-separated, for a viewer served from another origin. `*` is refused; unset sends no CORS headers. |
 | `CORROBORE_HTTP_CONTENT_STORE_URL` | unset | Object store holding offloaded content (`s3://bucket/prefix`, `file:///path` or `memory://`). Unset, persistent servers use `<storage>/content` and ephemeral servers keep content in memory. See [Content plane](http-server.md#content-plane). |
 | `CORROBORE_HTTP_CONTENT_INLINE_MAX_BYTES` | `16384` | Text and JSON content up to this size stays inline in the returned handle; larger or binary content is offloaded. |

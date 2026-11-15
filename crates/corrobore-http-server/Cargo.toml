@@ -35,13 +35,16 @@ domain-provider-abi = { path = "../domain-provider-abi" }
 corrobore-nlq = { path = "../corrobore-nlq" }
 graph-core = { path = "../graph-core" }
 graph-storage = { path = "../graph-storage" }
+cedar-policy = { version = "4.14.1", default-features = false }
 hmac = { workspace = true }
 jsonwebtoken = { version = "12.0.0", default-features = false, features = ["aws_lc_rs"] }
 libloading = "0.8"
 opencti-adapter = { path = "../opencti-adapter" }
 opencti-file-search = { path = "../opencti-file-search" }
+percent-encoding = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_urlencoded = "0.7"
 reqwest = { workspace = true }
 rustls = { workspace = true }
 sha2 = { workspace = true }
@@ -61,6 +64,7 @@ tracing-subscriber = { workspace = true, features = ["json"] }
 toml = { workspace = true }
 uuid = { workspace = true }
 x509-parser = { workspace = true }
+yaml_serde = "0.10.7"
 
 [dev-dependencies]
 http-body-util = { workspace = true }

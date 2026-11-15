@@ -4,10 +4,7 @@
 use axum::{Json, extract::State, http::HeaderMap};
 use serde::Serialize;
 
-use crate::{
-    app::AppState, auth::require_admin_auth, domain_providers::registry::DomainProviderStatus,
-    error::ApiError,
-};
+use crate::{app::AppState, domain_providers::registry::DomainProviderStatus, error::ApiError};
 
 #[derive(Serialize)]
 pub struct DomainProviderStatusResponse {
@@ -24,7 +21,12 @@ pub async fn admin_domain_provider_status(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<DomainProviderStatusResponse>, ApiError> {
-    require_admin_auth(&state, &headers)?;
+    crate::auth::require_admin_or_policy(
+        &state,
+        &headers,
+        crate::policy::PolicyRequest::graph_wide(crate::policy::PolicyAction::Admin),
+    )
+    .await?;
     let providers = state
         .domain_providers
         .as_deref()

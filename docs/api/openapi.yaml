@@ -1583,6 +1583,33 @@ paths:
                           warning_count: {type: integer, minimum: 0}
                           derived_state_rebuilt: {type: boolean}
 
+  /v1/graph/access:
+    get:
+      operationId: getGraphAccess
+      summary: What the caller's credential may do under the graph policy (issue 384)
+      tags: [Graph]
+      parameters:
+        - {name: branch, in: query, required: false, schema: {type: string}}
+        - {name: target_branch, in: query, required: false, schema: {type: string}}
+      responses:
+        '200':
+          description: Allowed actions, graph-wide and on the named branch
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: true}
+                  result:
+                    type: object
+                    properties:
+                      actor_id: {type: [string, 'null']}
+                      graph_wide: {type: array, items: {type: string}}
+                      branch: {type: [string, 'null']}
+                      target_branch: {type: [string, 'null']}
+                      actions: {type: array, items: {type: string}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
   /v1/whoami:
     get:
       operationId: whoAmI

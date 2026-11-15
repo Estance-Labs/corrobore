@@ -153,6 +153,8 @@ pub enum AppStateInitError {
     OpenCtiReconciliationStateFailed { reason: String },
     #[error("failed to open the content store: {reason}")]
     ContentStoreFailed { reason: String },
+    #[error("failed to load the policy file {path}: {reason}")]
+    PolicyFailed { path: String, reason: String },
 }
 
 #[derive(Clone)]
@@ -186,7 +188,16 @@ pub struct AppState {
     /// Actor recorded on the `main` commit of the write the shared engine is
     /// executing; set and cleared under the engine lock (issue #382).
     pub main_commit_actor: Arc<Mutex<Option<String>>>,
+    /// The installed graph policy, if any; replaced whole on reload.
+    pub policy: Arc<std::sync::RwLock<Option<Arc<crate::policy::PolicyEngine>>>>,
     pub started_at: Instant,
+}
+
+impl AppState {
+    /// The policy in force for this request, if one is installed.
+    pub fn current_policy(&self) -> Option<Arc<crate::policy::PolicyEngine>> {
+        self.policy.read().ok().and_then(|policy| policy.clone())
+    }
 }
 
 impl AppState {
@@ -353,6 +364,21 @@ impl AppState {
             config.opencti_shadow.max_concurrency,
         ));
         let authenticator = Arc::new(crate::auth::Authenticator::new(&config));
+        let policy = match config.policy_file.as_deref() {
+            None => None,
+            Some(path) => {
+                let failed = |reason: String| AppStateInitError::PolicyFailed {
+                    path: path.to_owned(),
+                    reason,
+                };
+                let text =
+                    std::fs::read_to_string(path).map_err(|error| failed(error.to_string()))?;
+                Some(Arc::new(
+                    crate::policy::PolicyEngine::from_yaml(&text)
+                        .map_err(|error| failed(error.to_string()))?,
+                ))
+            }
+        };
         let state = Self {
             engine: Arc::new(Mutex::new(engine)),
             runtime_store,
@@ -377,6 +403,7 @@ impl AppState {
             embedding: crate::embedding::provider_from_config(&config_embedding).map(Arc::from),
             authenticator,
             main_commit_actor,
+            policy: Arc::new(std::sync::RwLock::new(policy)),
             started_at: Instant::now(),
         };
         lifecycle.mark_ready();
@@ -1097,6 +1124,7 @@ pub fn build_router(state: AppState) -> Router {
             get(crate::handlers::claim_audit::projection),
         )
         .route("/v1/whoami", get(crate::auth::whoami))
+        .route("/v1/graph/access", get(crate::policy_gate::access))
         .route("/v1/cypher/execute", post(execute_cypher))
         .route("/v1/cypher/read", post(execute_read_cypher))
         .route("/v1/cypher/write", post(execute_write_cypher))
@@ -1273,6 +1301,11 @@ pub fn build_router(state: AppState) -> Router {
     let protected = protected
         .merge(import_routes)
         .merge(content_routes)
+        // Inner: decided after authentication resolved the identity.
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::policy_gate::enforce_policy,
+        ))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_bearer_auth,
@@ -1294,6 +1327,10 @@ pub fn build_router(state: AppState) -> Router {
     );
     let opencti_routes = opencti_routes
         .layer(DefaultBodyLimit::max(state.config.import_max_body_bytes))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::policy_gate::enforce_policy,
+        ))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_bearer_auth,

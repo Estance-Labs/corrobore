@@ -317,14 +317,9 @@ pub async fn execute_cypher(
         state,
         with_precondition(&headers, payload)?,
         None,
-        actor_of(identity),
+        identity.map(|Extension(identity)| identity),
     )
     .await
-}
-
-/// The actor a named credential proves; recorded on the commits it writes.
-fn actor_of(identity: Option<Extension<RequestIdentity>>) -> Option<String> {
-    identity.and_then(|Extension(identity)| identity.actor)
 }
 
 pub async fn execute_read_cypher(
@@ -337,7 +332,7 @@ pub async fn execute_read_cypher(
         state,
         with_precondition(&headers, payload)?,
         Some(EngineRequestMode::ReadOnly),
-        actor_of(identity),
+        identity.map(|Extension(identity)| identity),
     )
     .await
 }
@@ -352,7 +347,7 @@ pub async fn execute_write_cypher(
         state,
         with_precondition(&headers, payload)?,
         Some(EngineRequestMode::Mutation),
-        actor_of(identity),
+        identity.map(|Extension(identity)| identity),
     )
     .await
 }
@@ -382,8 +377,39 @@ async fn execute_cypher_inner(
     state: AppState,
     mut payload: ExecuteCypherRequest,
     forced_mode: Option<EngineRequestMode>,
-    actor: Option<String>,
+    identity: Option<RequestIdentity>,
 ) -> Result<Json<ExecuteCypherResponse>, ApiError> {
+    // The policy judges the statement's own mode on the branch it targets.
+    {
+        let mode =
+            forced_mode.unwrap_or_else(|| parse_mode(payload.mode.as_deref(), &payload.query));
+        // The same test the engine applies to an `auto` request.
+        let writes = match mode {
+            EngineRequestMode::ReadOnly | EngineRequestMode::ValidateOnly => false,
+            EngineRequestMode::Mutation => true,
+            _ => shared_runtime::contains_mutation_keywords(&payload.query),
+        };
+        let action = if writes {
+            crate::policy::PolicyAction::Change
+        } else {
+            crate::policy::PolicyAction::Read
+        };
+        let branch = match (payload.branch.as_deref(), payload.commit.as_deref()) {
+            (Some(branch), _) if !branch.trim().is_empty() => Some(branch.to_owned()),
+            (_, Some(_)) => None,
+            _ => Some(graph_storage::MAIN_BRANCH.to_owned()),
+        };
+        crate::policy_gate::authorize(
+            &state,
+            identity.as_ref(),
+            &crate::policy::PolicyRequest {
+                action,
+                branch,
+                target_branch: None,
+            },
+        )?;
+    }
+    let actor = identity.and_then(|identity| identity.actor);
     let audit_event_id = Uuid::new_v4().to_string();
     let query_len = payload.query.len();
     let workspace_id = payload

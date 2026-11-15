@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     app::AppState,
-    auth::require_admin_auth,
     database_operations::{
         CreateSnapshotCommand, DatabaseOperationMetrics, create_online_snapshot,
         rebuild_online_indexes,
@@ -25,7 +24,12 @@ pub async fn create_snapshot(
     headers: HeaderMap,
     Json(command): Json<CreateSnapshotCommand>,
 ) -> Result<Json<DatabaseOperationResponse<graph_storage::SnapshotReport>>, ApiError> {
-    require_admin_auth(&state, &headers)?;
+    crate::auth::require_admin_or_policy(
+        &state,
+        &headers,
+        crate::policy::PolicyRequest::graph_wide(crate::policy::PolicyAction::Export),
+    )
+    .await?;
     create_online_snapshot(&state, command)
         .map(|result| Json(DatabaseOperationResponse { ok: true, result }))
         .map_err(|reason| ApiError::service_unavailable("DATABASE_OPERATION_FAILED", reason))
@@ -35,7 +39,15 @@ pub async fn rebuild_indexes(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<DatabaseOperationResponse<graph_storage::IndexRebuildReport>>, ApiError> {
-    require_admin_auth(&state, &headers)?;
+    crate::auth::require_admin_or_policy(
+        &state,
+        &headers,
+        crate::policy::PolicyRequest::on(
+            crate::policy::PolicyAction::Maintain,
+            graph_storage::MAIN_BRANCH,
+        ),
+    )
+    .await?;
     rebuild_online_indexes(&state)
         .map(|result| Json(DatabaseOperationResponse { ok: true, result }))
         .map_err(|reason| ApiError::service_unavailable("DATABASE_OPERATION_FAILED", reason))
@@ -45,7 +57,12 @@ pub async fn database_operation_status(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<DatabaseOperationResponse<DatabaseOperationMetrics>>, ApiError> {
-    require_admin_auth(&state, &headers)?;
+    crate::auth::require_admin_or_policy(
+        &state,
+        &headers,
+        crate::policy::PolicyRequest::graph_wide(crate::policy::PolicyAction::Admin),
+    )
+    .await?;
     let result = state
         .database_operations
         .lock()
@@ -77,7 +94,12 @@ pub async fn cleanup_history(
     headers: HeaderMap,
     Json(body): Json<HistoryCleanupBody>,
 ) -> Result<Json<DatabaseOperationResponse<graph_storage::HistoryCleanupReport>>, ApiError> {
-    require_admin_auth(&state, &headers)?;
+    crate::auth::require_admin_or_policy(
+        &state,
+        &headers,
+        crate::policy::PolicyRequest::graph_wide(crate::policy::PolicyAction::Reclaim),
+    )
+    .await?;
     let request = graph_storage::HistoryCleanupRequest {
         keep_commits: body.keep_commits.unwrap_or(100).max(1),
         keep_seconds: body.keep_seconds,
@@ -107,7 +129,12 @@ pub async fn export_parquet(
     headers: HeaderMap,
     Json(body): Json<ParquetExportBody>,
 ) -> Result<Json<DatabaseOperationResponse<storage_interchange::ParquetExportReport>>, ApiError> {
-    require_admin_auth(&state, &headers)?;
+    crate::auth::require_admin_or_policy(
+        &state,
+        &headers,
+        crate::policy::PolicyRequest::graph_wide(crate::policy::PolicyAction::Export),
+    )
+    .await?;
     let commit = body
         .commit
         .as_deref()

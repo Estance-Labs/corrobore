@@ -46,6 +46,71 @@ The same document, for a server published under a path prefix (RFC 9728 inserts 
 
 A named identity owns its writes. Commits written through Cypher, `/v1/graph/edits`, merge, revert, branch creation and reviews record its actor. A body `actor` (or `reviewer`) that names someone else is refused with 403 `ACTOR_MISMATCH`. The shared token keeps naming its actor in the body. Bolt and the SQL interface accept the same credentials as the HTTP routes.
 
+### Graph policy
+
+`CORROBORE_HTTP_POLICY_FILE` names a YAML policy that decides what each actor may do. Without it, every authenticated caller may do everything, as before. With it, a request is allowed only when a rule allows its action. A request without an actor is denied, and so is the shared `CORROBORE_HTTP_AUTH_TOKEN`, unless `CORROBORE_HTTP_POLICY_SHARED_TOKEN_ACTOR` names the actor that token stands for. A policy needs `required` authentication.
+
+```yaml
+version: 1
+groups:
+  readers: [act-reader, principal:alice]
+  writers: [act-importer]
+protected_branches: [main]
+rules:
+  - id: readers-read
+    allow:
+      actors: { group: readers }
+      actions: [read]
+      branch_scope: any
+  - id: writers-change-drafts
+    allow:
+      actors: { group: writers }
+      actions: [change, review]
+      branch_scope: unprotected
+  - id: writers-open-drafts
+    allow:
+      actors: { group: writers }
+      actions: [branch_create]
+      target_branch_scope: unprotected
+  - id: maintainers
+    allow:
+      actors: { ids: [act-maintainer] }
+      actions: [branch_merge, branch_delete]
+      target_branch_scope: any
+```
+
+`actors` is a `group`, a list of `ids`, or `any` (every authenticated actor). `branch_scope` limits a rule to the branch an action reads or writes: `any`, `protected` or `unprotected`. `target_branch_scope` limits it to the branch a creation, merge or deletion targets. A rule sets at most one of them. A rule without a scope allows the action on every branch. Rules only allow; nothing forbids, so their order does not matter. The file compiles to Cedar and is validated against Corrobore's Cedar schema at startup. An invalid file stops the server.
+
+| Action | Routes |
+| :--- | :--- |
+| `read` | Cypher reads, history, branches, diff, changes, records, nodes, schema, reviews list, search, seeds, NLQ, embeddings, content reads, explorer, OpenCTI reads |
+| `change` | Cypher writes, `/v1/graph/edits`, revert, memory operations, imports, reconciliations, claims decisions, content uploads, OpenCTI writes |
+| `review` | `POST /v1/graph/reviews` |
+| `export` | STIX export, snapshots, Parquet export |
+| `branch_create` | `POST /v1/graph/branches`: the source branch (or the branch that wrote `from_commit`) and the new branch as target |
+| `branch_merge` | `POST /v1/graph/merge`: `source` and `target` |
+| `branch_delete` | `DELETE /v1/graph/branches/{name}`: the branch as target |
+| `maintain` | `POST /v1/admin/storage/indexes/rebuild` |
+| `reclaim` | `POST /v1/admin/storage/cleanup` |
+| `invoke_query` | Stored queries |
+| `admin` | Operation status, domain-provider status, OpenCTI authority and routing rollback |
+
+A read with only `commit` (no `branch`), the branch list, and routes that touch no branch (content, NLQ, embeddings) are graph-wide: only a rule without a scope, or with scope `any`, allows them. Admin routes keep accepting `CORROBORE_HTTP_ADMIN_AUTH_TOKEN`; under a policy they also accept any credential whose actor the policy allows the action. A denial answers 403 `POLICY_DENIED` naming the actor, the action and the branch, never the rules.
+
+### `GET /v1/graph/access`
+
+`GET /v1/graph/access?branch=&target_branch=` reports what the caller's credential may do: `actor_id`, `graph_wide` (allowed with no branch), and `actions` on `branch` (with `target_branch`, also `branch_create` and `branch_merge` from `branch` into it). Without a policy every action is listed.
+
+Check a policy before installing it:
+
+```bash
+corrobore policy validate --file graph.policy.yaml
+corrobore policy test --file graph.policy.yaml --tests policy.tests.yaml
+corrobore policy explain --file graph.policy.yaml --actor act-importer --action change --branch drafts
+```
+
+A test file holds `version: 1` and `cases`, each with `id`, `actor`, `action`, optional `branch` and `target_branch`, and `expect: allow` or `deny`. `test` exits 1 when a case fails; `explain` prints the decision and the rules that allow it.
+
 Bearer values are compared in constant time. Protected routes share a global token-bucket rate limiter. Standard JSON routes and STIX import routes have separate body limits. Request tracing excludes headers so the token is not written to logs.
 
 Every response includes `X-Request-Id` and `X-Correlation-Id`. A client may
@@ -78,6 +143,8 @@ Application errors use the JSON envelope above. Transport middleware can reject 
 | `CORROBORE_HTTP_OAUTH_SCOPES` | unset | Scopes advertised in the resource metadata, space- or comma-separated. |
 | `CORROBORE_HTTP_OAUTH_CLIENT_IDS` | unset | Only tokens issued to these clients are accepted. |
 | `CORROBORE_HTTP_OAUTH_JWKS_MIN_REFRESH_SECONDS` | `30` | Shortest pause between two key-set fetches caused by an unknown key id. |
+| `CORROBORE_HTTP_POLICY_FILE` | unset | YAML graph policy deciding what each actor may do; see [Graph policy](#graph-policy). |
+| `CORROBORE_HTTP_POLICY_SHARED_TOKEN_ACTOR` | unset | Actor the shared `CORROBORE_HTTP_AUTH_TOKEN` stands for under a policy; without it that token is denied. |
 | `CORROBORE_MEMORY_WORKSPACE_ID` | `workspace--standalone-default` | Trusted workspace for high-level memory operations; clients cannot override it in JSON. |
 | `CORROBORE_MEMORY_ACTOR_ID` | `actor--standalone-client` | Trusted authenticated actor attribution for high-level memory mutations and traces. |
 | `CORROBORE_MEMORY_AGENT_ID` | unset | Optional trusted agent attribution for high-level memory operations. |
