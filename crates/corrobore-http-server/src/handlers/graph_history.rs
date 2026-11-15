@@ -109,6 +109,19 @@ pub(crate) fn map_history_error(error: GraphStorageError) -> ApiError {
                 "change feed cursor {cursor} is no longer retained; read the branch at a commit and resume from its head"
             ),
         },
+        GraphStorageError::GraphRevertNoChange { branch, record_id } => ApiError::unprocessable(
+            "GRAPH_REVERT_NO_CHANGE",
+            format!("record {record_id} on branch {branch} does not differ from its merge base"),
+        ),
+        GraphStorageError::GraphRevertBlocked {
+            branch,
+            record_id,
+            reason,
+        } => ApiError {
+            status: StatusCode::CONFLICT,
+            code: "GRAPH_REVERT_BLOCKED",
+            message: format!("record {record_id} on branch {branch} cannot be reverted: {reason}"),
+        },
         GraphStorageError::InvalidGraphBranchName { branch, reason } => ApiError::bad_request(
             "INVALID_BRANCH_NAME",
             format!("branch name {branch:?} is invalid: {reason}"),

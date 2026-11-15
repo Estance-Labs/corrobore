@@ -146,6 +146,16 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   lexical resolver still answers, with a boundary note, when no provider is
   configured, in ephemeral mode, or when no node carries an embedding.
 
+- **Revert one change and review approvals (#348).** `POST /v1/graph/revert`
+  puts one node or relationship of a branch back to its version at the merge
+  base with `main`, as one branch commit guarded by `expected_head`: changed
+  records get their base version, added ones are tombstoned, deleted ones come
+  back. A revert that would leave a relationship without an endpoint is
+  refused (`409 GRAPH_REVERT_BLOCKED`). `POST /v1/graph/reviews` records an
+  `approved` or `changes_requested` decision on the branch's exact current
+  head, and `GET /v1/graph/reviews` lists them, marking those on the current
+  head; reviews live in the append-only, checksummed `history/reviews.log`.
+
 ### Removed
 
 - **Breaking:** the enterprise edition and its license gate leave Corrobore,

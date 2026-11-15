@@ -66,6 +66,8 @@ mod commit_reads;
 mod diff;
 mod merge;
 mod retention;
+mod revert;
+mod reviews;
 mod schema;
 mod vector_search;
 
@@ -78,6 +80,8 @@ pub use merge::{
     GraphMergeReport, GraphMergeRequest, MergeConflict, MergeConflictKind, MergeOutcomeKind,
 };
 pub use retention::{HistoryCleanupReport, HistoryCleanupRequest};
+pub use revert::{GraphRevertReport, GraphRevertRequest, GraphRevertRestoration};
+pub use reviews::{GraphReview, GraphReviewDecision, GraphReviewStatus};
 pub use schema::{
     GraphSchema, SchemaEndpoint, SchemaLabel, SchemaProperty, SchemaRelationshipType,
     property_value_type,

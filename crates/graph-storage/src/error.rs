@@ -384,6 +384,26 @@ pub enum GraphStorageError {
         actual: String,
     },
 
+    /// A revert names a record that does not differ from the merge base.
+    #[error("record {record_id} on branch {branch} does not differ from its merge base")]
+    GraphRevertNoChange {
+        /// Branch name.
+        branch: String,
+        /// Record that was asked to be reverted.
+        record_id: String,
+    },
+
+    /// A revert would leave the branch inconsistent.
+    #[error("record {record_id} on branch {branch} cannot be reverted: {reason}")]
+    GraphRevertBlocked {
+        /// Branch name.
+        branch: String,
+        /// Record that was asked to be reverted.
+        record_id: String,
+        /// What has to be reverted first.
+        reason: String,
+    },
+
     /// A change feed cursor names a commit the history no longer retains.
     #[error("change feed cursor {cursor} is no longer retained; restart from a baseline")]
     ChangeFeedGap {

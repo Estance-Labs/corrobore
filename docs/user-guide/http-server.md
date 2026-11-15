@@ -1322,6 +1322,51 @@ endpoint is deleted). `expected_target_head` refuses the merge with
 `409 GRAPH_COMMIT_PRECONDITION_FAILED` when the target moved after the
 preview.
 
+### `POST /v1/graph/revert`
+
+Puts one record of a branch back to its version at the branch's merge base
+with `main`, as one branch commit, from
+`{branch, record_kind: "node" | "relationship", record_id, expected_head?, actor?}`:
+
+- a record the branch changed gets its base version back (`restored: "base_version"`);
+- a record the branch added is tombstoned (`removed`);
+- a record the branch deleted comes back (`recreated`).
+
+```json
+{ "ok": true, "result": { "commit_id": "gc…", "branch": "review/7", "record_kind": "node", "record_id": "node--…", "restored": "base_version" } }
+```
+
+`expected_head` refuses the revert with `409 GRAPH_COMMIT_PRECONDITION_FAILED`
+when the branch moved after the caller read it. A record that does not differ
+from the base answers `422 GRAPH_REVERT_NO_CHANGE`. A revert that would leave a
+live relationship without an endpoint (removing a node the branch also linked,
+recreating a relationship whose endpoint is gone) answers
+`409 GRAPH_REVERT_BLOCKED` naming what to revert first. `main`, a blank id or
+an unknown kind answer `400 INVALID_REVERT`. `actor` defaults to the trusted
+`CORROBORE_MEMORY_ACTOR_ID`.
+
+### `POST /v1/graph/reviews`
+
+Records a review of the branch's current head from
+`{branch, head, decision: "approved" | "changes_requested", comment?, reviewer?}`
+and answers `201` with the review (`branch`, `head`, `reviewer`, `decision`,
+`comment`, `at_ms`). A review names the exact head it looked at, so an approval
+never covers commits added after it: a `head` that is no longer current answers
+`409 GRAPH_COMMIT_PRECONDITION_FAILED`. `main`, an unknown decision or a
+comment over 4,000 characters answer `400 INVALID_REVIEW`.
+
+Authentication is a shared bearer token without per-user identity, so
+`reviewer` comes from the request and defaults to `CORROBORE_MEMORY_ACTOR_ID`.
+Reviews are informational: merges do not require an approval. They are kept
+in the append-only, checksummed `history/reviews.log` and travel with
+snapshots.
+
+### `GET /v1/graph/reviews`
+
+Lists `?branch=` reviews newest first, each with `current: true` when it looked
+at the branch's current head. A deleted branch keeps its past reviews, none of
+them current.
+
 ### `GET /v1/graph/merge-base`
 
 Returns the best common ancestor of `a` and `b` (commit ids or branch names):

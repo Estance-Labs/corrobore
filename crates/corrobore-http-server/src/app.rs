@@ -1112,6 +1112,14 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/graph/diff", get(crate::handlers::graph_diff::diff))
         .route("/v1/graph/merge", post(crate::handlers::graph_merge::merge))
         .route(
+            "/v1/graph/revert",
+            post(crate::handlers::graph_reviews::revert),
+        )
+        .route(
+            "/v1/graph/reviews",
+            get(crate::handlers::graph_reviews::list).post(crate::handlers::graph_reviews::submit),
+        )
+        .route(
             "/v1/graph/search/vector",
             post(crate::handlers::graph_search::vector_search),
         )
