@@ -170,6 +170,11 @@ pub fn routes() -> Vec<RouteRule> {
         route!(GET "/v1/opencti/reconciliation/status" => Read, GraphWide),
         route!(GET "/v1/opencti/routing/decisions" => Read, GraphWide),
         route!(POST "/v1/opencti/routing/rollback" => Admin, GraphWide),
+        // Deployment bundles and stored queries.
+        route!(POST "/v1/cluster/deployments" => ConfigManage, GraphWide),
+        route!(GET "/v1/cluster/status" => ConfigManage, GraphWide),
+        route!(GET "/v1/queries" => Read, GraphWide),
+        route!(POST "/v1/queries/{name}" => InvokeQuery, Handler),
     ]
 }
 

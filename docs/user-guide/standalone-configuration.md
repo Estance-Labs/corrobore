@@ -30,6 +30,10 @@ corrobore server validate-config --config /etc/corrobore/corrobore.toml
 | `corrobore policy validate` | Policy file | Compiles a graph policy and reports whether it is valid. |
 | `corrobore policy test` | Policy and test files | Runs allow/deny cases against a policy; exits 1 when a case fails. |
 | `corrobore policy explain` | Policy file | Decides one request and prints the decision with the rules that allow it. |
+| `corrobore cluster validate` | Bundle directory | Validates `cluster.yaml`, its policy and its stored queries; needs no storage. |
+| `corrobore cluster plan` | Bundle and storage root | Lists what applying the bundle would change; writes nothing. |
+| `corrobore cluster apply` | Bundle and stopped storage root | Applies the bundle under the root's ownership lock and records the deployment. |
+| `corrobore cluster status` | Storage root | Prints the applied revision and the deployment ledger. |
 
 `validate-config --print-effective` prints only non-secret effective settings.
 `status` exits `8` when the endpoint is unavailable and `9` when the remote
@@ -117,6 +121,10 @@ complete procedures and validation steps.
 | `--actor` | `policy explain` | Actor the request is decided for. |
 | `--action` | `policy explain` | Action to decide, such as `read` or `change`. |
 | `--target-branch` | `policy explain` | Branch a creation, merge or deletion targets. |
+| `--config` | `cluster validate`, `cluster plan`, `cluster apply` | Bundle directory holding `cluster.yaml`; the default is the current directory. |
+| `--root` | `cluster plan`, `cluster apply`, `cluster status` | Persistent storage root of the server. |
+| `--deployment-id` | `cluster apply` | Deployment id; repeating it with the same bundle returns the recorded deployment. |
+| `--as` | `cluster apply` | Actor recorded on the deployment. |
 | `--encryption-key-id` | `snapshot`, `validate-snapshot`, `restore`, `import-snapshot` | Record or verify the external key-provider identity without storing key material. |
 | `--retention-hook` | `snapshot` | Invoke an optional provider lifecycle or retention hook. |
 | `--snapshot` | `validate-snapshot`, `export-snapshot-s3`, `restore` | Select the local snapshot artifact directory. |

@@ -75,10 +75,12 @@ pub enum PolicyAction {
     InvokeQuery,
     /// Administration: operation status, provider status, OpenCTI authority.
     Admin,
+    /// Deploying a bundle and reading the deployment status.
+    ConfigManage,
 }
 
 impl PolicyAction {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Read,
         Self::Export,
         Self::Change,
@@ -90,6 +92,7 @@ impl PolicyAction {
         Self::Reclaim,
         Self::InvokeQuery,
         Self::Admin,
+        Self::ConfigManage,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -105,6 +108,7 @@ impl PolicyAction {
             Self::Reclaim => "reclaim",
             Self::InvokeQuery => "invoke_query",
             Self::Admin => "admin",
+            Self::ConfigManage => "config_manage",
         }
     }
 
@@ -633,7 +637,7 @@ namespace Corrobore {
     entity Actor in [Group];
     entity Graph;
     action "read", "export", "change", "review", "branch_create", "branch_delete",
-        "branch_merge", "maintain", "reclaim", "invoke_query", "admin"
+        "branch_merge", "maintain", "reclaim", "invoke_query", "admin", "config_manage"
         appliesTo { principal: Actor, resource: Graph, context: RequestContext };
 }
 "#;
