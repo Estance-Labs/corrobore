@@ -386,6 +386,11 @@ fn plan_merge(
             if version(s) == version(t) {
                 continue;
             }
+            // Both sides deleted the record: they agree, whatever tombstone
+            // version each side wrote.
+            if b.is_some() && !live(s) && !live(t) {
+                continue;
+            }
             let (conflict_kind, detail) = if b.is_none() {
                 (
                     MergeConflictKind::AddAdd,

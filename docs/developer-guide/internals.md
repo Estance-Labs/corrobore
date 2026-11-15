@@ -44,6 +44,24 @@ catalog. Recovery loads the last safe checkpoint and replays newer committed
 transactions idempotently. Compaction operates behind that checkpoint boundary
 and never rewrites active node or relationship payload references.
 
+### Deterministic simulation
+
+`crates/graph-storage/tests/deterministic_simulation.rs` tests the persistent
+store as a whole. Each universe starts from a seed and draws a sequence of
+operations from a xorshift generator: writes on `main`, writes interrupted at
+each `MutationCrashStage`, branch creation and branch writes, merges (with or
+without deleting the source), history cleanup, reopening the store and
+truncating the last history line. After every step it checks four oracles:
+
+- the records visible on `main` and on each branch match an in-memory model;
+- the commit history stays continuous: every parent exists and generations grow;
+- the view of the `main` head equals what the canonical catalog holds;
+- a write interrupted by a crash is either fully visible or absent after reopen.
+
+A failure reports its seed and step; rerunning that seed replays the same
+universe. Add new persistence operations to the simulator together with the
+model change that describes their expected effect.
+
 ## Working-set subsystem
 
 The subsystem is split by responsibility:

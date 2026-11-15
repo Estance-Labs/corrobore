@@ -329,3 +329,43 @@ fn recent_commits_and_merges_survive_retention() {
 
     let _ = fs::remove_dir_all(root.path());
 }
+
+#[test]
+fn retention_keeps_the_merge_base_of_live_branches() {
+    let root = empty_store("merge-base");
+    let mut store = open(&root);
+    write_main(&mut store, "tx--issue-324-mb-0", "base");
+    store
+        .create_graph_branch("long-lived", None, None, None)
+        .unwrap();
+    write_branch(&mut store, "long-lived", "branch-work");
+    for index in 0..6 {
+        write_main(
+            &mut store,
+            &format!("tx--issue-324-mb-{}", index + 1),
+            &format!("main-{index}"),
+        );
+    }
+    let main_head = store.graph_head(MAIN_BRANCH).unwrap();
+    let branch_head = store.graph_head("long-lived").unwrap();
+    let base = store.graph_merge_base(&main_head, &branch_head).unwrap();
+
+    cleanup(&mut store, 1);
+    assert_eq!(
+        store.graph_merge_base(&main_head, &branch_head).unwrap(),
+        base
+    );
+    let report = store
+        .merge_graph_branch(GraphMergeRequest {
+            source: "long-lived".to_owned(),
+            ..GraphMergeRequest::default()
+        })
+        .unwrap();
+    assert_eq!(
+        report.outcome,
+        graph_storage::MergeOutcomeKind::Merged,
+        "{report:?}"
+    );
+
+    let _ = fs::remove_dir_all(root.path());
+}

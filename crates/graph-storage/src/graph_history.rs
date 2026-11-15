@@ -1227,18 +1227,60 @@ impl GraphHistory {
                 walk(parent, 0, &mut normal);
             }
         }
-        // A commit kept in full on one chain keeps its ancestors on that chain.
-        let baselines: BTreeSet<GraphCommitId> = boundary
-            .into_iter()
-            .filter(|commit_id| !normal.contains(commit_id))
+        // Live branches must still find their merge base with main after
+        // compaction: keep every commit from either head down to that base.
+        let main_head = self
+            .branches
+            .get(MAIN_BRANCH)
+            .map(|branch| branch.head.clone());
+        if let Some(main_head) = main_head {
+            for branch in self
+                .branches
+                .values()
+                .filter(|branch| branch.name != MAIN_BRANCH)
+            {
+                let Ok(Some(base)) = self.merge_base(&main_head, &branch.head) else {
+                    continue;
+                };
+                let floor = self
+                    .commits
+                    .get(&base)
+                    .map_or(0, |commit| commit.generation);
+                let mut visited: HashSet<GraphCommitId> = HashSet::new();
+                for head in [&main_head, &branch.head] {
+                    let mut stack: Vec<Arc<GraphCommit>> =
+                        self.commits.get(head).cloned().into_iter().collect();
+                    while let Some(commit) = stack.pop() {
+                        if commit.generation < floor || !visited.insert(commit.commit_id.clone()) {
+                            continue;
+                        }
+                        normal.insert(commit.commit_id.clone());
+                        for parent in &commit.parents {
+                            if let Some(parent) = self.commits.get(parent) {
+                                stack.push(Arc::clone(parent));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let kept: HashSet<GraphCommitId> = normal.union(&boundary).cloned().collect();
+        // A retained commit whose first parent is pruned keeps its full view
+        // as a baseline; the others keep their deltas.
+        let baselines: BTreeSet<GraphCommitId> = kept
+            .iter()
+            .filter(|commit_id| {
+                self.commits
+                    .get(*commit_id)
+                    .and_then(|commit| commit.parents.first())
+                    .is_some_and(|parent| !kept.contains(parent))
+            })
+            .cloned()
             .collect();
-        // A normal commit whose first parent is neither kept nor a baseline
-        // would lose its view: that cannot happen because each chain stops
-        // exactly at its boundary, which is kept as a baseline.
         let retained: Vec<GraphCommitId> = self
             .order
             .iter()
-            .filter(|commit_id| normal.contains(*commit_id) || baselines.contains(*commit_id))
+            .filter(|commit_id| kept.contains(*commit_id))
             .cloned()
             .collect();
         RetentionPlan {
