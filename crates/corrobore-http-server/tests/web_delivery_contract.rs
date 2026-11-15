@@ -81,6 +81,7 @@ fn config(web_dir: Option<String>) -> ServerConfig {
         domain_provider_dir: None,
         domain_provider_manifest_file: None,
         content: corrobore_http_server::config::ContentStoreConfig::default(),
+        embedding: corrobore_http_server::config::EmbeddingConfig::default(),
     }
 }
 

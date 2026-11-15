@@ -134,6 +134,18 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   `UrlObjectStore` now shuts its runtime down in the background when dropped,
   so async hosts can own one.
 
+- **Embedding provider for seed search (#343).** `CORROBORE_EMBEDDING_PROVIDER`
+  selects `hashing` (local, deterministic feature hashing of words and
+  character trigrams, no model) or `http` (an OpenAI-compatible
+  `/v1/embeddings` endpoint, such as a local Ollama, TEI or vLLM server).
+  `POST /v1/embeddings` returns its vectors so clients store comparable node
+  embeddings. With a provider and persistent storage, the `vector` and
+  `semantic` seed modes rank nodes by cosine similarity at the head of `main`,
+  and `hybrid` fuses that ranking with full text by reciprocal rank fusion.
+  Seed results now say how they were resolved (`retrieval`, `commit_id`); the
+  lexical resolver still answers, with a boundary note, when no provider is
+  configured, in ephemeral mode, or when no node carries an embedding.
+
 ### Removed
 
 - **Breaking:** the enterprise edition and its license gate leave Corrobore,

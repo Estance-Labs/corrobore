@@ -64,6 +64,11 @@ Application errors use the JSON envelope above. Transport middleware can reject 
 | `CORROBORE_HTTP_CONTENT_MAX_BYTES` | `67108864` | `POST /v1/content` body limit (64 MiB). |
 | `CORROBORE_HTTP_CONTENT_INLINE_MAX_BYTES` | `16384` | Largest text or JSON content kept inline instead of offloaded. |
 | `CORROBORE_HTTP_CONTENT_STORE_URL` | unset | Object store for offloaded content; see [Content plane](#content-plane). |
+| `CORROBORE_EMBEDDING_PROVIDER` | `none` | `hashing` or `http` enables `POST /v1/embeddings` and embedding-backed seed search; see [Embedding-backed seeds](#embedding-backed-seeds). |
+| `CORROBORE_EMBEDDING_DIMENSIONS` | `256` | Vector size of the `hashing` provider (1 to 8192). |
+| `CORROBORE_EMBEDDING_ENDPOINT`, `CORROBORE_EMBEDDING_MODEL` | unset | OpenAI-compatible endpoint and model of the `http` provider; both required by it. |
+| `CORROBORE_EMBEDDING_API_KEY` | unset | Bearer key of the `http` provider; `CORROBORE_EMBEDDING_API_KEY_FILE` reads it from a file. |
+| `CORROBORE_EMBEDDING_TIMEOUT_MS` | `10000` | Timeout of one `http` embedding call. |
 | `CORROBORE_S3_REGION`, `CORROBORE_S3_ENDPOINT` | unset | Region and S3-compatible endpoint of an `s3://` content store; credentials come from `CORROBORE_S3_ACCESS_KEY`, `CORROBORE_S3_SECRET_KEY` and `CORROBORE_S3_SESSION_TOKEN` (or their `_FILE` variants). |
 | `CORROBORE_OPENCTI_SYNC_MAX_OPERATIONS` | `512` | Maximum mutations admitted in one OpenCTI synchronization or transactional-write batch. |
 | `CORROBORE_OPENCTI_SYNC_MAX_REPLAY_IDENTITIES` | `4096` | Bounded replay identities, dead-letter diagnostics, and write-reconciliation records retained durably. |
@@ -355,6 +360,54 @@ Resolves a natural-language objective into ranked graph seeds.
 Defaults are cross-domain, hybrid retrieval, `top_k=10`, and threshold `0.0`. Profiles are `cti`, `fimi`, `crisis`, or `cross_domain`; modes are `hybrid`, `full_text`, `semantic`, or `vector`. Each candidate includes `node_id`, `score`, and an explanation with rationale, source refs, and boundary notes. Expected 422 errors include `NO_SEED`, `AMBIGUOUS_SEED`, and `OVERBROAD_OBJECTIVE`.
 
 The domain-scoped profiles (`cti`, `fimi`, `crisis`) take their seed semantics from domain packs that are not distributed with Corrobore; requests naming them return `403 FEATURE_NOT_AVAILABLE`. Only `cross_domain` resolves against the core runtime.
+
+### Embedding-backed seeds
+
+With an embedding provider (`CORROBORE_EMBEDDING_PROVIDER=hashing` or `http`)
+and persistent storage, the `vector` and `semantic` modes embed the objective
+and rank nodes by cosine similarity of their `embedding` property, and the
+`hybrid` mode fuses that ranking with BM25 full text by reciprocal rank fusion
+(the retrieval of `POST /v1/graph/search/hybrid`). Both read the head of
+`main`. The result says how it was resolved:
+
+```json
+{ "ok": true, "result": { "retrieval": "vector", "commit_id": "gc…", "candidates": [ … ] } }
+```
+
+`retrieval` is `vector`, `hybrid` or `lexical`. The lexical resolver still
+answers, with a boundary note saying why, when no provider is configured, in
+ephemeral mode, or when no node at `main` carries an embedding. Candidates
+scoring below `score_threshold` are dropped (`422 NO_SEED` when none remain);
+node embeddings from another provider or of another size return
+`422 EMBEDDING_MISMATCH`, and a failing provider `502 EMBEDDING_PROVIDER_FAILED`.
+
+Node embeddings must come from the same provider: compute them with
+`POST /v1/embeddings` and store them in the `embedding` property.
+
+### `POST /v1/embeddings`
+
+Embeds up to 256 texts with the configured provider.
+
+```json
+{ "texts": ["acme phishing campaign targeting regional banks"] }
+```
+
+```json
+{ "ok": true, "result": { "provider": "hashing", "dimensions": 256, "vectors": [[0.0, -0.18, …]] } }
+```
+
+- `hashing` needs no model: words and character trigrams are hashed (FNV-1a)
+  into `CORROBORE_EMBEDDING_DIMENSIONS` buckets and normalized. Similarity is
+  lexical and deterministic, not semantic.
+- `http` calls an OpenAI-compatible endpoint (`POST {model, input}` →
+  `data[].embedding`): a hosted API or a local Ollama, TEI or vLLM server
+  running a real embedding model. `CORROBORE_EMBEDDING_ENDPOINT` and
+  `CORROBORE_EMBEDDING_MODEL` are required; `CORROBORE_EMBEDDING_API_KEY`
+  (or `_FILE`) is sent as a bearer token; redirects are not followed.
+
+Errors: `400 INVALID_EMBEDDING_REQUEST` (no texts, more than 256, or text
+without words for `hashing`), `503 EMBEDDING_PROVIDER_NOT_CONFIGURED`,
+`502 EMBEDDING_PROVIDER_FAILED`.
 
 ## `POST /v1/memory/operations`
 

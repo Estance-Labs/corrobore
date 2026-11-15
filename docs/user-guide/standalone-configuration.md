@@ -210,6 +210,12 @@ remain environment-only:
 | `CORROBORE_HTTP_CONTENT_STORE_URL` | unset | Object store holding offloaded content (`s3://bucket/prefix`, `file:///path` or `memory://`). Unset, persistent servers use `<storage>/content` and ephemeral servers keep content in memory. See [Content plane](http-server.md#content-plane). |
 | `CORROBORE_HTTP_CONTENT_INLINE_MAX_BYTES` | `16384` | Text and JSON content up to this size stays inline in the returned handle; larger or binary content is offloaded. |
 | `CORROBORE_HTTP_CONTENT_MAX_BYTES` | `67108864` | Largest body `POST /v1/content` accepts (64 MiB). |
+| `CORROBORE_EMBEDDING_PROVIDER` | `none` | `hashing` (local feature hashing, no model) or `http` (OpenAI-compatible endpoint) for `POST /v1/embeddings` and embedding-backed seed search. |
+| `CORROBORE_EMBEDDING_DIMENSIONS` | `256` | Vector size of the `hashing` provider. |
+| `CORROBORE_EMBEDDING_ENDPOINT` | unset | Endpoint of the `http` provider, such as `http://127.0.0.1:11434/v1/embeddings`; required by it. |
+| `CORROBORE_EMBEDDING_MODEL` | unset | Model the `http` provider asks for; required by it. |
+| `CORROBORE_EMBEDDING_API_KEY` | unset | Bearer key of the `http` provider; `CORROBORE_EMBEDDING_API_KEY_FILE` reads it from a file. |
+| `CORROBORE_EMBEDDING_TIMEOUT_MS` | `10000` | Timeout of one `http` embedding call. |
 | `CORROBORE_S3_REGION` | unset | Region of an `s3://` content store. |
 | `CORROBORE_S3_ENDPOINT` | unset | S3-compatible endpoint (MinIO) of an `s3://` content store; `http://` endpoints are allowed. |
 | `CORROBORE_S3_ACCESS_KEY` | unset | Access-key identifier required by `export-snapshot-s3`, and used by an `s3://` content store. `CORROBORE_S3_ACCESS_KEY_FILE` reads it from a file. |

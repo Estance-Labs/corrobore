@@ -25,6 +25,7 @@ pub mod cypher_validate;
 pub mod database_operations;
 pub mod domain_provider_status;
 pub mod domain_validate;
+pub mod embeddings;
 pub mod explorer;
 pub mod export;
 pub mod graph_branches;

@@ -1794,6 +1794,8 @@ paths:
                   result:
                     type: object
                     properties:
+                      retrieval: {type: string, enum: [vector, hybrid, lexical]}
+                      commit_id: {type: string, nullable: true}
                       candidates:
                         type: array
                         items:
@@ -3079,6 +3081,48 @@ paths:
               schema: {type: object}
         '410':
           description: CHANGE_FEED_GAP when the cursor commit is no longer retained
+          content:
+            application/json:
+              schema: {type: object}
+
+  /v1/embeddings:
+    post:
+      operationId: embedTexts
+      summary: Embed texts with the configured embedding provider
+      tags: [Seeds]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [texts]
+              properties:
+                texts: {type: array, items: {type: string}, minItems: 1, maxItems: 256}
+      responses:
+        '200':
+          description: One vector per text, in order
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: true}
+                  result:
+                    type: object
+                    properties:
+                      provider: {type: string}
+                      dimensions: {type: integer}
+                      vectors: {type: array, items: {type: array, items: {type: number}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '502':
+          description: EMBEDDING_PROVIDER_FAILED
+          content:
+            application/json:
+              schema: {type: object}
+        '503':
+          description: EMBEDDING_PROVIDER_NOT_CONFIGURED
           content:
             application/json:
               schema: {type: object}
