@@ -21,6 +21,7 @@
 use std::{collections::HashMap, env, fmt, fs, net::IpAddr};
 
 use corrobore_engine::MemoryPermissions;
+use graph_storage::{HnswParams, VectorIndexMode, VectorIndexPolicy};
 use thiserror::Error;
 
 use crate::security::{AuthenticationMode, OperationalEndpointPolicy, SecretSource};
@@ -112,6 +113,10 @@ pub struct ServerConfig {
     pub storage_max_hot_relationships: u64,
     /// Maximum lightweight adjacency entries resident in a persistent projection.
     pub storage_max_warm_adjacency_entries: u64,
+    /// Vector index implementation: `auto` (by size), `exact` or `hnsw`.
+    pub storage_vector_index: VectorIndexMode,
+    /// Vectors from which `auto` switches from the exact index to HNSW.
+    pub storage_vector_hnsw_min_vectors: u64,
     /// Trusted root containing native domain provider libraries.
     pub domain_provider_dir: Option<String>,
     /// Deployment manifest describing required provider libraries and hashes.
@@ -335,6 +340,11 @@ impl fmt::Debug for ServerConfig {
             .field(
                 "storage_max_warm_adjacency_entries",
                 &self.storage_max_warm_adjacency_entries,
+            )
+            .field("storage_vector_index", &self.storage_vector_index.as_str())
+            .field(
+                "storage_vector_hnsw_min_vectors",
+                &self.storage_vector_hnsw_min_vectors,
             )
             .field("domain_provider_dir", &self.domain_provider_dir)
             .field(
@@ -845,6 +855,17 @@ impl ServerConfig {
                 .map(String::as_str)
                 .unwrap_or("65536"),
         )?;
+        let storage_vector_index = Self::parse_vector_index_mode(
+            vars.get("CORROBORE_STORAGE_VECTOR_INDEX")
+                .map(String::as_str)
+                .unwrap_or("auto"),
+        )?;
+        let storage_vector_hnsw_min_vectors = parse_positive_u64(
+            "CORROBORE_STORAGE_VECTOR_HNSW_MIN_VECTORS",
+            vars.get("CORROBORE_STORAGE_VECTOR_HNSW_MIN_VECTORS")
+                .map(String::as_str)
+                .unwrap_or("10000"),
+        )?;
         if opencti_elastic_free && storage_mode != StorageMode::Persistent {
             return Err(ConfigError::InvalidEnv {
                 name: "CORROBORE_OPENCTI_ELASTIC_FREE",
@@ -912,6 +933,8 @@ impl ServerConfig {
             storage_max_hot_nodes,
             storage_max_hot_relationships,
             storage_max_warm_adjacency_entries,
+            storage_vector_index,
+            storage_vector_hnsw_min_vectors,
             domain_provider_dir,
             domain_provider_manifest_file,
             content,
@@ -1076,6 +1099,24 @@ impl ServerConfig {
                     .to_owned(),
             }),
             (None, None) => Ok((None, None)),
+        }
+    }
+
+    fn parse_vector_index_mode(value: &str) -> Result<VectorIndexMode, ConfigError> {
+        VectorIndexMode::parse(value).ok_or_else(|| ConfigError::InvalidEnv {
+            name: "CORROBORE_STORAGE_VECTOR_INDEX",
+            value: value.to_owned(),
+        })
+    }
+
+    /// Vector index policy handed to the persistent canonical store.
+    #[must_use]
+    pub fn vector_index_policy(&self) -> VectorIndexPolicy {
+        VectorIndexPolicy {
+            mode: self.storage_vector_index,
+            hnsw_min_vectors: usize::try_from(self.storage_vector_hnsw_min_vectors)
+                .unwrap_or(usize::MAX),
+            hnsw: HnswParams::default(),
         }
     }
 

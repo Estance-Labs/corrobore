@@ -278,6 +278,12 @@ struct ConfigArgs {
     /// Override the maximum resident warm adjacency entries.
     #[arg(long)]
     storage_max_warm_adjacency_entries: Option<u64>,
+    /// Override the vector index implementation: auto, exact or hnsw.
+    #[arg(long)]
+    storage_vector_index: Option<String>,
+    /// Override the vector count from which auto switches to HNSW.
+    #[arg(long)]
+    storage_vector_hnsw_min_vectors: Option<u64>,
     /// Override the structured log directory.
     #[arg(long)]
     log_dir: Option<PathBuf>,
@@ -419,6 +425,8 @@ struct FileStorage {
     max_hot_nodes: Option<u64>,
     max_hot_relationships: Option<u64>,
     max_warm_adjacency_entries: Option<u64>,
+    vector_index: Option<String>,
+    vector_hnsw_min_vectors: Option<u64>,
 }
 
 #[derive(Default, Deserialize)]
@@ -1157,6 +1165,16 @@ fn apply_file(path: &Path, values: &mut HashMap<String, String>) -> Result<(), S
     );
     insert(
         values,
+        "CORROBORE_STORAGE_VECTOR_INDEX",
+        config.storage.vector_index.clone(),
+    );
+    insert_num(
+        values,
+        "CORROBORE_STORAGE_VECTOR_HNSW_MIN_VECTORS",
+        config.storage.vector_hnsw_min_vectors,
+    );
+    insert(
+        values,
         "CORROBORE_HTTP_LOG_DIR",
         config.logging.directory.clone(),
     );
@@ -1350,6 +1368,16 @@ fn apply_cli(args: &ConfigArgs, values: &mut HashMap<String, String>) {
         values,
         "CORROBORE_STORAGE_MAX_WARM_ADJACENCY_ENTRIES",
         args.storage_max_warm_adjacency_entries,
+    );
+    insert(
+        values,
+        "CORROBORE_STORAGE_VECTOR_INDEX",
+        args.storage_vector_index.clone(),
+    );
+    insert_num(
+        values,
+        "CORROBORE_STORAGE_VECTOR_HNSW_MIN_VECTORS",
+        args.storage_vector_hnsw_min_vectors,
     );
     insert_path(values, "CORROBORE_HTTP_LOG_DIR", args.log_dir.as_deref());
     insert(values, "CORROBORE_LOG_LEVEL", args.log_level.clone());
@@ -1770,6 +1798,14 @@ fn print_effective(config: &OperationalConfig) {
     println!(
         "storage.max_warm_adjacency_entries = {}",
         config.server.storage_max_warm_adjacency_entries
+    );
+    println!(
+        "storage.vector_index = {:?}",
+        config.server.storage_vector_index.as_str()
+    );
+    println!(
+        "storage.vector_hnsw_min_vectors = {}",
+        config.server.storage_vector_hnsw_min_vectors
     );
     println!("interfaces.enabled = {:?}", config.interfaces);
     if let Some(directory) = &config.server.web_dir {

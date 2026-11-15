@@ -87,8 +87,9 @@ pub use schema::{
     property_value_type,
 };
 pub use vector_search::{
-    DEFAULT_EMBEDDING_PROPERTY, ExactVectorIndex, GraphSearchHit, HybridSearchRequest, RRF_K,
-    VectorIndex, VectorMetric, reciprocal_rank_fusion,
+    DEFAULT_EMBEDDING_PROPERTY, DEFAULT_HNSW_MIN_VECTORS, ExactVectorIndex, GraphSearchHit,
+    HnswParams, HnswVectorIndex, HybridSearchRequest, RRF_K, VectorIndex, VectorIndexKind,
+    VectorIndexMode, VectorIndexPolicy, VectorMetric, reciprocal_rank_fusion,
 };
 
 pub use commit_reads::{
@@ -123,6 +124,8 @@ pub struct CanonicalStoreOptions {
     pub max_hot_relationships: u64,
     /// Maximum lightweight adjacency entries retained for one projection.
     pub max_warm_adjacency_entries: u64,
+    /// Vector index implementation: exact, HNSW, or chosen by index size.
+    pub vector_index: VectorIndexPolicy,
 }
 
 impl Default for CanonicalStoreOptions {
@@ -131,6 +134,7 @@ impl Default for CanonicalStoreOptions {
             max_hot_nodes: 16_384,
             max_hot_relationships: 32_768,
             max_warm_adjacency_entries: 65_536,
+            vector_index: VectorIndexPolicy::default(),
         }
     }
 }
@@ -392,7 +396,7 @@ pub struct CanonicalEngineStore {
     history: GraphHistory,
     history_needs_reconcile: bool,
     schema_registry: Option<schema::SchemaRegistry>,
-    vector_cache: Option<vector_search::VectorIndexCache>,
+    vector_cache: Vec<vector_search::VectorIndexCache>,
 }
 
 /// Caller context recorded on the graph commit of a transition.
@@ -493,7 +497,7 @@ impl CanonicalEngineStore {
             history,
             history_needs_reconcile: true,
             schema_registry: None,
-            vector_cache: None,
+            vector_cache: Vec::new(),
         };
         store.migrate_legacy_snapshot_if_needed()?;
         store.refresh_index_stats();

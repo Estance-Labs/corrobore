@@ -146,6 +146,8 @@ rejected.
 | `storage.max_hot_nodes` | `CORROBORE_STORAGE_MAX_HOT_NODES` | `--storage-max-hot-nodes` | `16384` |
 | `storage.max_hot_relationships` | `CORROBORE_STORAGE_MAX_HOT_RELATIONSHIPS` | `--storage-max-hot-relationships` | `32768` |
 | `storage.max_warm_adjacency_entries` | `CORROBORE_STORAGE_MAX_WARM_ADJACENCY_ENTRIES` | `--storage-max-warm-adjacency-entries` | `65536` |
+| `storage.vector_index` | `CORROBORE_STORAGE_VECTOR_INDEX` | `--storage-vector-index` | `auto`; `exact` compares every vector, `hnsw` always builds an approximate HNSW graph |
+| `storage.vector_hnsw_min_vectors` | `CORROBORE_STORAGE_VECTOR_HNSW_MIN_VECTORS` | `--storage-vector-hnsw-min-vectors` | `10000`; in `auto` mode, indexes with fewer vectors stay exact |
 | `logging.directory` | `CORROBORE_HTTP_LOG_DIR` | `--log-dir` | `<server.data_directory>/logs` |
 | `logging.level` | `CORROBORE_LOG_LEVEL` | `--log-level` | `info`; `RUST_LOG` is a compatibility alias |
 | `logging.format` | `CORROBORE_LOG_FORMAT` | `--log-format` | `json` |
