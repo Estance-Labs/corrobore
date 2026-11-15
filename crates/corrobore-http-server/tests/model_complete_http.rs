@@ -36,9 +36,12 @@ use axum::{
 use graph_api_support::{TOKEN, app_with, send_as};
 use serde_json::{Value, json};
 
+/// Each request the stub received: its Authorization header and its body.
+type SeenRequests = Arc<Mutex<Vec<(Option<String>, Value)>>>;
+
 #[derive(Clone, Default)]
 struct Stub {
-    seen: Arc<Mutex<Vec<(Option<String>, Value)>>>,
+    seen: SeenRequests,
     answer: Arc<Mutex<(u16, Value)>>,
     delay_ms: Arc<Mutex<u64>>,
 }
