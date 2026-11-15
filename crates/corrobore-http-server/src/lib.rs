@@ -21,6 +21,8 @@
 pub mod app;
 pub mod auth;
 pub mod bolt;
+pub mod cluster;
+pub mod cluster_api;
 pub mod config;
 pub mod content_plane;
 pub mod correlation;

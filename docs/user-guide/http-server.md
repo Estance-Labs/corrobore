@@ -94,6 +94,7 @@ rules:
 | `reclaim` | `POST /v1/admin/storage/cleanup` |
 | `invoke_query` | Stored queries |
 | `admin` | Operation status, domain-provider status, OpenCTI authority and routing rollback |
+| `config_manage` | `POST /v1/cluster/deployments`, `GET /v1/cluster/status` |
 
 A read with only `commit` (no `branch`), the branch list, and routes that touch no branch (content, NLQ, embeddings) are graph-wide: only a rule without a scope, or with scope `any`, allows them. Admin routes keep accepting `CORROBORE_HTTP_ADMIN_AUTH_TOKEN`; under a policy they also accept any credential whose actor the policy allows the action. A denial answers 403 `POLICY_DENIED` naming the actor, the action and the branch, never the rules.
 
@@ -606,6 +607,51 @@ Admin token required. Prunes graph history outside a retention window from
 `{keep_commits?, keep_seconds?, dry_run?}` (default `keep_commits` 100) and
 compacts branch payloads and the WAL behind the latest checkpoint. See
 [Database operations](database-operations.md#history-retention).
+
+## Deployment bundles and stored queries
+
+A deployment bundle declares, as files, what a server enforces and offers: its policy and its stored queries. It is a directory holding `cluster.yaml`:
+
+```yaml
+version: 1
+metadata:
+  name: intel
+# Optional: the storage root this bundle is meant for; plan and apply refuse another.
+storage: /srv/corrobore/intel
+policy: graph.policy.yaml
+queries: queries/
+```
+
+`policy` names a [graph policy](http-server.md#graph-policy) file. `queries` is a directory (every top-level `*.cypher` file, named after its file), a list of files and directories, or explicit `name: { file: path }` entries. Each stored query is one Cypher statement. It is parsed (a read whose structure the parser does not recognise is refused) when the bundle is validated, classified as a read or a write as the engine classifies an `auto` request, and its `$parameters` are listed. Leading `//` comment lines become its description. Unknown fields, missing files, symbolic links, duplicate query names and invalid Cypher fail validation; nothing is applied.
+
+```bash
+corrobore cluster validate --config ./intel
+corrobore cluster plan --root /srv/corrobore/intel --config ./intel
+corrobore cluster apply --root /srv/corrobore/intel --config ./intel --deployment-id 2026-11-15-a --as act-admin
+corrobore cluster status --root /srv/corrobore/intel
+```
+
+`plan` lists the changes against the applied revision and writes nothing. `apply` writes the revision to `<root>/cluster/applied.json` and appends the deployment to `<root>/cluster/deployments.jsonl`. It takes the storage root's ownership lock, so it is refused while a server runs on that root; the server installs the applied revision when it next starts. A deployment id is applied once: repeating it with the same bundle returns the recorded deployment, and repeating it with a different bundle is refused. Without `--deployment-id`, one is generated.
+
+A running server takes a bundle without a restart.
+
+### `POST /v1/cluster/deployments`
+
+Send `{"deployment_id": "...", "files": {"cluster.yaml": "...", "graph.policy.yaml": "...", "queries/count.cypher": "..."}}` validates the bundle, then applies it and installs its policy and queries for the next requests. A request already admitted finishes under the revision it started with. It needs the `config_manage` action under the policy in force, never under the proposed one, so a bundle cannot grant its author the right to deploy it. The answer lists the changes and the deployment record, with `applied: false` when the id was already applied with the same input. An invalid bundle answers 422 `CLUSTER_BUNDLE_INVALID`, and an id reused with other input answers 409 `DEPLOYMENT_CONFLICT`.
+
+### `GET /v1/cluster/status`
+
+Also needs `config_manage`. Reports the applied revision (name, digest, whether it has a policy, how many queries) and the recorded deployments.
+
+`CORROBORE_HTTP_POLICY_FILE`, when set, takes precedence over the policy of the applied revision. In ephemeral mode a live deployment lasts as long as the process.
+
+### `GET /v1/queries`
+
+Lists the applied stored queries: `name`, `description`, `writes` and `parameters`. It needs `read`.
+
+### `POST /v1/queries/{name}`
+
+Runs a stored query with `{"params": {...}, "branch": "...", "commit": "...", "expect_mutation": false}`. It needs `invoke_query`, plus `read` (or `change` for a writing query) on the branch, records the caller's actor like any write, and answers like `POST /v1/cypher/execute`. `expect_mutation`, when sent, must match the query (409 `QUERY_MODE_MISMATCH` otherwise), so a client never runs a write it took for a read. An unknown name answers 404 `QUERY_NOT_FOUND`.
 
 ## Content plane
 

@@ -190,6 +190,12 @@ pub struct AppState {
     pub main_commit_actor: Arc<Mutex<Option<String>>>,
     /// The installed graph policy, if any; replaced whole on reload.
     pub policy: Arc<std::sync::RwLock<Option<Arc<crate::policy::PolicyEngine>>>>,
+    /// Applied deployment revision: stored queries and the bundle policy.
+    pub revision: Arc<std::sync::RwLock<Arc<crate::cluster::Revision>>>,
+    /// Ledger of deployments, on disk in persistent mode.
+    pub cluster_state: Arc<crate::cluster::ClusterState>,
+    /// Serializes deployments.
+    pub deploy_lock: Arc<Mutex<()>>,
     pub started_at: Instant,
 }
 
@@ -197,6 +203,46 @@ impl AppState {
     /// The policy in force for this request, if one is installed.
     pub fn current_policy(&self) -> Option<Arc<crate::policy::PolicyEngine>> {
         self.policy.read().ok().and_then(|policy| policy.clone())
+    }
+
+    /// The applied deployment revision.
+    pub fn current_revision(&self) -> Arc<crate::cluster::Revision> {
+        self.revision
+            .read()
+            .map(|revision| Arc::clone(&revision))
+            .unwrap_or_else(|_| Arc::new(crate::cluster::Revision::empty()))
+    }
+
+    /// The persistent storage root, if any.
+    pub fn storage_root(&self) -> Option<PathBuf> {
+        match &self.runtime_store {
+            RuntimeStoreProvider::Persistent(runtime) => Some(runtime.root_path.clone()),
+            RuntimeStoreProvider::Ephemeral => None,
+        }
+    }
+
+    /// Install a deployed revision: its queries and, unless
+    /// `CORROBORE_HTTP_POLICY_FILE` overrides it, its policy. Requests that
+    /// already read the previous revision finish with it.
+    pub fn activate_revision(&self, revision: crate::cluster::Revision) -> Result<(), String> {
+        if self.config.policy_file.is_none() {
+            let policy = revision
+                .policy
+                .as_deref()
+                .map(crate::policy::PolicyEngine::from_yaml)
+                .transpose()
+                .map_err(|error| error.to_string())?
+                .map(Arc::new);
+            *self
+                .policy
+                .write()
+                .map_err(|_| "policy lock poisoned".to_owned())? = policy;
+        }
+        *self
+            .revision
+            .write()
+            .map_err(|_| "revision lock poisoned".to_owned())? = Arc::new(revision);
+        Ok(())
     }
 }
 
@@ -364,8 +410,34 @@ impl AppState {
             config.opencti_shadow.max_concurrency,
         ));
         let authenticator = Arc::new(crate::auth::Authenticator::new(&config));
+        // The applied deployment of this root (issue #388).
+        let cluster_state = Arc::new(match &runtime_store {
+            RuntimeStoreProvider::Persistent(runtime) => {
+                crate::cluster::ClusterState::on_disk(&runtime.root_path)
+            }
+            RuntimeStoreProvider::Ephemeral => crate::cluster::ClusterState::in_memory(),
+        });
+        let applied_revision =
+            cluster_state
+                .applied()
+                .map_err(|error| AppStateInitError::PolicyFailed {
+                    path: "cluster/applied.json".to_owned(),
+                    reason: error.to_string(),
+                })?;
         let policy = match config.policy_file.as_deref() {
-            None => None,
+            None => applied_revision
+                .policy
+                .as_deref()
+                .map(|text| {
+                    crate::policy::PolicyEngine::from_yaml(text).map_err(|error| {
+                        AppStateInitError::PolicyFailed {
+                            path: "cluster/applied.json".to_owned(),
+                            reason: error.to_string(),
+                        }
+                    })
+                })
+                .transpose()?
+                .map(Arc::new),
             Some(path) => {
                 let failed = |reason: String| AppStateInitError::PolicyFailed {
                     path: path.to_owned(),
@@ -404,6 +476,9 @@ impl AppState {
             authenticator,
             main_commit_actor,
             policy: Arc::new(std::sync::RwLock::new(policy)),
+            revision: Arc::new(std::sync::RwLock::new(Arc::new(applied_revision))),
+            cluster_state,
+            deploy_lock: Arc::new(Mutex::new(())),
             started_at: Instant::now(),
         };
         lifecycle.mark_ready();
@@ -1125,6 +1200,10 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/v1/whoami", get(crate::auth::whoami))
         .route("/v1/graph/access", get(crate::policy_gate::access))
+        .route("/v1/cluster/deployments", post(crate::cluster_api::deploy))
+        .route("/v1/cluster/status", get(crate::cluster_api::status))
+        .route("/v1/queries", get(crate::cluster_api::list_queries))
+        .route("/v1/queries/{name}", post(crate::cluster_api::invoke))
         .route("/v1/cypher/execute", post(execute_cypher))
         .route("/v1/cypher/read", post(execute_read_cypher))
         .route("/v1/cypher/write", post(execute_write_cypher))

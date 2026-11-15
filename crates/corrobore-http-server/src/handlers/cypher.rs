@@ -35,7 +35,7 @@ use crate::{
     session_runtime::SessionServiceStatus,
 };
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct ExecuteCypherRequest {
     pub query: String,
     #[serde(default)]
@@ -350,6 +350,22 @@ pub async fn execute_write_cypher(
         identity.map(|Extension(identity)| identity),
     )
     .await
+}
+
+/// Run a stored query (issue #388) through the same path as
+/// `/v1/cypher/*`, so the branch policy and the commit actor apply alike.
+pub(crate) async fn execute_stored(
+    state: AppState,
+    payload: ExecuteCypherRequest,
+    writes: bool,
+    identity: Option<RequestIdentity>,
+) -> Result<Json<ExecuteCypherResponse>, ApiError> {
+    let mode = if writes {
+        EngineRequestMode::Mutation
+    } else {
+        EngineRequestMode::ReadOnly
+    };
+    execute_cypher_inner(state, payload, Some(mode), identity).await
 }
 
 fn with_precondition(

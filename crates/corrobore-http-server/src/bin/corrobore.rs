@@ -56,6 +56,60 @@ enum Command {
     Server(ServerArgs),
     /// Check, test and explain a graph policy file.
     Policy(PolicyArgs),
+    /// Validate, plan and apply a deployment bundle.
+    Cluster(ClusterArgs),
+}
+
+#[derive(Args)]
+struct ClusterArgs {
+    #[command(subcommand)]
+    command: ClusterCommand,
+}
+
+#[derive(Subcommand)]
+enum ClusterCommand {
+    /// Validate a bundle directory; needs no storage.
+    Validate(ClusterConfigArgs),
+    /// List what applying a bundle would change; writes nothing.
+    Plan(ClusterRootConfigArgs),
+    /// Apply a bundle to a stopped server's storage root.
+    Apply(ClusterApplyArgs),
+    /// Show the applied revision and the deployment ledger.
+    Status(ClusterRootArgs),
+}
+
+#[derive(Args)]
+struct ClusterConfigArgs {
+    /// Bundle directory holding `cluster.yaml`.
+    #[arg(long, default_value = ".")]
+    config: PathBuf,
+}
+
+#[derive(Args)]
+struct ClusterRootArgs {
+    /// Persistent storage root of the server.
+    #[arg(long)]
+    root: PathBuf,
+}
+
+#[derive(Args)]
+struct ClusterRootConfigArgs {
+    #[command(flatten)]
+    root: ClusterRootArgs,
+    #[command(flatten)]
+    config: ClusterConfigArgs,
+}
+
+#[derive(Args)]
+struct ClusterApplyArgs {
+    #[command(flatten)]
+    target: ClusterRootConfigArgs,
+    /// Deployment id; repeating it with the same bundle is a no-op.
+    #[arg(long)]
+    deployment_id: Option<String>,
+    /// Actor recorded on the deployment.
+    #[arg(long = "as")]
+    actor: Option<String>,
 }
 
 #[derive(Args)]
@@ -616,6 +670,7 @@ async fn main() -> ExitCode {
 
     match cli.command {
         Command::Policy(PolicyArgs { command }) => run_policy(command),
+        Command::Cluster(ClusterArgs { command }) => run_cluster(command),
         Command::Server(ServerArgs {
             command: ServerCommand::Start(args),
         }) => match load_config(&args) {
@@ -2097,6 +2152,96 @@ fn run_policy(command: PolicyCommand) -> ExitCode {
                     ExitCode::SUCCESS
                 }
                 Err(error) => fail(error.to_string()),
+            }
+        }
+    }
+}
+
+/// `corrobore cluster …`: exit 0 on success, 1 on any refusal.
+fn run_cluster(command: ClusterCommand) -> ExitCode {
+    use corrobore_http_server::cluster::{
+        Bundle, ClusterState, apply_offline, check_storage_assertion, plan,
+    };
+    let fail = |message: String| {
+        eprintln!("{message}");
+        ExitCode::FAILURE
+    };
+    let print = |value: serde_json::Value| match serde_json::to_string_pretty(&value) {
+        Ok(text) => {
+            println!("{text}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => fail(error.to_string()),
+    };
+    match command {
+        ClusterCommand::Validate(args) => match Bundle::load(&args.config) {
+            Ok(bundle) => {
+                println!(
+                    "bundle is valid: {} stored quer{}, {}, digest {}",
+                    bundle.revision.queries.len(),
+                    if bundle.revision.queries.len() == 1 {
+                        "y"
+                    } else {
+                        "ies"
+                    },
+                    if bundle.revision.policy.is_some() {
+                        "a policy"
+                    } else {
+                        "no policy"
+                    },
+                    bundle.revision.digest
+                );
+                ExitCode::SUCCESS
+            }
+            Err(error) => fail(error.to_string()),
+        },
+        ClusterCommand::Plan(args) => {
+            let bundle = match Bundle::load(&args.config.config) {
+                Ok(bundle) => bundle,
+                Err(error) => return fail(error.to_string()),
+            };
+            if let Err(error) = check_storage_assertion(&bundle, &args.root.root) {
+                return fail(error.to_string());
+            }
+            match ClusterState::on_disk(&args.root.root).applied() {
+                Ok(applied) => print(serde_json::json!({
+                    "applied_digest": applied.digest,
+                    "desired_digest": bundle.revision.digest,
+                    "changes": plan(&applied, &bundle.revision),
+                })),
+                Err(error) => fail(error.to_string()),
+            }
+        }
+        ClusterCommand::Apply(args) => {
+            let bundle = match Bundle::load(&args.target.config.config) {
+                Ok(bundle) => bundle,
+                Err(error) => return fail(error.to_string()),
+            };
+            let id = args.deployment_id.unwrap_or_else(|| {
+                format!("d-{}", &uuid::Uuid::new_v4().simple().to_string()[..12])
+            });
+            match apply_offline(&args.target.root.root, &bundle, &id, args.actor) {
+                Ok((record, applied, changes)) => print(serde_json::json!({
+                    "applied": applied,
+                    "deployment": record,
+                    "changes": changes,
+                })),
+                Err(error) => fail(error.to_string()),
+            }
+        }
+        ClusterCommand::Status(args) => {
+            let state = ClusterState::on_disk(&args.root);
+            match (state.applied(), state.deployments()) {
+                (Ok(applied), Ok(deployments)) => print(serde_json::json!({
+                    "applied": {
+                        "name": applied.name,
+                        "digest": applied.digest,
+                        "policy": applied.policy.is_some(),
+                        "queries": applied.queries.iter().map(|q| q.name.clone()).collect::<Vec<_>>(),
+                    },
+                    "deployments": deployments,
+                })),
+                (Err(error), _) | (_, Err(error)) => fail(error.to_string()),
             }
         }
     }

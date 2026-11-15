@@ -1610,6 +1610,87 @@ paths:
                       actions: {type: array, items: {type: string}}
         '401': {$ref: '#/components/responses/Unauthorized'}
 
+  /v1/cluster/deployments:
+    post:
+      operationId: deployBundle
+      summary: Validate, apply and activate a deployment bundle (issue 388)
+      tags: [Operations]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                deployment_id: {type: string}
+                files: {type: object, additionalProperties: {type: string}}
+      responses:
+        '200':
+          description: The deployment record, whether this call applied it, and the changes
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {description: POLICY_DENIED}
+        '409': {description: DEPLOYMENT_CONFLICT}
+        '422': {description: CLUSTER_BUNDLE_INVALID}
+
+  /v1/cluster/status:
+    get:
+      operationId: getClusterStatus
+      summary: Applied revision and deployment ledger (issue 388)
+      tags: [Operations]
+      responses:
+        '200':
+          description: Applied revision and recorded deployments
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/queries:
+    get:
+      operationId: listStoredQueries
+      summary: The applied stored queries (issue 388)
+      tags: [Cypher]
+      responses:
+        '200':
+          description: Name, description, mode and parameters of each stored query
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/queries/{name}:
+    post:
+      operationId: invokeStoredQuery
+      summary: Run a stored query (issue 388)
+      tags: [Cypher]
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                params: {type: object}
+                branch: {type: string}
+                commit: {type: string}
+                expect_mutation: {type: boolean}
+      responses:
+        '200':
+          description: Same answer as POST /v1/cypher/execute
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {description: POLICY_DENIED}
+        '404': {description: QUERY_NOT_FOUND}
+        '409': {description: QUERY_MODE_MISMATCH}
+
   /v1/whoami:
     get:
       operationId: whoAmI

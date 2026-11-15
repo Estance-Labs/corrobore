@@ -244,6 +244,19 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   the caller may do, and `corrobore policy validate | test | explain` checks a
   policy offline. Without a policy file nothing changes.
 
+- **Deployment bundles and stored queries (#388).** A bundle directory holds
+  `cluster.yaml`, a policy file and stored Cypher queries. `corrobore cluster
+  validate | plan | apply | status` checks it, previews its changes and applies
+  it to a stopped server's root under the ownership lock, recording each
+  deployment in `<root>/cluster/deployments.jsonl` (an id is applied once).
+  `POST /v1/cluster/deployments` applies a bundle to a running server and
+  activates its policy and queries for later requests, authorized by the
+  policy in force through the new `config_manage` action;
+  `GET /v1/cluster/status` reports the applied revision. `GET /v1/queries` and
+  `POST /v1/queries/{name}` list and run stored queries under `invoke_query`
+  plus `read` or `change`. A server installs its root's applied revision at
+  startup; `CORROBORE_HTTP_POLICY_FILE` still wins over the bundle policy.
+
 ### Removed
 
 - **Breaking:** the enterprise edition and its license gate leave Corrobore,
