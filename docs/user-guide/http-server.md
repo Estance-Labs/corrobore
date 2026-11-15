@@ -1142,6 +1142,30 @@ and `changed` when both versions differ. `totals` counts the whole diff;
 `before` and `after` records, `property_changes` (`key`, `before`, `after`)
 and `field_changes` (`labels`, `status`, `confidence`).
 
+### `POST /v1/graph/merge`
+
+Merges `source` into `target` (default `main`) from
+`{source, target?, dry_run?, expected_target_head?, delete_source?, actor?, message?}`.
+The merge base is the best common ancestor of the two heads. A record the source
+changed since the base and the target did not is taken from the source.
+
+- `already_up_to_date`: the target already contains the source head.
+- `fast_forward`: the target head is an ancestor of the source head.
+- `merged`: both sides changed different records.
+
+The published commit has the target head as first parent and the source head
+as second parent. Merging into `main` goes through the canonical WAL, so the
+merged records are indexed like any other write. `dry_run=true` returns the
+same report without writing.
+
+Conflicts are never resolved automatically. A conflicted merge answers
+`409 MERGE_CONFLICT`, writes nothing, and returns the report with every
+conflict: `concurrent_update`, `update_delete`, `add_add`, or
+`dangling_relationship` (the merged graph would keep a relationship whose
+endpoint is deleted). `expected_target_head` refuses the merge with
+`409 GRAPH_COMMIT_PRECONDITION_FAILED` when the target moved after the
+preview.
+
 ### `GET /v1/graph/merge-base`
 
 Returns the best common ancestor of `a` and `b` (commit ids or branch names):
