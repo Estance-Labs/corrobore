@@ -63,8 +63,13 @@ use crate::{
 
 mod branches;
 mod commit_reads;
+mod diff;
 
 pub use branches::GraphBranchStatus;
+pub use diff::{
+    DiffValues, GraphChangeFeedPage, GraphDiffEntry, GraphDiffPage, GraphDiffTotals,
+    RecordChangeKind,
+};
 
 pub use commit_reads::{
     CommitRecordPage, CommitWindow, NeighbourDirection, NeighbourGroup, NodeNeighbourhood,

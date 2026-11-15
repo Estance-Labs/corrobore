@@ -103,8 +103,9 @@ pub use canonical_engine_store::{
     CanonicalAdjacencyProjection, CanonicalEngineStore, CanonicalProjectionRequest,
     CanonicalProjectionStats, CanonicalPropertyFilter, CanonicalPropertyOperator,
     CanonicalStartupReport, CanonicalStoreOptions, CanonicalStoreStats, CommitRecordPage,
-    CommitWindow, GraphBranchStatus, NeighbourDirection, NeighbourGroup, NodeNeighbourhood,
-    TransitionCommitContext,
+    CommitWindow, DiffValues, GraphBranchStatus, GraphChangeFeedPage, GraphDiffEntry,
+    GraphDiffPage, GraphDiffTotals, NeighbourDirection, NeighbourGroup, NodeNeighbourhood,
+    RecordChangeKind, TransitionCommitContext,
 };
 pub use catalog::{
     GraphCatalog, HistoricalRecordCatalogEntry, LatestRecordCatalogEntry,
