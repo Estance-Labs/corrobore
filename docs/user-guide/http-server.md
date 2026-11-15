@@ -23,6 +23,29 @@ route requires:
 Authorization: Bearer <CORROBORE_HTTP_AUTH_TOKEN>
 ```
 
+### Identities and OAuth
+
+Besides the shared token, a protected route accepts:
+
+- **Named tokens.** `CORROBORE_HTTP_BEARER_TOKENS_JSON` (or a file named by `CORROBORE_HTTP_BEARER_TOKENS_FILE`) is a JSON object of actor id to token, for example `{"act-alice":"…","act-importer":"…"}`. An actor id has 1 to 128 letters, digits and `._:@-`. A token has at least 16 characters and belongs to one actor only.
+- **OAuth 2.0 access tokens.** Set `CORROBORE_HTTP_OAUTH_ISSUER` (the authorization server, `https`, or `http` on a loopback host) and `CORROBORE_HTTP_OAUTH_AUDIENCE` (this server's resource identifier, such as `https://graph.example`). The server reads the issuer's keys from `CORROBORE_HTTP_OAUTH_JWKS_URL`, or else from its OpenID Connect discovery document, then its RFC 8414 metadata. A token must be a JWT signed with RS256/384/512, PS256/384/512, ES256/384 or EdDSA. It must name the issuer in `iss` and the resource in `aud`, be within `exp` and `nbf` (30 seconds of skew), and carry a `sub`. HMAC and unsigned tokens are refused. `CORROBORE_HTTP_OAUTH_CLIENT_IDS` restricts which clients (`client_id`, else `azp`) are accepted. Keys are cached, and a token naming an unknown key id fetches them again, at most once every `CORROBORE_HTTP_OAUTH_JWKS_MIN_REFRESH_SECONDS` (30). The actor is `principal:<sub>`.
+
+With OAuth enabled, `GET /.well-known/oauth-protected-resource` answers the RFC 9728 metadata without authentication: `resource`, `authorization_servers`, `bearer_methods_supported` and the scopes from `CORROBORE_HTTP_OAUTH_SCOPES`. A 401 carries `WWW-Authenticate: Bearer resource_metadata="https://graph.example/.well-known/oauth-protected-resource"`, with `error="invalid_token"` when a token was refused, so a client knows where to sign in. Without OAuth the document answers 404. OAuth alone is enough to run in `required` mode without a shared token.
+
+### `GET /v1/whoami`
+
+Returns what the credential proves: `actor` (null for the shared token), `client_id`, `method` (`static`, `oauth` or `anonymous`) and `scopes`.
+
+### `GET /.well-known/oauth-protected-resource`
+
+The RFC 9728 metadata described above, without authentication; 404 `OAUTH_NOT_CONFIGURED` when OAuth is not enabled.
+
+### `GET /.well-known/oauth-protected-resource/{*resource_path}`
+
+The same document, for a server published under a path prefix (RFC 9728 inserts the suffix before the resource path).
+
+A named identity owns its writes. Commits written through Cypher, `/v1/graph/edits`, merge, revert, branch creation and reviews record its actor. A body `actor` (or `reviewer`) that names someone else is refused with 403 `ACTOR_MISMATCH`. The shared token keeps naming its actor in the body. Bolt and the SQL interface accept the same credentials as the HTTP routes.
+
 Bearer values are compared in constant time. Protected routes share a global token-bucket rate limiter. Standard JSON routes and STIX import routes have separate body limits. Request tracing excludes headers so the token is not written to logs.
 
 Every response includes `X-Request-Id` and `X-Correlation-Id`. A client may
@@ -42,11 +65,19 @@ Application errors use the JSON envelope above. Transport middleware can reject 
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
-| `CORROBORE_HTTP_AUTH_TOKEN` | required | Non-empty Bearer token for protected routes. |
+| `CORROBORE_HTTP_AUTH_TOKEN` | required unless named tokens or OAuth are set | Non-empty shared Bearer token for protected routes. |
 | `CORROBORE_HTTP_AUTH_MODE` | `required` | Authentication policy: `required` or explicit loopback-only `local-insecure`. |
 | `CORROBORE_HTTP_AUTH_TOKEN_FILE` | unset | Protected file containing the bearer token; mutually exclusive with `CORROBORE_HTTP_AUTH_TOKEN`. |
 | `CORROBORE_HTTP_ADMIN_AUTH_TOKEN` | unset | Optional dedicated Bearer token for admin-only endpoints (for example `/v1/admin/domain-providers/status`). |
 | `CORROBORE_HTTP_ADMIN_AUTH_TOKEN_FILE` | unset | Protected file containing the admin bearer token; mutually exclusive with `CORROBORE_HTTP_ADMIN_AUTH_TOKEN`. |
+| `CORROBORE_HTTP_BEARER_TOKENS_JSON` | unset | JSON object of actor id to token; each token authenticates as its actor. See [Identities and OAuth](#identities-and-oauth). |
+| `CORROBORE_HTTP_BEARER_TOKENS_FILE` | unset | Protected file holding that JSON object; mutually exclusive with `CORROBORE_HTTP_BEARER_TOKENS_JSON`. |
+| `CORROBORE_HTTP_OAUTH_ISSUER` | unset | Authorization server whose JWT access tokens are accepted. |
+| `CORROBORE_HTTP_OAUTH_AUDIENCE` | required with an issuer | Resource identifier of this server; tokens must carry it in `aud`. |
+| `CORROBORE_HTTP_OAUTH_JWKS_URL` | discovered | Key set of the issuer, when discovery is not available. |
+| `CORROBORE_HTTP_OAUTH_SCOPES` | unset | Scopes advertised in the resource metadata, space- or comma-separated. |
+| `CORROBORE_HTTP_OAUTH_CLIENT_IDS` | unset | Only tokens issued to these clients are accepted. |
+| `CORROBORE_HTTP_OAUTH_JWKS_MIN_REFRESH_SECONDS` | `30` | Shortest pause between two key-set fetches caused by an unknown key id. |
 | `CORROBORE_MEMORY_WORKSPACE_ID` | `workspace--standalone-default` | Trusted workspace for high-level memory operations; clients cannot override it in JSON. |
 | `CORROBORE_MEMORY_ACTOR_ID` | `actor--standalone-client` | Trusted authenticated actor attribution for high-level memory mutations and traces. |
 | `CORROBORE_MEMORY_AGENT_ID` | unset | Optional trusted agent attribution for high-level memory operations. |

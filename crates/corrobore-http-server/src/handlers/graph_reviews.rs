@@ -27,7 +27,7 @@
 //! actor (`CORROBORE_MEMORY_ACTOR_ID`); a revert names its actor the same way.
 
 use axum::{
-    Json,
+    Extension, Json,
     extract::{Query, State},
     http::StatusCode,
 };
@@ -39,6 +39,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     app::AppState,
+    auth::{RequestIdentity, resolve_write_actor},
     error::ApiError,
     handlers::graph_history::{Envelope, map_history_error, ok, parse_commit_id, with_store},
 };
@@ -72,6 +73,7 @@ fn invalid_revert(message: impl Into<String>) -> ApiError {
 /// at the merge base with `main`, as one branch commit.
 pub async fn revert(
     State(state): State<AppState>,
+    identity: Option<Extension<RequestIdentity>>,
     Json(body): Json<RevertBody>,
 ) -> Result<Json<Envelope<RevertResult>>, ApiError> {
     if body.branch.trim().is_empty() || body.branch == MAIN_BRANCH {
@@ -94,9 +96,7 @@ pub async fn revert(
         .as_deref()
         .map(parse_commit_id)
         .transpose()?;
-    let actor = body
-        .actor
-        .filter(|actor| !actor.trim().is_empty())
+    let actor = resolve_write_actor(identity.as_deref(), body.actor)?
         .unwrap_or_else(|| state.config.memory_actor_id.clone());
     with_store(&state, move |store| {
         let report = store
@@ -166,6 +166,7 @@ fn now_ms() -> u64 {
 /// `POST /v1/graph/reviews`: record a decision on the branch's current head.
 pub async fn submit(
     State(state): State<AppState>,
+    identity: Option<Extension<RequestIdentity>>,
     Json(body): Json<ReviewBody>,
 ) -> Result<(StatusCode, Json<Envelope<ReviewView>>), ApiError> {
     if body.branch.trim().is_empty() || body.branch == MAIN_BRANCH {
@@ -190,9 +191,7 @@ pub async fn submit(
         )));
     }
     let head = parse_commit_id(&body.head)?;
-    let reviewer = body
-        .reviewer
-        .filter(|reviewer| !reviewer.trim().is_empty())
+    let reviewer = resolve_write_actor(identity.as_deref(), body.reviewer)?
         .unwrap_or_else(|| state.config.memory_actor_id.clone());
     let at_ms = now_ms();
     with_store(&state, move |store| {

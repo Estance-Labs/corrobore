@@ -24,7 +24,7 @@
 
 use std::collections::BTreeMap;
 
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{Extension, Json, extract::State, http::StatusCode};
 use graph_core::PropertyValue;
 use graph_storage::{GraphEdit, GraphEditRequest, GraphStorageError, MAIN_BRANCH, MAX_GRAPH_EDITS};
 use serde::{Deserialize, Serialize};
@@ -32,6 +32,7 @@ use serde_json::Value;
 
 use crate::{
     app::AppState,
+    auth::{RequestIdentity, resolve_write_actor},
     error::ApiError,
     handlers::graph_history::{Envelope, map_history_error, ok, parse_commit_id, with_store},
 };
@@ -170,6 +171,7 @@ fn edit_error(error: GraphStorageError) -> ApiError {
 /// `POST /v1/graph/edits`.
 pub async fn apply(
     State(state): State<AppState>,
+    identity: Option<Extension<RequestIdentity>>,
     Json(body): Json<EditsBody>,
 ) -> Result<Json<Envelope<EditsResult>>, ApiError> {
     if body.edits.is_empty() || body.edits.len() > MAX_GRAPH_EDITS {
@@ -233,9 +235,7 @@ pub async fn apply(
         .branch
         .filter(|branch| !branch.trim().is_empty())
         .unwrap_or_else(|| MAIN_BRANCH.to_owned());
-    let actor = body
-        .actor
-        .filter(|actor| !actor.trim().is_empty())
+    let actor = resolve_write_actor(identity.as_deref(), body.actor)?
         .unwrap_or_else(|| state.config.memory_actor_id.clone());
     with_store(&state, move |store| {
         let report = store

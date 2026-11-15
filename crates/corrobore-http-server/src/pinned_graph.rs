@@ -153,6 +153,7 @@ pub(crate) struct ConditionalMainPersistence {
     graph: Graph,
     store: Arc<Mutex<CanonicalEngineStore>>,
     expected_head: GraphCommitId,
+    actor: Option<String>,
     outcome: Arc<Mutex<BranchWriteOutcome>>,
 }
 
@@ -162,12 +163,14 @@ impl ConditionalMainPersistence {
         graph: Graph,
         store: Arc<Mutex<CanonicalEngineStore>>,
         expected_head: GraphCommitId,
+        actor: Option<String>,
         outcome: Arc<Mutex<BranchWriteOutcome>>,
     ) -> Self {
         Self {
             graph,
             store,
             expected_head,
+            actor,
             outcome,
         }
     }
@@ -203,6 +206,7 @@ impl EnginePersistence for ConditionalMainPersistence {
                 transaction_id,
                 TransitionCommitContext {
                     expected_head: Some(self.expected_head.clone()),
+                    actor: self.actor.clone(),
                     ..TransitionCommitContext::default()
                 },
                 None,

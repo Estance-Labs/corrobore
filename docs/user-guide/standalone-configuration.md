@@ -209,6 +209,14 @@ remain environment-only:
 | `CORROBORE_OPENCTI_ELASTIC_FREE` | `false` | Require final operation without the reference search provider. |
 | `CORROBORE_OPENCTI_RATE_LIMIT_PER_SECOND` | `200` | Sustained rate reserved for authenticated OpenCTI provider traffic. |
 | `CORROBORE_OPENCTI_RATE_LIMIT_BURST` | `1000` | Burst allowance reserved for authenticated OpenCTI provider traffic. |
+| `CORROBORE_HTTP_BEARER_TOKENS_JSON` | unset | JSON object of actor id to token; each named token authenticates as its actor. |
+| `CORROBORE_HTTP_BEARER_TOKENS_FILE` | unset | Protected file holding the named-token JSON object; mutually exclusive with `CORROBORE_HTTP_BEARER_TOKENS_JSON`. |
+| `CORROBORE_HTTP_OAUTH_ISSUER` | unset | Accept OAuth 2.0 JWT access tokens from this issuer. See [Identities and OAuth](http-server.md#identities-and-oauth). |
+| `CORROBORE_HTTP_OAUTH_AUDIENCE` | required with an issuer | Resource identifier of this server, required in the token's `aud`. |
+| `CORROBORE_HTTP_OAUTH_JWKS_URL` | discovered | Key set of the issuer when discovery is not available. |
+| `CORROBORE_HTTP_OAUTH_SCOPES` | unset | Scopes advertised in the resource metadata. |
+| `CORROBORE_HTTP_OAUTH_CLIENT_IDS` | unset | Only tokens issued to these clients are accepted. |
+| `CORROBORE_HTTP_OAUTH_JWKS_MIN_REFRESH_SECONDS` | `30` | Shortest pause between two key-set fetches caused by an unknown key id. |
 | `CORROBORE_HTTP_CORS_ALLOWED_ORIGINS` | unset | Exact browser origins allowed to call the server (CORS), comma-separated, for a viewer served from another origin. `*` is refused; unset sends no CORS headers. |
 | `CORROBORE_HTTP_CONTENT_STORE_URL` | unset | Object store holding offloaded content (`s3://bucket/prefix`, `file:///path` or `memory://`). Unset, persistent servers use `<storage>/content` and ephemeral servers keep content in memory. See [Content plane](http-server.md#content-plane). |
 | `CORROBORE_HTTP_CONTENT_INLINE_MAX_BYTES` | `16384` | Text and JSON content up to this size stays inline in the returned handle; larger or binary content is offloaded. |

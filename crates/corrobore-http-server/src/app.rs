@@ -181,6 +181,11 @@ pub struct AppState {
     pub content: Arc<std::sync::RwLock<crate::content_plane::ContentPlane>>,
     /// Embedding provider of the vector and hybrid seed modes, if configured.
     pub embedding: Option<Arc<dyn crate::embedding::EmbeddingProvider>>,
+    /// Checks bearer credentials for HTTP, Bolt and SQL (issue #382).
+    pub authenticator: Arc<crate::auth::Authenticator>,
+    /// Actor recorded on the `main` commit of the write the shared engine is
+    /// executing; set and cleared under the engine lock (issue #382).
+    pub main_commit_actor: Arc<Mutex<Option<String>>>,
     pub started_at: Instant,
 }
 
@@ -243,10 +248,12 @@ impl AppState {
             )
             .map_err(|reason| AppStateInitError::OpenCtiReconciliationStateFailed { reason })?,
         ));
+        let main_commit_actor = Arc::new(Mutex::new(None));
         let engine = initialize_engine(
             &runtime_store,
             config.storage_require_fsync,
             Arc::clone(&opencti_write),
+            Arc::clone(&main_commit_actor),
         )?;
         let sync_state_path = match &runtime_store {
             RuntimeStoreProvider::Persistent(runtime) => Some(
@@ -345,6 +352,7 @@ impl AppState {
         let opencti_write_semaphore = Arc::new(tokio::sync::Semaphore::new(
             config.opencti_shadow.max_concurrency,
         ));
+        let authenticator = Arc::new(crate::auth::Authenticator::new(&config));
         let state = Self {
             engine: Arc::new(Mutex::new(engine)),
             runtime_store,
@@ -367,6 +375,8 @@ impl AppState {
             verifier_registry,
             content: Arc::new(std::sync::RwLock::new(content)),
             embedding: crate::embedding::provider_from_config(&config_embedding).map(Arc::from),
+            authenticator,
+            main_commit_actor,
             started_at: Instant::now(),
         };
         lifecycle.mark_ready();
@@ -415,6 +425,8 @@ fn read_shadow_json<T: serde::de::DeserializeOwned>(path: &str) -> Result<T, Str
 struct PersistentEnginePersistence {
     store: Arc<Mutex<CanonicalEngineStore>>,
     opencti_write: Arc<Mutex<OpenCtiWriteRuntime>>,
+    /// Actor of the write in progress, recorded on its `main` commit.
+    commit_actor: Arc<Mutex<Option<String>>>,
 }
 
 impl PersistentEnginePersistence {
@@ -550,10 +562,25 @@ impl EnginePersistence for PersistentEnginePersistence {
         let transaction_id =
             DurableTransactionId::new(format!("tx--standalone-{}", Uuid::new_v4()))
                 .map_err(|error| error.to_string())?;
+        let actor = self
+            .commit_actor
+            .lock()
+            .map_err(|_| "commit actor lock is poisoned".to_owned())?
+            .clone();
         self.store
             .lock()
             .map_err(|_| "canonical graph store lock is poisoned".to_owned())?
-            .commit_transition(previous, current, transaction_id, None)
+            .commit_transition_with_context(
+                previous,
+                current,
+                transaction_id,
+                graph_storage::TransitionCommitContext {
+                    audit_events: vec!["canonical engine graph transition committed".to_owned()],
+                    actor,
+                    ..graph_storage::TransitionCommitContext::default()
+                },
+                None,
+            )
             .map(|_| ())
             .map_err(|error| error.to_string())
     }
@@ -588,6 +615,7 @@ fn initialize_engine(
     runtime_store: &RuntimeStoreProvider,
     _require_fsync: bool,
     opencti_write: Arc<Mutex<OpenCtiWriteRuntime>>,
+    commit_actor: Arc<Mutex<Option<String>>>,
 ) -> Result<CorroboreEngine, AppStateInitError> {
     let RuntimeStoreProvider::Persistent(runtime) = runtime_store else {
         return Ok(CorroboreEngine::strict_default());
@@ -596,6 +624,7 @@ fn initialize_engine(
         .persistence(Box::new(PersistentEnginePersistence {
             store: Arc::clone(&runtime.canonical_store),
             opencti_write,
+            commit_actor,
         }))
         .build()
         .map_err(|error| AppStateInitError::PersistentStorageRecoveryFailed {
@@ -1067,6 +1096,7 @@ pub fn build_router(state: AppState) -> Router {
             "/v1/epistemic/projection",
             get(crate::handlers::claim_audit::projection),
         )
+        .route("/v1/whoami", get(crate::auth::whoami))
         .route("/v1/cypher/execute", post(execute_cypher))
         .route("/v1/cypher/read", post(execute_read_cypher))
         .route("/v1/cypher/write", post(execute_write_cypher))
@@ -1270,6 +1300,17 @@ pub fn build_router(state: AppState) -> Router {
         ))
         .layer(GovernorLayer::new(opencti_governor_config));
 
+    // RFC 9728 metadata is public: a client reads it before it has a token.
+    let discovery = Router::new()
+        .route(
+            "/.well-known/oauth-protected-resource",
+            get(crate::auth::protected_resource_metadata),
+        )
+        .route(
+            "/.well-known/oauth-protected-resource/{*resource_path}",
+            get(crate::auth::protected_resource_metadata),
+        );
+
     let operational = Router::new()
         .route("/health", get(health))
         .route("/health/live", get(liveness))
@@ -1325,6 +1366,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(protected)
         .merge(opencti_routes)
         .merge(operational)
+        .merge(discovery)
         .with_state(state.clone());
 
     let cors = cors_layer(&state.config.cors_allowed_origins);
@@ -1376,6 +1418,8 @@ fn cors_layer(origins: &[String]) -> Option<tower_http::cors::CorsLayer> {
                 header::ETAG,
                 header::ACCEPT_RANGES,
                 header::CONTENT_LENGTH,
+                // A browser client reads the OAuth challenge (issue #382).
+                header::WWW_AUTHENTICATE,
             ])
             .max_age(Duration::from_secs(600)),
     )

@@ -22,7 +22,7 @@
 //! Branch routes of the persistent graph (issue #319).
 
 use axum::{
-    Json,
+    Extension, Json,
     extract::{Path, Query, State},
 };
 use graph_storage::{GraphBranchInfo, GraphBranchStatus};
@@ -30,6 +30,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     app::AppState,
+    auth::{RequestIdentity, resolve_write_actor},
     error::ApiError,
     handlers::graph_history::{Envelope, map_history_error, ok, parse_commit_id, with_store},
 };
@@ -115,8 +116,10 @@ pub async fn list_branches(
 /// `POST /v1/graph/branches`: create a branch at a branch head or commit.
 pub async fn create_branch(
     State(state): State<AppState>,
+    identity: Option<Extension<RequestIdentity>>,
     Json(request): Json<CreateBranchRequest>,
 ) -> Result<Json<Envelope<BranchView>>, ApiError> {
+    let actor = resolve_write_actor(identity.as_deref(), request.actor.clone())?;
     let from_commit = request
         .from_commit
         .as_deref()
@@ -128,7 +131,7 @@ pub async fn create_branch(
                 request.name.trim(),
                 request.from_branch.as_deref(),
                 from_commit.as_ref(),
-                request.actor,
+                actor,
             )
             .map_err(map_history_error)?;
         Ok(ok(BranchView::from(&info)))

@@ -128,6 +128,90 @@ pub struct ServerConfig {
     /// Exact browser origins allowed to call the server (CORS); empty
     /// disables CORS (issue #359).
     pub cors_allowed_origins: Vec<String>,
+    /// Named static tokens and the OAuth resource server (issue #382).
+    pub identity: IdentityConfig,
+}
+
+/// Who may call the server besides the single trusted token (issue #382).
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct IdentityConfig {
+    /// Static tokens that each name an actor.
+    pub named_tokens: Vec<NamedToken>,
+    /// JWT access tokens from one OAuth 2.0 / OpenID Connect issuer.
+    pub oauth: Option<OAuthConfig>,
+}
+
+impl IdentityConfig {
+    /// Whether any credential besides the unnamed token is configured.
+    pub fn configures_credentials(&self) -> bool {
+        !self.named_tokens.is_empty() || self.oauth.is_some()
+    }
+}
+
+impl fmt::Debug for IdentityConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("IdentityConfig")
+            .field(
+                "named_tokens",
+                &self
+                    .named_tokens
+                    .iter()
+                    .map(|token| token.actor.as_str())
+                    .collect::<Vec<_>>(),
+            )
+            .field("oauth", &self.oauth)
+            .finish()
+    }
+}
+
+/// A static bearer token that authenticates as `actor`.
+#[derive(Clone, PartialEq, Eq)]
+pub struct NamedToken {
+    pub actor: String,
+    pub token: String,
+}
+
+impl fmt::Debug for NamedToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NamedToken")
+            .field("actor", &self.actor)
+            .field("token", &"<redacted>")
+            .finish()
+    }
+}
+
+/// OAuth 2.0 resource-server settings: tokens are JWTs signed by `issuer`
+/// for `audience`, the resource identifier of this server (RFC 9728).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OAuthConfig {
+    pub issuer: String,
+    pub audience: String,
+    /// Explicit key set; otherwise discovered from the issuer.
+    pub jwks_url: Option<String>,
+    /// Scopes advertised in the resource metadata.
+    pub scopes: Vec<String>,
+    /// When non-empty, only tokens issued to these clients are accepted.
+    pub client_ids: Vec<String>,
+    /// Shortest pause between two key-set fetches caused by an unknown key.
+    pub jwks_min_refresh: std::time::Duration,
+}
+
+impl OAuthConfig {
+    /// RFC 9728 section 3.1: the metadata URL inserts the well-known suffix
+    /// between the host and the path of the resource identifier.
+    pub fn resource_metadata_url(&self) -> String {
+        match url::Url::parse(&self.audience) {
+            Ok(parsed) => {
+                let path = parsed.path().trim_end_matches('/');
+                format!(
+                    "{}/.well-known/oauth-protected-resource{}",
+                    parsed.origin().ascii_serialization(),
+                    path
+                )
+            }
+            Err(_) => format!("{}/.well-known/oauth-protected-resource", self.audience),
+        }
+    }
 }
 
 /// Which embedding provider the server uses.
@@ -357,6 +441,7 @@ impl fmt::Debug for ServerConfig {
             .field("content", &self.content)
             .field("embedding", &self.embedding)
             .field("cors_allowed_origins", &self.cors_allowed_origins)
+            .field("identity", &self.identity)
             .finish()
     }
 }
@@ -451,6 +536,51 @@ pub enum ConfigError {
     SecretFileUnreadable { field: &'static str },
     #[error("{field}: configured secret must not be empty")]
     InvalidSecret { field: &'static str },
+}
+
+/// Shortest named token accepted, so a configured identity is not guessable.
+const MIN_NAMED_TOKEN_LENGTH: usize = 16;
+
+/// Actor ids name identities in commits and policies: 1-128 characters of
+/// ASCII letters, digits and `._:@-`, starting with a letter or digit.
+pub fn valid_actor_id(actor: &str) -> bool {
+    !actor.is_empty()
+        && actor.len() <= 128
+        && actor
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric())
+        && actor
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '@' | '-'))
+}
+
+/// An absolute `https` URL, or `http` on a loopback host for local issuers.
+fn secure_url(name: &'static str, value: &str) -> Result<String, ConfigError> {
+    let invalid = || ConfigError::InvalidEnv {
+        name,
+        value: format!("{value} must be an https URL (http only on a loopback host)"),
+    };
+    let parsed = url::Url::parse(value).map_err(|_| invalid())?;
+    let loopback = match parsed.host() {
+        Some(url::Host::Domain(domain)) => domain == "localhost",
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    };
+    let allowed = match parsed.scheme() {
+        "https" => parsed.host().is_some(),
+        "http" => loopback,
+        _ => false,
+    };
+    if !allowed
+        || parsed.fragment().is_some()
+        || parsed.query().is_some()
+        || !parsed.username().is_empty()
+    {
+        return Err(invalid());
+    }
+    Ok(value.to_owned())
 }
 
 fn parse_auth_mode(vars: &HashMap<String, String>) -> Result<AuthenticationMode, ConfigError> {
@@ -601,7 +731,11 @@ impl ServerConfig {
             "server.auth_token",
             "server.auth_token_file",
         )?;
-        if auth_mode == AuthenticationMode::Required && auth_token.is_none() {
+        let identity = Self::parse_identity(vars, auth_token.as_deref())?;
+        if auth_mode == AuthenticationMode::Required
+            && auth_token.is_none()
+            && !identity.configures_credentials()
+        {
             return Err(ConfigError::MissingEnv("CORROBORE_HTTP_AUTH_TOKEN"));
         }
         let (admin_auth_token, admin_auth_token_source) = resolve_secret(
@@ -945,6 +1079,124 @@ impl ServerConfig {
             content,
             embedding,
             cors_allowed_origins,
+            identity,
+        })
+    }
+
+    /// Named tokens (`CORROBORE_HTTP_BEARER_TOKENS_JSON` or `_FILE`, a JSON
+    /// object of actor id to token) and the OAuth issuer (issue #382).
+    fn parse_identity(
+        vars: &HashMap<String, String>,
+        unnamed_token: Option<&str>,
+    ) -> Result<IdentityConfig, ConfigError> {
+        const TOKENS: &str = "CORROBORE_HTTP_BEARER_TOKENS_JSON";
+        let (raw, _) = resolve_secret(
+            vars,
+            TOKENS,
+            "CORROBORE_HTTP_BEARER_TOKENS_FILE",
+            "server.bearer_tokens",
+            "server.bearer_tokens_file",
+        )?;
+        let mut named_tokens: Vec<NamedToken> = Vec::new();
+        if let Some(raw) = raw {
+            let invalid = |value: String| ConfigError::InvalidEnv {
+                name: TOKENS,
+                value,
+            };
+            let map: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&raw)
+                .map_err(|_| invalid("expected a JSON object of actor id to token".to_owned()))?;
+            for (actor, token) in map {
+                if !valid_actor_id(&actor) {
+                    return Err(invalid(format!(
+                        "actor {actor:?} must be 1-128 characters of letters, digits and ._:@-"
+                    )));
+                }
+                let token = token
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|token| token.len() >= MIN_NAMED_TOKEN_LENGTH)
+                    .ok_or_else(|| {
+                        invalid(format!(
+                            "the token of {actor} must be a string of at least {MIN_NAMED_TOKEN_LENGTH} characters"
+                        ))
+                    })?;
+                if named_tokens.iter().any(|named| named.token == token)
+                    || unnamed_token == Some(token)
+                {
+                    return Err(invalid(format!(
+                        "the token of {actor} is already used by another identity"
+                    )));
+                }
+                named_tokens.push(NamedToken {
+                    actor,
+                    token: token.to_owned(),
+                });
+            }
+        }
+
+        let optional = |name: &str| {
+            vars.get(name)
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        };
+        let list = |name: &str| {
+            optional(name)
+                .map(|value| {
+                    value
+                        .split([',', ' '])
+                        .map(str::trim)
+                        .filter(|item| !item.is_empty())
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+        let oauth = match optional("CORROBORE_HTTP_OAUTH_ISSUER") {
+            None => None,
+            Some(issuer) => {
+                let issuer = secure_url("CORROBORE_HTTP_OAUTH_ISSUER", &issuer)?
+                    .trim_end_matches('/')
+                    .to_owned();
+                let audience = optional("CORROBORE_HTTP_OAUTH_AUDIENCE")
+                    .ok_or(ConfigError::MissingEnv("CORROBORE_HTTP_OAUTH_AUDIENCE"))?;
+                let audience = secure_url("CORROBORE_HTTP_OAUTH_AUDIENCE", &audience)?
+                    .trim_end_matches('/')
+                    .to_owned();
+                let jwks_url = optional("CORROBORE_HTTP_OAUTH_JWKS_URL")
+                    .map(|url| secure_url("CORROBORE_HTTP_OAUTH_JWKS_URL", &url))
+                    .transpose()?;
+                Some(OAuthConfig {
+                    issuer,
+                    audience,
+                    jwks_url,
+                    scopes: list("CORROBORE_HTTP_OAUTH_SCOPES"),
+                    client_ids: list("CORROBORE_HTTP_OAUTH_CLIENT_IDS"),
+                    jwks_min_refresh: std::time::Duration::from_secs(parse_u64(
+                        "CORROBORE_HTTP_OAUTH_JWKS_MIN_REFRESH_SECONDS",
+                        vars.get("CORROBORE_HTTP_OAUTH_JWKS_MIN_REFRESH_SECONDS")
+                            .map(String::as_str)
+                            .unwrap_or("30"),
+                    )?),
+                })
+            }
+        };
+        if oauth.is_none() {
+            for name in [
+                "CORROBORE_HTTP_OAUTH_AUDIENCE",
+                "CORROBORE_HTTP_OAUTH_JWKS_URL",
+                "CORROBORE_HTTP_OAUTH_CLIENT_IDS",
+            ] {
+                if optional(name).is_some() {
+                    return Err(ConfigError::InvalidEnv {
+                        name,
+                        value: "requires CORROBORE_HTTP_OAUTH_ISSUER".to_owned(),
+                    });
+                }
+            }
+        }
+        Ok(IdentityConfig {
+            named_tokens,
+            oauth,
         })
     }
 
