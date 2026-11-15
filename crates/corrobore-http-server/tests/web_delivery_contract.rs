@@ -85,6 +85,7 @@ fn config(web_dir: Option<String>) -> ServerConfig {
         content: corrobore_http_server::config::ContentStoreConfig::default(),
         embedding: corrobore_http_server::config::EmbeddingConfig::default(),
         cors_allowed_origins: Vec::new(),
+        identity: Default::default(),
     }
 }
 

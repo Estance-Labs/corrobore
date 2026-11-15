@@ -36,6 +36,7 @@ corrobore-nlq = { path = "../corrobore-nlq" }
 graph-core = { path = "../graph-core" }
 graph-storage = { path = "../graph-storage" }
 hmac = { workspace = true }
+jsonwebtoken = { version = "12.0.0", default-features = false, features = ["aws_lc_rs"] }
 libloading = "0.8"
 opencti-adapter = { path = "../opencti-adapter" }
 opencti-file-search = { path = "../opencti-file-search" }

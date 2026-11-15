@@ -22,7 +22,7 @@
 //! Branch merge route (issue #321).
 
 use axum::{
-    Json,
+    Extension, Json,
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -34,6 +34,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     app::AppState,
+    auth::{RequestIdentity, resolve_write_actor},
     error::ApiError,
     handlers::graph_history::{kind_name, map_history_error, parse_commit_id, with_store},
 };
@@ -169,8 +170,10 @@ struct MergeEnvelope {
 /// the caller sees every conflict at once; nothing is written.
 pub async fn merge(
     State(state): State<AppState>,
+    identity: Option<Extension<RequestIdentity>>,
     Json(body): Json<MergeRequestBody>,
 ) -> Result<Response, ApiError> {
+    let actor = resolve_write_actor(identity.as_deref(), body.actor.clone())?;
     let expected_target_head = body
         .expected_target_head
         .as_deref()
@@ -184,7 +187,7 @@ pub async fn merge(
                 dry_run: body.dry_run,
                 expected_target_head,
                 delete_source: body.delete_source,
-                actor: body.actor,
+                actor,
                 message: body.message,
             })
             .map_err(map_history_error)

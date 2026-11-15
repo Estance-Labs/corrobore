@@ -210,7 +210,7 @@ where
                 Ok(Ok(Some(_))) | Ok(Ok(None)) | Err(_) => return Ok(()),
                 Ok(Err(error)) => return Err(error),
             };
-        if !session.check_password(&password) {
+        if !session.check_password(&password).await {
             warn!(user, "sql authentication refused");
             wire::write(&mut stream, &[Session::invalid_password()]).await?;
             return stream.shutdown().await;

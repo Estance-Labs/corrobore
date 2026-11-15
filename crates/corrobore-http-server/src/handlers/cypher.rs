@@ -21,7 +21,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use axum::{Json, extract::State, http::HeaderMap};
+use axum::{Extension, Json, extract::State, http::HeaderMap};
 use corrobore_engine::{
     CypherResponse, CypherResponseData, CypherValue, EngineError, EngineRequest, EngineRequestMode,
 };
@@ -31,7 +31,7 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::{
-    app::AppState, error::ApiError, handlers::session::map_session_error,
+    app::AppState, auth::RequestIdentity, error::ApiError, handlers::session::map_session_error,
     session_runtime::SessionServiceStatus,
 };
 
@@ -113,15 +113,27 @@ fn read_target(payload: &ExecuteCypherRequest) -> ReadTarget {
     }
 }
 
+/// Where a pinned request reads or writes, and who writes.
+struct PinnedTarget<'a> {
+    branch: Option<&'a str>,
+    commit: Option<&'a str>,
+    expected: Option<&'a str>,
+    actor: Option<String>,
+}
+
 fn execute_pinned(
     state: &AppState,
     engine_request: EngineRequest,
     query: &str,
     mode: EngineRequestMode,
-    branch: Option<&str>,
-    commit: Option<&str>,
-    expected: Option<&str>,
+    target: PinnedTarget<'_>,
 ) -> Result<(CypherResponse, String), ApiError> {
+    let PinnedTarget {
+        branch,
+        commit,
+        expected,
+        actor,
+    } = target;
     use crate::handlers::graph_history::{canonical_store, map_history_error, parse_commit_id};
     use crate::pinned_graph::{BranchWriteOutcome, BranchWritePersistence, PinnedGraphPersistence};
 
@@ -184,7 +196,7 @@ fn execute_pinned(
             std::sync::Arc::clone(&store),
             branch,
             commit_id.clone(),
-            None,
+            actor,
             std::sync::Arc::clone(&outcome),
         )))
         .build()
@@ -206,6 +218,7 @@ fn execute_conditional_main(
     engine_request: EngineRequest,
     query: &str,
     expected: &str,
+    actor: Option<String>,
 ) -> Result<(CypherResponse, String), ApiError> {
     use crate::handlers::graph_history::{canonical_store, map_history_error, parse_commit_id};
     use crate::pinned_graph::{BranchWriteOutcome, ConditionalMainPersistence};
@@ -238,6 +251,7 @@ fn execute_conditional_main(
             graph,
             std::sync::Arc::clone(&store),
             expected.clone(),
+            actor,
             std::sync::Arc::clone(&outcome),
         )))
         .build()
@@ -257,6 +271,33 @@ fn execute_conditional_main(
     Ok((response, head.to_string()))
 }
 
+/// Holds the actor of the shared engine's current `main` write and clears it
+/// when the write ends, even on an error path.
+pub(crate) struct CommitActorScope<'a> {
+    slot: &'a std::sync::Mutex<Option<String>>,
+}
+
+impl<'a> CommitActorScope<'a> {
+    pub(crate) fn set(
+        slot: &'a std::sync::Mutex<Option<String>>,
+        actor: Option<String>,
+    ) -> Result<Self, ApiError> {
+        *slot
+            .lock()
+            .map_err(|_| ApiError::internal("STATE_LOCK_FAILED", "commit actor lock poisoned"))? =
+            actor;
+        Ok(Self { slot })
+    }
+}
+
+impl Drop for CommitActorScope<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut slot) = self.slot.lock() {
+            *slot = None;
+        }
+    }
+}
+
 fn canonical_head(state: &AppState) -> Option<String> {
     let store = crate::handlers::graph_history::canonical_store(state).ok()?;
     let mut store = store.lock().ok()?;
@@ -268,14 +309,27 @@ fn canonical_head(state: &AppState) -> Option<String> {
 
 pub async fn execute_cypher(
     State(state): State<AppState>,
+    identity: Option<Extension<RequestIdentity>>,
     headers: HeaderMap,
     Json(payload): Json<ExecuteCypherRequest>,
 ) -> Result<Json<ExecuteCypherResponse>, ApiError> {
-    execute_cypher_inner(state, with_precondition(&headers, payload)?, None).await
+    execute_cypher_inner(
+        state,
+        with_precondition(&headers, payload)?,
+        None,
+        actor_of(identity),
+    )
+    .await
+}
+
+/// The actor a named credential proves; recorded on the commits it writes.
+fn actor_of(identity: Option<Extension<RequestIdentity>>) -> Option<String> {
+    identity.and_then(|Extension(identity)| identity.actor)
 }
 
 pub async fn execute_read_cypher(
     State(state): State<AppState>,
+    identity: Option<Extension<RequestIdentity>>,
     headers: HeaderMap,
     Json(payload): Json<ExecuteCypherRequest>,
 ) -> Result<Json<ExecuteCypherResponse>, ApiError> {
@@ -283,12 +337,14 @@ pub async fn execute_read_cypher(
         state,
         with_precondition(&headers, payload)?,
         Some(EngineRequestMode::ReadOnly),
+        actor_of(identity),
     )
     .await
 }
 
 pub async fn execute_write_cypher(
     State(state): State<AppState>,
+    identity: Option<Extension<RequestIdentity>>,
     headers: HeaderMap,
     Json(payload): Json<ExecuteCypherRequest>,
 ) -> Result<Json<ExecuteCypherResponse>, ApiError> {
@@ -296,6 +352,7 @@ pub async fn execute_write_cypher(
         state,
         with_precondition(&headers, payload)?,
         Some(EngineRequestMode::Mutation),
+        actor_of(identity),
     )
     .await
 }
@@ -325,6 +382,7 @@ async fn execute_cypher_inner(
     state: AppState,
     mut payload: ExecuteCypherRequest,
     forced_mode: Option<EngineRequestMode>,
+    actor: Option<String>,
 ) -> Result<Json<ExecuteCypherResponse>, ApiError> {
     let audit_event_id = Uuid::new_v4().to_string();
     let query_len = payload.query.len();
@@ -401,9 +459,12 @@ async fn execute_cypher_inner(
                         engine_request,
                         &query_text,
                         requested_mode,
-                        branch.as_deref(),
-                        commit.as_deref(),
-                        expected.as_deref(),
+                        PinnedTarget {
+                            branch: branch.as_deref(),
+                            commit: commit.as_deref(),
+                            expected: expected.as_deref(),
+                            actor,
+                        },
                     )
                     .map(|(response, commit_id)| (response, Some(commit_id))),
                     ReadTarget::ConditionalMain { expected } => {
@@ -416,6 +477,7 @@ async fn execute_cypher_inner(
                             engine_request,
                             &query_text,
                             expected,
+                            actor,
                         )
                         .map(|(response, commit_id)| (response, Some(commit_id)))
                     }
@@ -424,6 +486,10 @@ async fn execute_cypher_inner(
                             let mut locked = engine.lock().map_err(|_| {
                                 ApiError::internal("STATE_LOCK_FAILED", "engine lock poisoned")
                             })?;
+                            // The engine lock serializes main writes, so the
+                            // actor slot belongs to this request until cleared.
+                            let _actor =
+                                CommitActorScope::set(&blocking_state.main_commit_actor, actor)?;
                             locked
                                 .execute_request(engine_request)
                                 .map_err(map_engine_error)?

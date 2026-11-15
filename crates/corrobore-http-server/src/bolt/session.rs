@@ -47,9 +47,7 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::packstream::Value;
-use crate::{
-    app::AppState, auth::token_matches, lifecycle::LifecycleState, security::AuthenticationMode,
-};
+use crate::{app::AppState, lifecycle::LifecycleState, security::AuthenticationMode};
 
 // Request signatures.
 pub(super) const HELLO: u8 = 0x01;
@@ -296,13 +294,13 @@ impl Session {
             State::Failed => Outcome::reply(Response::ignored()),
             State::Negotiated => {
                 if tag == HELLO {
-                    self.hello(fields)
+                    self.hello(fields).await
                 } else {
                     self.protocol_violation("HELLO must be the first message")
                 }
             }
             State::Authentication => match tag {
-                LOGON => self.logon(fields),
+                LOGON => self.logon(fields).await,
                 ROUTE => self.route(fields),
                 _ => self.fail(
                     code::UNAUTHORIZED,
@@ -328,7 +326,7 @@ impl Session {
         Outcome::reply(Response::success(vec![]))
     }
 
-    fn hello(&mut self, fields: Vec<Value>) -> Outcome {
+    async fn hello(&mut self, fields: Vec<Value>) -> Outcome {
         let Some(extra) = fields.first() else {
             return self.protocol_violation("HELLO carries a metadata dictionary");
         };
@@ -345,7 +343,7 @@ impl Session {
         );
         if !self.logon_required() {
             // Bolt 4.4 and 5.0 authenticate inline.
-            if let Err(outcome) = self.authenticate(extra) {
+            if let Err(outcome) = self.authenticate(extra).await {
                 return outcome;
             }
             self.authenticated = true;
@@ -365,11 +363,11 @@ impl Session {
         ]))
     }
 
-    fn logon(&mut self, fields: Vec<Value>) -> Outcome {
+    async fn logon(&mut self, fields: Vec<Value>) -> Outcome {
         let Some(auth) = fields.first() else {
             return self.protocol_violation("LOGON carries an authentication dictionary");
         };
-        if let Err(outcome) = self.authenticate(auth) {
+        if let Err(outcome) = self.authenticate(auth).await {
             return outcome;
         }
         self.authenticated = true;
@@ -377,23 +375,24 @@ impl Session {
         Outcome::reply(Response::success(vec![]))
     }
 
-    /// Check credentials against the same bearer token HTTP requires. A failed
-    /// login closes the connection: a driver retries with a new one, and a
-    /// guesser does not get a second attempt on the same slot.
-    fn authenticate(&mut self, auth: &Value) -> Result<(), Outcome> {
+    /// Check credentials with the authenticator HTTP uses: any bearer
+    /// credential the server accepts (issue #382). A failed login closes the
+    /// connection: a driver retries with a new one, and a guesser does not
+    /// get a second attempt on the same slot.
+    async fn authenticate(&mut self, auth: &Value) -> Result<(), Outcome> {
         let scheme = auth.get("scheme").and_then(Value::as_str).unwrap_or("none");
         let credentials = auth.get("credentials").and_then(Value::as_str);
-        let config = &self.state.config;
-        let accepted = match config.auth_mode {
+        let accepted = match self.state.config.auth_mode {
             AuthenticationMode::LocalInsecure => true,
-            AuthenticationMode::Required => {
-                match (scheme, credentials, config.auth_token.as_deref()) {
-                    ("basic" | "bearer", Some(provided), Some(expected)) => {
-                        token_matches(provided, expected)
-                    }
-                    _ => false,
-                }
-            }
+            AuthenticationMode::Required => match (scheme, credentials) {
+                ("basic" | "bearer", Some(provided)) => self
+                    .state
+                    .authenticator
+                    .authenticate(provided)
+                    .await
+                    .is_ok(),
+                _ => false,
+            },
         };
         if accepted {
             debug!(connection_id = %self.connection_id, scheme, "bolt authenticated");

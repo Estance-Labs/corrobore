@@ -49,9 +49,7 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::wire::{Backend, Cursor};
-use crate::{
-    app::AppState, auth::token_matches, lifecycle::LifecycleState, security::AuthenticationMode,
-};
+use crate::{app::AppState, lifecycle::LifecycleState, security::AuthenticationMode};
 
 const WORKSPACE_ID: &str = "workspace--sql-default";
 
@@ -185,11 +183,13 @@ impl Session {
         self.state.config.auth_mode == AuthenticationMode::Required
     }
 
-    pub(super) fn check_password(&self, password: &str) -> bool {
-        match self.state.config.auth_token.as_deref() {
-            Some(expected) => token_matches(password, expected),
-            None => false,
-        }
+    /// Any bearer credential the HTTP routes accept (issue #382).
+    pub(super) async fn check_password(&self, password: &str) -> bool {
+        self.state
+            .authenticator
+            .authenticate(password)
+            .await
+            .is_ok()
     }
 
     /// The messages that follow `AuthenticationOk`.

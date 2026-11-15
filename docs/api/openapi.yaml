@@ -1583,6 +1583,66 @@ paths:
                           warning_count: {type: integer, minimum: 0}
                           derived_state_rebuilt: {type: boolean}
 
+  /v1/whoami:
+    get:
+      operationId: whoAmI
+      summary: What the caller's credential proves (issue 382)
+      tags: [Operations]
+      responses:
+        '200':
+          description: The caller's identity
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: true}
+                  result:
+                    type: object
+                    properties:
+                      actor: {type: [string, 'null'], description: 'principal:<sub>, a named token actor, or null for the shared token'}
+                      client_id: {type: [string, 'null']}
+                      method: {type: string, enum: [static, oauth, anonymous]}
+                      scopes: {type: array, items: {type: string}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /.well-known/oauth-protected-resource:
+    get:
+      operationId: getProtectedResourceMetadata
+      summary: RFC 9728 protected-resource metadata (issue 382)
+      tags: [Operations]
+      security: []
+      responses:
+        '200':
+          description: Where clients obtain access tokens for this server
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [resource, authorization_servers, bearer_methods_supported]
+                properties:
+                  resource: {type: string}
+                  authorization_servers: {type: array, items: {type: string}}
+                  bearer_methods_supported: {type: array, items: {type: string, const: header}}
+                  scopes_supported: {type: array, items: {type: string}}
+                  resource_name: {type: string}
+        '404':
+          description: OAUTH_NOT_CONFIGURED
+
+  /.well-known/oauth-protected-resource/{*resource_path}:
+    get:
+      operationId: getProtectedResourceMetadataForPath
+      summary: The same metadata for a server published under a path prefix
+      tags: [Operations]
+      security: []
+      parameters:
+        - {name: resource_path, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Same document as /.well-known/oauth-protected-resource
+        '404':
+          description: OAUTH_NOT_CONFIGURED
+
   /health/live:
     get:
       operationId: getLiveness

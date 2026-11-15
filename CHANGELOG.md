@@ -212,6 +212,24 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   latency of both implementations. `CanonicalStoreOptions` gains a field, so
   struct literals need `..CanonicalStoreOptions::default()`.
 
+- **Named identities and OAuth access tokens (#382).**
+  `CORROBORE_HTTP_BEARER_TOKENS_JSON` (or `_FILE`) maps actor ids to their own
+  tokens. `CORROBORE_HTTP_OAUTH_ISSUER` and `CORROBORE_HTTP_OAUTH_AUDIENCE`
+  make the server an OAuth 2.0 resource server: it verifies JWT access tokens
+  (asymmetric algorithms only) against the issuer's key set, found through
+  OpenID Connect or RFC 8414 discovery or `CORROBORE_HTTP_OAUTH_JWKS_URL`, and
+  refetches the keys when a token names an unknown key id. Optional settings
+  are `CORROBORE_HTTP_OAUTH_CLIENT_IDS`, `CORROBORE_HTTP_OAUTH_SCOPES` and
+  `CORROBORE_HTTP_OAUTH_JWKS_MIN_REFRESH_SECONDS`. `GET /.well-known/oauth-protected-resource`
+  serves RFC 9728 metadata, a 401 carries `WWW-Authenticate: Bearer
+  resource_metadata=…`, and `GET /v1/whoami` reports the caller's identity.
+  Commits written with a named identity record its actor; a body actor that
+  names someone else is refused with 403 `ACTOR_MISMATCH`. Bolt and SQL accept
+  the same credentials. The shared `CORROBORE_HTTP_AUTH_TOKEN` is unchanged
+  and is no longer required when named tokens or OAuth are configured.
+  `ServerConfig` gains an `identity` field, and `AppState` gains
+  `authenticator` and `main_commit_actor`.
+
 ### Removed
 
 - **Breaking:** the enterprise edition and its license gate leave Corrobore,

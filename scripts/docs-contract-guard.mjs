@@ -62,7 +62,7 @@ function extractPathsFromOpenApi(source) {
       continue;
     }
 
-    const match = line.match(/^  (\/[A-Za-z0-9_\-{}\/*]+):\s*$/);
+    const match = line.match(/^  (\/[A-Za-z0-9_.\-{}\/*]+):\s*$/);
     if (match) {
       paths.add(match[1]);
     }
@@ -110,7 +110,7 @@ function findDuplicateOpenApiPaths(source) {
 
 function extractRoutesFromHttpGuide(source) {
   const routes = new Set();
-  for (const match of source.matchAll(/## `((?:GET|POST|PUT|PATCH|DELETE)\s+\/[A-Za-z0-9_\-{}\/*]+)`/g)) {
+  for (const match of source.matchAll(/## `((?:GET|POST|PUT|PATCH|DELETE)\s+\/[A-Za-z0-9_.\-{}\/*]+)`/g)) {
     const [method, route] = match[1].split(/\s+/);
     if (method && route) {
       routes.add(route);
@@ -118,7 +118,7 @@ function extractRoutesFromHttpGuide(source) {
   }
 
   // Explorer read API section uses subheadings under one parent section.
-  for (const match of source.matchAll(/### `((?:GET|POST|PUT|PATCH|DELETE)\s+\/[A-Za-z0-9_\-{}\/*]+)`/g)) {
+  for (const match of source.matchAll(/### `((?:GET|POST|PUT|PATCH|DELETE)\s+\/[A-Za-z0-9_.\-{}\/*]+)`/g)) {
     const [method, route] = match[1].split(/\s+/);
     if (method && route) {
       routes.add(route);
