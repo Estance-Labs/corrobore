@@ -42,6 +42,14 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   meanwhile answers `409 GRAPH_COMMIT_PRECONDITION_FAILED`. Every writer
   allocates graph ids above the highest id published on any branch.
 
+- **Graph diff, merge base and change feed (#320).** `GET /v1/graph/diff`
+  lists added, changed and removed records between two commits or branch
+  heads, with totals, cursor paging and, on request, both versions and their
+  property changes. `GET /v1/graph/merge-base` returns the best common
+  ancestor. `GET /v1/graph/changes` is an at-least-once cursor feed of the
+  commits published on a branch; a cursor no longer retained answers
+  `410 CHANGE_FEED_GAP`.
+
 ### Removed
 
 - **Breaking:** the enterprise edition and its license gate leave Corrobore,

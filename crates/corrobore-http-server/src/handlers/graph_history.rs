@@ -102,6 +102,13 @@ pub(crate) fn map_history_error(error: GraphStorageError) -> ApiError {
                 "branch {branch} moved from {expected} to {actual}; read the new head and retry"
             ),
         },
+        GraphStorageError::ChangeFeedGap { cursor } => ApiError {
+            status: StatusCode::GONE,
+            code: "CHANGE_FEED_GAP",
+            message: format!(
+                "change feed cursor {cursor} is no longer retained; read the branch at a commit and resume from its head"
+            ),
+        },
         GraphStorageError::InvalidGraphBranchName { branch, reason } => ApiError::bad_request(
             "INVALID_BRANCH_NAME",
             format!("branch name {branch:?} is invalid: {reason}"),

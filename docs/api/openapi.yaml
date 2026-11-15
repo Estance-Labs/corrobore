@@ -2871,6 +2871,74 @@ paths:
             application/json:
               schema: {type: object}
 
+  /v1/graph/diff:
+    get:
+      operationId: diffGraphCommits
+      summary: List records that differ between two commits or branch heads
+      tags: [GraphHistory]
+      parameters:
+        - {name: from, in: query, required: true, description: Commit id or branch name, schema: {type: string}}
+        - {name: to, in: query, required: true, description: Commit id or branch name, schema: {type: string}}
+        - {name: kind, in: query, schema: {type: string, enum: [node, relationship]}}
+        - {name: cursor, in: query, description: 'node:<id> or relationship:<id> from the previous page', schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 2000, default: 200}}
+        - {name: include_values, in: query, schema: {type: boolean, default: false}}
+      responses:
+        '200':
+          description: Totals and one page of added, changed and removed records
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/graph/merge-base:
+    get:
+      operationId: getGraphMergeBase
+      summary: Best common ancestor of two commits or branch heads
+      tags: [GraphHistory]
+      parameters:
+        - {name: a, in: query, required: true, schema: {type: string}}
+        - {name: b, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Resolved commits and their merge base, or null
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/graph/changes:
+    get:
+      operationId: listGraphChanges
+      summary: Commits published on a branch after a cursor, oldest first
+      tags: [GraphHistory]
+      parameters:
+        - {name: branch, in: query, schema: {type: string, default: main}}
+        - {name: after, in: query, description: Last commit already processed, schema: {type: string, pattern: '^gc[0-9a-f]{40}$'}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 500, default: 50}}
+      responses:
+        '200':
+          description: Commits with their changes, the next cursor and has_more
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: The cursor is not on the branch's first-parent history
+          content:
+            application/json:
+              schema: {type: object}
+        '410':
+          description: CHANGE_FEED_GAP when the cursor commit is no longer retained
+          content:
+            application/json:
+              schema: {type: object}
+
   /v1/graph/records:
     get:
       operationId: listGraphRecords

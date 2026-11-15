@@ -384,6 +384,13 @@ pub enum GraphStorageError {
         actual: String,
     },
 
+    /// A change feed cursor names a commit the history no longer retains.
+    #[error("change feed cursor {cursor} is no longer retained; restart from a baseline")]
+    ChangeFeedGap {
+        /// Unretained cursor commit.
+        cursor: String,
+    },
+
     /// A branch name does not follow the naming rules.
     #[error("invalid graph branch name {branch:?}: {reason}")]
     InvalidGraphBranchName {

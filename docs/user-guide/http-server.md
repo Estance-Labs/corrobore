@@ -1130,6 +1130,35 @@ not contain is refused with `409 GRAPH_BRANCH_CONFLICT` unless `force=true`.
 `main` cannot be deleted. Commits of a deleted branch stay retained until
 cleanup.
 
+### `GET /v1/graph/diff`
+
+Lists the records that differ between `from` and `to`, each a commit id or a
+branch name. A record is `added` when it is not visible at `from` and visible
+at `to`, `removed` in the opposite case (a tombstone counts as not visible),
+and `changed` when both versions differ. `totals` counts the whole diff;
+`entries` is one page in (kind, record id) order, filtered by `kind`, with
+`limit` 1-2000 (default 200) and a `cursor` of the form `node:<id>` or
+`relationship:<id>`. With `include_values=true` each entry also carries
+`before` and `after` records, `property_changes` (`key`, `before`, `after`)
+and `field_changes` (`labels`, `status`, `confidence`).
+
+### `GET /v1/graph/merge-base`
+
+Returns the best common ancestor of `a` and `b` (commit ids or branch names):
+the shared ancestor with the highest generation, or `null`.
+
+### `GET /v1/graph/changes`
+
+A change feed for consumers that follow a branch. It returns the commits
+published after `after` along the branch's first-parent history, oldest first,
+each with its changes, plus `next_cursor` (the last commit returned, or the
+cursor itself when nothing is new) and `has_more`. Without `after` the feed
+starts at the genesis commit. Delivery is at least once: store the cursor after
+processing a page. A cursor the history no longer retains returns
+`410 CHANGE_FEED_GAP`; read the branch at a commit and resume from that
+commit. A retained commit that is not on the branch returns
+`409 GRAPH_BRANCH_CONFLICT`.
+
 ### `GET /v1/graph/records`
 
 Pages the records visible at a commit in record-id order. The read target is
