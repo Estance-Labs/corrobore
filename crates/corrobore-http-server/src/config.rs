@@ -125,6 +125,9 @@ pub struct ServerConfig {
     pub content: ContentStoreConfig,
     /// Which embedding provider turns text into vectors, if any.
     pub embedding: EmbeddingConfig,
+    /// Exact browser origins allowed to call the server (CORS); empty
+    /// disables CORS (issue #359).
+    pub cors_allowed_origins: Vec<String>,
 }
 
 /// Which embedding provider the server uses.
@@ -353,6 +356,7 @@ impl fmt::Debug for ServerConfig {
             )
             .field("content", &self.content)
             .field("embedding", &self.embedding)
+            .field("cors_allowed_origins", &self.cors_allowed_origins)
             .finish()
     }
 }
@@ -889,6 +893,7 @@ impl ServerConfig {
 
         let content = Self::parse_content_store(vars)?;
         let embedding = Self::parse_embedding(vars)?;
+        let cors_allowed_origins = Self::parse_cors_origins(vars)?;
 
         reject_removed_license_variables(vars)?;
 
@@ -939,7 +944,36 @@ impl ServerConfig {
             domain_provider_manifest_file,
             content,
             embedding,
+            cors_allowed_origins,
         })
+    }
+
+    /// Exact origins (`scheme://host[:port]`); `*`, paths, queries and
+    /// credentials are refused so a bearer-token API never answers any origin.
+    fn parse_cors_origins(vars: &HashMap<String, String>) -> Result<Vec<String>, ConfigError> {
+        let Some(raw) = vars.get("CORROBORE_HTTP_CORS_ALLOWED_ORIGINS") else {
+            return Ok(Vec::new());
+        };
+        let mut origins = Vec::new();
+        for candidate in raw
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let invalid = || ConfigError::InvalidEnv {
+                name: "CORROBORE_HTTP_CORS_ALLOWED_ORIGINS",
+                value: format!("{candidate} is not an exact origin such as https://viewer.example"),
+            };
+            let parsed = url::Url::parse(candidate).map_err(|_| invalid())?;
+            let origin = parsed.origin().ascii_serialization();
+            if !matches!(parsed.scheme(), "http" | "https") || origin != candidate {
+                return Err(invalid());
+            }
+            if !origins.contains(&origin) {
+                origins.push(origin);
+            }
+        }
+        Ok(origins)
     }
 
     fn parse_embedding(vars: &HashMap<String, String>) -> Result<EmbeddingConfig, ConfigError> {

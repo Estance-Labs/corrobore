@@ -209,6 +209,7 @@ remain environment-only:
 | `CORROBORE_OPENCTI_ELASTIC_FREE` | `false` | Require final operation without the reference search provider. |
 | `CORROBORE_OPENCTI_RATE_LIMIT_PER_SECOND` | `200` | Sustained rate reserved for authenticated OpenCTI provider traffic. |
 | `CORROBORE_OPENCTI_RATE_LIMIT_BURST` | `1000` | Burst allowance reserved for authenticated OpenCTI provider traffic. |
+| `CORROBORE_HTTP_CORS_ALLOWED_ORIGINS` | unset | Exact browser origins allowed to call the server (CORS), comma-separated, for a viewer served from another origin. `*` is refused; unset sends no CORS headers. |
 | `CORROBORE_HTTP_CONTENT_STORE_URL` | unset | Object store holding offloaded content (`s3://bucket/prefix`, `file:///path` or `memory://`). Unset, persistent servers use `<storage>/content` and ephemeral servers keep content in memory. See [Content plane](http-server.md#content-plane). |
 | `CORROBORE_HTTP_CONTENT_INLINE_MAX_BYTES` | `16384` | Text and JSON content up to this size stays inline in the returned handle; larger or binary content is offloaded. |
 | `CORROBORE_HTTP_CONTENT_MAX_BYTES` | `67108864` | Largest body `POST /v1/content` accepts (64 MiB). |
