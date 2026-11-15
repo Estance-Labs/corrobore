@@ -179,6 +179,11 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   `Accept-Ranges`, and credentials are never allowed. `*` and origins with a
   path are refused; unset keeps sending no CORS headers.
 
+- **Explain from the validate route (#360).** `POST /v1/cypher/validate`
+  returns the logical plan of a query that parses: operators in execution
+  order, the query kind, and the pattern bindings with their element and
+  whether they are projected. Validation stays side-effect free.
+
 - **Approximate vector search with HNSW (#342).** `HnswVectorIndex` implements
   `VectorIndex` with a deterministic Hierarchical Navigable Small World graph:
   layers are seeded from the record id, removals are tombstoned and the graph

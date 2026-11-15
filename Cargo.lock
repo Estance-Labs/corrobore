@@ -777,6 +777,7 @@ dependencies = [
  "corrobore-engine",
  "corrobore-nlq",
  "cypher-parser",
+ "cypher-planner",
  "domain-provider-abi",
  "dotenvy",
  "graph-core",
