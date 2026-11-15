@@ -156,6 +156,15 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   head, and `GET /v1/graph/reviews` lists them, marking those on the current
   head; reviews live in the append-only, checksummed `history/reviews.log`.
 
+- **Batch record edits (#352).** `POST /v1/graph/edits` applies
+  `set_properties`, `create_node` and `delete_node` edits to the head of a
+  branch and publishes them as one commit, through the canonical WAL on `main`
+  and branch payloads elsewhere, guarded by `expected_head`. The batch is
+  validated in full before anything is written; deleting a node that still has
+  live relationships is refused (`409 GRAPH_EDIT_BLOCKED`). `NodePatch` gains
+  `remove_property`, so a patch can drop keys while keeping the node's other
+  fields and its version history.
+
 - **Approximate vector search with HNSW (#342).** `HnswVectorIndex` implements
   `VectorIndex` with a deterministic Hierarchical Navigable Small World graph:
   layers are seeded from the record id, removals are tombstoned and the graph

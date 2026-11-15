@@ -1324,6 +1324,39 @@ endpoint is deleted). `expected_target_head` refuses the merge with
 `409 GRAPH_COMMIT_PRECONDITION_FAILED` when the target moved after the
 preview.
 
+### `POST /v1/graph/edits`
+
+Applies a batch of record edits to the head of a branch and publishes them as
+**one** commit: through the canonical WAL on `main` (indexed like any other
+write), through branch payloads elsewhere.
+
+```json
+{
+  "branch": "main",
+  "expected_head": "gc…",
+  "message": "tidy indicators",
+  "edits": [
+    { "op": "set_properties", "node_id": "node--…", "set": { "name": "x", "score": 0.5 }, "remove": ["alias"] },
+    { "op": "create_node", "labels": ["Indicator"], "properties": { "name": "y" } },
+    { "op": "delete_node", "node_id": "node--…" }
+  ]
+}
+```
+
+```json
+{ "ok": true, "result": { "commit_id": "gc…", "branch": "main", "created": ["node--…"], "changed": 3 } }
+```
+
+`branch` defaults to `main` and `actor` to `CORROBORE_MEMORY_ACTOR_ID`. A batch
+holds 1 to 500 edits; several `set_properties` of one node merge into one new
+version. Values are scalars or lists of one scalar type (integers and floats
+mix into a float list); objects are refused. The whole batch is validated
+before anything is written: `400 INVALID_EDIT` (unknown op, blank key, invalid
+labels, unsupported value, a node both edited and deleted),
+`404 GRAPH_NODE_NOT_FOUND`, `409 GRAPH_EDIT_BLOCKED` (deleting a node with live
+relationships), and `409 GRAPH_COMMIT_PRECONDITION_FAILED` when
+`expected_head` is stale.
+
 ### `POST /v1/graph/revert`
 
 Puts one record of a branch back to its version at the branch's merge base

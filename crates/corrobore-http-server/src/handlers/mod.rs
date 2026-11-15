@@ -30,6 +30,7 @@ pub mod explorer;
 pub mod export;
 pub mod graph_branches;
 pub mod graph_diff;
+pub mod graph_edits;
 pub mod graph_history;
 pub mod graph_merge;
 pub mod graph_records;
