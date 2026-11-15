@@ -546,6 +546,19 @@ struct StatusStorageCompatibility {
     active_record_format: Option<String>,
 }
 
+/// Run an offline storage command on the blocking pool (issue #376). These
+/// commands block on files and on object stores that drive their own runtime,
+/// which must neither start nor be dropped on an async worker.
+async fn offline(work: impl FnOnce() -> ExitCode + Send + 'static) -> ExitCode {
+    match tokio::task::spawn_blocking(work).await {
+        Ok(code) => code,
+        Err(error) => {
+            eprintln!("database operation failed: operation=offline_command error={error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -593,37 +606,37 @@ async fn main() -> ExitCode {
         },
         Command::Server(ServerArgs {
             command: ServerCommand::Snapshot(args),
-        }) => run_snapshot(args),
+        }) => offline(move || run_snapshot(args)).await,
         Command::Server(ServerArgs {
             command: ServerCommand::ValidateSnapshot(args),
-        }) => run_snapshot_validation(args),
+        }) => offline(move || run_snapshot_validation(args)).await,
         Command::Server(ServerArgs {
             command: ServerCommand::ExportSnapshotS3(args),
-        }) => run_snapshot_s3_export(args),
+        }) => offline(move || run_snapshot_s3_export(args)).await,
         Command::Server(ServerArgs {
             command: ServerCommand::Restore(args),
-        }) => run_restore(args),
+        }) => offline(move || run_restore(args)).await,
         Command::Server(ServerArgs {
             command: ServerCommand::Migrate(args),
-        }) => run_migration(args),
+        }) => offline(move || run_migration(args)).await,
         Command::Server(ServerArgs {
             command: ServerCommand::Rollback(args),
-        }) => run_rollback(args),
+        }) => offline(move || run_rollback(args)).await,
         Command::Server(ServerArgs {
             command: ServerCommand::RebuildIndexes(args),
-        }) => run_index_rebuild(args),
+        }) => offline(move || run_index_rebuild(args)).await,
         Command::Server(ServerArgs {
             command: ServerCommand::CancelRebuild(args),
-        }) => run_index_rebuild_cancellation(args),
+        }) => offline(move || run_index_rebuild_cancellation(args)).await,
         Command::Server(ServerArgs {
             command: ServerCommand::Cleanup(args),
-        }) => run_history_cleanup(args),
+        }) => offline(move || run_history_cleanup(args)).await,
         Command::Server(ServerArgs {
             command: ServerCommand::ImportSnapshot(args),
-        }) => run_snapshot_import(args),
+        }) => offline(move || run_snapshot_import(args)).await,
         Command::Server(ServerArgs {
             command: ServerCommand::ExportParquet(args),
-        }) => run_parquet_export(args),
+        }) => offline(move || run_parquet_export(args)).await,
     }
 }
 
