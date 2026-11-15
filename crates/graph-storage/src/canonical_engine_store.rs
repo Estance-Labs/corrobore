@@ -67,6 +67,7 @@ mod diff;
 mod merge;
 mod retention;
 mod schema;
+mod vector_search;
 
 pub use branches::GraphBranchStatus;
 pub use diff::{
@@ -80,6 +81,10 @@ pub use retention::{HistoryCleanupReport, HistoryCleanupRequest};
 pub use schema::{
     GraphSchema, SchemaEndpoint, SchemaLabel, SchemaProperty, SchemaRelationshipType,
     property_value_type,
+};
+pub use vector_search::{
+    DEFAULT_EMBEDDING_PROPERTY, ExactVectorIndex, GraphSearchHit, HybridSearchRequest, RRF_K,
+    VectorIndex, VectorMetric, reciprocal_rank_fusion,
 };
 
 pub use commit_reads::{
@@ -383,6 +388,7 @@ pub struct CanonicalEngineStore {
     history: GraphHistory,
     history_needs_reconcile: bool,
     schema_registry: Option<schema::SchemaRegistry>,
+    vector_cache: Option<vector_search::VectorIndexCache>,
 }
 
 /// Caller context recorded on the graph commit of a transition.
@@ -483,6 +489,7 @@ impl CanonicalEngineStore {
             history,
             history_needs_reconcile: true,
             schema_registry: None,
+            vector_cache: None,
         };
         store.migrate_legacy_snapshot_if_needed()?;
         store.refresh_index_stats();
