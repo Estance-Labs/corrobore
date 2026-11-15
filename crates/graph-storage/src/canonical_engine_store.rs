@@ -760,6 +760,10 @@ impl CanonicalEngineStore {
             });
         }
         let full_text_index = self.full_text_index()?;
+        // Remember the generation the delta must extend, then mark the index
+        // invalid for the duration of the transaction: a crash anywhere before
+        // the delta is applied leaves the marker, and the next search rebuilds.
+        let full_text_generation = full_text_index.ready_generation();
         full_text_index.invalidate().map_err(full_text_error)?;
         if evidence_changed {
             stage_evidence_sidecar(&self.root, current.evidence_store())?;
@@ -818,6 +822,17 @@ impl CanonicalEngineStore {
         self.stats.resident_warm_adjacency_entries = 0;
         self.refresh_index_stats();
         if outcome.applied
+            && let Some(generation) = full_text_generation.as_deref()
+        {
+            apply_full_text_delta(
+                &full_text_index,
+                generation,
+                previous,
+                &changed_nodes,
+                &changed_relationships,
+            );
+        }
+        if outcome.applied
             && let Some(sequence) = outcome.mutation_sequence_number
         {
             self.publish_main_commit(
@@ -832,9 +847,10 @@ impl CanonicalEngineStore {
                 },
             );
         }
-        // Full-text search is a rebuildable projection. The durable invalidation
-        // marker above prevents stale reads; `search_full_text` rebuilds the
-        // complete canonical generation before serving the next query.
+        // Full-text search is a rebuildable projection. When the delta could
+        // not be applied the durable invalidation marker above stays in place
+        // and `search_full_text` rebuilds the complete canonical generation
+        // before serving the next query.
         Ok(outcome)
     }
 
@@ -2553,6 +2569,76 @@ fn load_legacy_engine_graph_snapshot(path: &Path) -> GraphStorageResult<Graph> {
             reason: error.to_string(),
         }
     })
+}
+
+/// Extend the published full-text generation with the records one
+/// transaction changed. Failures keep the invalidation marker, so the next
+/// search rebuilds instead of serving a partial update.
+fn apply_full_text_delta(
+    index: &FullTextIndex,
+    generation: &str,
+    previous: &Graph,
+    nodes: &[Node],
+    relationships: &[Relationship],
+) {
+    // Documents are keyed by their canonical id (the OpenCTI id when present),
+    // so both the previous and the new key of every changed record go away
+    // before the new versions are added.
+    let build = || -> Result<(Vec<FullTextDocument>, Vec<String>), String> {
+        let mut upserts = Vec::new();
+        let mut deletes = Vec::new();
+        for node in nodes {
+            if let Some(old) = previous
+                .get_node(node.id())
+                .map_err(|error| error.to_string())?
+            {
+                deletes.push(
+                    document_from_node(&old)
+                        .map_err(|error| error.to_string())?
+                        .id,
+                );
+            }
+            let document = document_from_node(node).map_err(|error| error.to_string())?;
+            if node.status() == RecordStatus::Tombstoned {
+                deletes.push(document.id);
+            } else {
+                upserts.push(document);
+            }
+        }
+        for relationship in relationships {
+            if let Some(old) = previous
+                .get_relationship(relationship.id())
+                .map_err(|error| error.to_string())?
+            {
+                deletes.push(
+                    document_from_relationship(&old)
+                        .map_err(|error| error.to_string())?
+                        .id,
+                );
+            }
+            let document =
+                document_from_relationship(relationship).map_err(|error| error.to_string())?;
+            if relationship.status() == RecordStatus::Tombstoned {
+                deletes.push(document.id);
+            } else {
+                upserts.push(document);
+            }
+        }
+        deletes.sort();
+        deletes.dedup();
+        Ok((upserts, deletes))
+    };
+    let result = build().and_then(|(upserts, deletes)| {
+        index
+            .apply_delta(generation, &upserts, &deletes)
+            .map_err(|error| error.to_string())
+    });
+    if let Err(error) = result {
+        tracing::warn!(
+            error = %error,
+            "incremental full-text update failed; the next search rebuilds the index"
+        );
+    }
 }
 
 fn node_commit_change(node: &Node, storage_ref: StorageRef) -> CommitRecordChange {
