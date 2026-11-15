@@ -96,6 +96,7 @@ pub use vector_search::{
 
 pub use commit_reads::{
     CommitRecordPage, CommitWindow, NeighbourDirection, NeighbourGroup, NodeNeighbourhood,
+    RelatedDirection, RelatedRecordFilter,
 };
 
 const LEGACY_SNAPSHOT: &str = "engine-graph.json";

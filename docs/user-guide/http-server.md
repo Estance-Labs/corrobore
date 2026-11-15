@@ -1528,6 +1528,19 @@ holds `commit_id`, `kind`, `total` (records matching at that commit), `nodes`
 or `relationships`, and `next_cursor`. Pages read the same commit however many
 writes land in between. Properties are plain JSON values.
 
+Nodes can also be filtered across their relationships: `related_type` keeps
+nodes with a live relationship of that type, `related_direction` (`out`, `in`
+or `any`, default `any`) says which end the listed node is, and
+`related_label` requires the node at the other end to carry that label. The
+neighbour must be live at the commit, and `total` and paging count only the
+matching nodes. `related_*` on `kind=relationship` or an unknown direction
+answers `400 INVALID_RECORD_FILTER`.
+
+```bash
+curl -sS -H "Authorization: Bearer $TOKEN" \
+  'http://127.0.0.1:8080/v1/graph/records?label=Indicator&related_type=INDICATES&related_direction=out&related_label=Malware'
+```
+
 ### `GET /v1/graph/nodes/{node_id}`
 
 Returns a node at a commit with its relationship groups. Each group has

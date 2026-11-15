@@ -57,6 +57,12 @@ pub struct RecordListQuery {
     pub limit: Option<usize>,
     /// Include tombstoned versions. Defaults to false.
     pub include_deleted: Option<bool>,
+    /// Keep nodes with a live relationship of this type (issue #361).
+    pub related_type: Option<String>,
+    /// `out`, `in` or `any` (default) for the related filter.
+    pub related_direction: Option<String>,
+    /// Keep nodes whose related neighbour carries this label.
+    pub related_label: Option<String>,
 }
 
 /// One node at a commit.
@@ -212,12 +218,55 @@ fn parse_kind(kind: Option<&str>) -> Result<HistoryRecordKind, ApiError> {
 }
 
 /// `GET /v1/graph/records`: one keyset page of records at a commit.
+/// The related-record filter of a listing, if any part of it is given.
+fn related_filter(
+    query: &RecordListQuery,
+    kind: graph_storage::HistoryRecordKind,
+) -> Result<Option<graph_storage::RelatedRecordFilter>, ApiError> {
+    let non_blank = |value: &Option<String>| {
+        value
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    };
+    let relationship_type = non_blank(&query.related_type);
+    let neighbour_label = non_blank(&query.related_label);
+    let direction = non_blank(&query.related_direction);
+    if relationship_type.is_none() && neighbour_label.is_none() && direction.is_none() {
+        return Ok(None);
+    }
+    if kind != graph_storage::HistoryRecordKind::Node {
+        return Err(ApiError::bad_request(
+            "INVALID_RECORD_FILTER",
+            "related_* filters apply to kind=node only",
+        ));
+    }
+    let direction = match direction.as_deref() {
+        None | Some("any") => graph_storage::RelatedDirection::Any,
+        Some("out") => graph_storage::RelatedDirection::Out,
+        Some("in") => graph_storage::RelatedDirection::In,
+        Some(other) => {
+            return Err(ApiError::bad_request(
+                "INVALID_RECORD_FILTER",
+                format!("related_direction must be out, in or any, not {other:?}"),
+            ));
+        }
+    };
+    Ok(Some(graph_storage::RelatedRecordFilter {
+        relationship_type,
+        direction,
+        neighbour_label,
+    }))
+}
+
 pub async fn list_records(
     State(state): State<AppState>,
     Query(query): Query<RecordListQuery>,
 ) -> Result<Json<Envelope<RecordListResult>>, ApiError> {
     let kind = parse_kind(query.kind.as_deref())?;
     let commit = query.commit.as_deref().map(parse_commit_id).transpose()?;
+    let related = related_filter(&query, kind)?;
     let limit = query
         .limit
         .unwrap_or(DEFAULT_RECORD_PAGE)
@@ -227,13 +276,14 @@ pub async fn list_records(
             .resolve_graph_ref(query.branch.as_deref(), commit.as_ref())
             .map_err(map_history_error)?;
         let page = store
-            .list_commit_records(
+            .list_commit_records_related(
                 &commit_id,
                 kind,
                 query.label.as_deref(),
                 query.cursor.as_deref(),
                 limit,
                 query.include_deleted.unwrap_or(false),
+                related.as_ref(),
             )
             .map_err(map_history_error)?;
         Ok(ok(RecordListResult {

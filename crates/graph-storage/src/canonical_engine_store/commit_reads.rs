@@ -46,6 +46,73 @@ pub enum NeighbourDirection {
     Incoming,
 }
 
+/// Direction of the relationship a related-record filter follows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RelatedDirection {
+    /// The listed node is the source.
+    Out,
+    /// The listed node is the target.
+    In,
+    /// Either end.
+    #[default]
+    Any,
+}
+
+/// Keep nodes with at least one live relationship matching every given part,
+/// whose other end is a live node (issue #361).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RelatedRecordFilter {
+    /// Relationship type; any type when absent.
+    pub relationship_type: Option<String>,
+    /// Which end the listed node is.
+    pub direction: RelatedDirection,
+    /// Label of the node at the other end; any label when absent.
+    pub neighbour_label: Option<String>,
+}
+
+/// Node ids of `view` that satisfy `filter`.
+fn related_node_ids(view: &CommitView, filter: &RelatedRecordFilter) -> HashSet<String> {
+    let neighbour_ok = |id: &str| {
+        view.nodes.get(id).is_some_and(|entry| {
+            !entry.deleted
+                && filter
+                    .neighbour_label
+                    .as_deref()
+                    .is_none_or(|label| entry.labels.iter().any(|value| value == label))
+        })
+    };
+    let mut matched = HashSet::new();
+    for entry in view.relationships.values() {
+        if entry.deleted
+            || filter
+                .relationship_type
+                .as_deref()
+                .is_some_and(|kind| !entry.labels.iter().any(|value| value == kind))
+        {
+            continue;
+        }
+        let (Some(source), Some(target)) = (entry.source.as_deref(), entry.target.as_deref())
+        else {
+            continue;
+        };
+        if matches!(
+            filter.direction,
+            RelatedDirection::Out | RelatedDirection::Any
+        ) && neighbour_ok(target)
+        {
+            matched.insert(source.to_owned());
+        }
+        if matches!(
+            filter.direction,
+            RelatedDirection::In | RelatedDirection::Any
+        ) && neighbour_ok(source)
+        {
+            matched.insert(target.to_owned());
+        }
+    }
+    matched
+}
+
 /// One page of records of a commit view, in record-id order.
 #[derive(Clone, Debug)]
 pub struct CommitRecordPage {
@@ -299,14 +366,54 @@ impl CanonicalEngineStore {
         limit: usize,
         include_deleted: bool,
     ) -> GraphStorageResult<CommitRecordPage> {
+        self.list_commit_records_related(
+            commit_id,
+            kind,
+            label,
+            cursor,
+            limit,
+            include_deleted,
+            None,
+        )
+    }
+
+    /// [`Self::list_commit_records`] restricted to nodes related as `related`
+    /// says (issue #361). The filter applies to nodes only.
+    ///
+    /// # Errors
+    ///
+    /// Returns an operation error when `related` is given for relationships,
+    /// and the errors of [`Self::list_commit_records`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn list_commit_records_related(
+        &mut self,
+        commit_id: &GraphCommitId,
+        kind: HistoryRecordKind,
+        label: Option<&str>,
+        cursor: Option<&str>,
+        limit: usize,
+        include_deleted: bool,
+        related: Option<&RelatedRecordFilter>,
+    ) -> GraphStorageResult<CommitRecordPage> {
+        if related.is_some() && kind != HistoryRecordKind::Node {
+            return Err(GraphStorageError::OperationFailed {
+                operation: "list_commit_records",
+                message: "related filters apply to nodes only".to_owned(),
+            });
+        }
         let view = self.commit_view(commit_id)?;
         let limit = limit.max(1);
-        let matches = |entry: &CommitViewEntry| {
+        let related_ids = related.map(|filter| related_node_ids(&view, filter));
+        let matches = |id: &String, entry: &CommitViewEntry| {
             (include_deleted || !entry.deleted)
                 && label.is_none_or(|label| entry.labels.iter().any(|value| value == label))
+                && related_ids.as_ref().is_none_or(|ids| ids.contains(id))
         };
         let entries = view.entries(kind);
-        let total = entries.values().filter(|entry| matches(entry)).count();
+        let total = entries
+            .iter()
+            .filter(|(id, entry)| matches(id, entry))
+            .count();
         let range = match cursor {
             Some(cursor) => entries.range::<str, _>((
                 std::ops::Bound::Excluded(cursor),
@@ -317,7 +424,7 @@ impl CanonicalEngineStore {
         let mut ids = Vec::with_capacity(limit);
         let mut next_cursor = None;
         for (id, entry) in range {
-            if !matches(entry) {
+            if !matches(id, entry) {
                 continue;
             }
             if ids.len() == limit {
