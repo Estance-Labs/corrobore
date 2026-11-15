@@ -125,6 +125,30 @@ pub async fn create_branch(
         .as_deref()
         .map(parse_commit_id)
         .transpose()?;
+    let source = match (request.from_branch.as_deref(), from_commit.as_ref()) {
+        (Some(branch), _) => Some(branch.to_owned()),
+        (None, Some(commit)) => {
+            let commit = commit.clone();
+            with_store(&state, move |store| {
+                store
+                    .graph_commit(&commit)
+                    .map(|commit| commit.branch.clone())
+                    .map_err(map_history_error)
+            })
+            .await
+            .ok()
+        }
+        (None, None) => Some(graph_storage::MAIN_BRANCH.to_owned()),
+    };
+    crate::policy_gate::authorize(
+        &state,
+        identity.as_deref(),
+        &crate::policy::PolicyRequest {
+            action: crate::policy::PolicyAction::BranchCreate,
+            branch: source,
+            target_branch: Some(request.name.trim().to_owned()),
+        },
+    )?;
     with_store(&state, move |store| {
         let info = store
             .create_graph_branch(

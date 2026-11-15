@@ -230,6 +230,20 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   `ServerConfig` gains an `identity` field, and `AppState` gains
   `authenticator` and `main_commit_actor`.
 
+- **Graph policy (#384).** `CORROBORE_HTTP_POLICY_FILE` installs a YAML policy
+  of groups, protected branches and allow rules (`read`, `export`, `change`,
+  `review`, `branch_create`, `branch_delete`, `branch_merge`, `maintain`,
+  `reclaim`, `invoke_query`, `admin`, with `branch_scope` or
+  `target_branch_scope` of `any`, `protected` or `unprotected`). It compiles
+  to Cedar (`cedar-policy` 4) and is validated against a schema at startup.
+  Every protected route maps to an action and the branch it touches; a route
+  left out of that table is denied under a policy. Denials answer 403
+  `POLICY_DENIED`. Admin routes keep the admin token and also accept an
+  identity the policy allows. Under a policy the shared token needs
+  `CORROBORE_HTTP_POLICY_SHARED_TOKEN_ACTOR`. `GET /v1/graph/access` lists what
+  the caller may do, and `corrobore policy validate | test | explain` checks a
+  policy offline. Without a policy file nothing changes.
+
 ### Removed
 
 - **Breaking:** the enterprise edition and its license gate leave Corrobore,

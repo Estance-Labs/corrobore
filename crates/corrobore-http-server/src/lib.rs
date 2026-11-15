@@ -39,6 +39,8 @@ pub mod opencti_shadow;
 pub mod opencti_sync;
 pub mod opencti_write;
 mod pinned_graph;
+pub mod policy;
+pub mod policy_gate;
 pub mod s3_snapshot_store;
 pub mod security;
 pub mod session_runtime;

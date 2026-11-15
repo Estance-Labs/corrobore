@@ -47,10 +47,61 @@ struct Cli {
     command: Command,
 }
 
+// Parsed once per process: the size difference between subcommands costs
+// nothing worth an indirection through every `Server` match arm.
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 enum Command {
     /// Operate the standalone server.
     Server(ServerArgs),
+    /// Check, test and explain a graph policy file.
+    Policy(PolicyArgs),
+}
+
+#[derive(Args)]
+struct PolicyArgs {
+    #[command(subcommand)]
+    command: PolicyCommand,
+}
+
+#[derive(Subcommand)]
+enum PolicyCommand {
+    /// Compile a policy file and report whether it is valid.
+    Validate(PolicyFileArgs),
+    /// Run allow/deny cases against a policy file.
+    Test(PolicyTestArgs),
+    /// Decide one request and name the rules that allow it.
+    Explain(PolicyExplainArgs),
+}
+
+#[derive(Args)]
+struct PolicyFileArgs {
+    /// The policy file (YAML).
+    #[arg(long)]
+    file: PathBuf,
+}
+
+#[derive(Args)]
+struct PolicyTestArgs {
+    #[command(flatten)]
+    policy: PolicyFileArgs,
+    /// The test cases (YAML): `version: 1` and `cases`.
+    #[arg(long)]
+    tests: PathBuf,
+}
+
+#[derive(Args)]
+struct PolicyExplainArgs {
+    #[command(flatten)]
+    policy: PolicyFileArgs,
+    #[arg(long)]
+    actor: String,
+    #[arg(long)]
+    action: String,
+    #[arg(long)]
+    branch: Option<String>,
+    #[arg(long)]
+    target_branch: Option<String>,
 }
 
 #[derive(Args)]
@@ -564,6 +615,7 @@ async fn main() -> ExitCode {
     let cli = Cli::parse();
 
     match cli.command {
+        Command::Policy(PolicyArgs { command }) => run_policy(command),
         Command::Server(ServerArgs {
             command: ServerCommand::Start(args),
         }) => match load_config(&args) {
@@ -1953,4 +2005,99 @@ async fn start_server(config: OperationalConfig) -> Result<(), Box<dyn std::erro
         .await?;
     }
     Ok(())
+}
+
+fn load_policy(path: &Path) -> Result<corrobore_http_server::policy::PolicyEngine, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    corrobore_http_server::policy::PolicyEngine::from_yaml(&text).map_err(|error| error.to_string())
+}
+
+/// `corrobore policy …`: exit 0 on success, 1 on a failed test or an invalid file.
+fn run_policy(command: PolicyCommand) -> ExitCode {
+    use corrobore_http_server::policy::{PolicyAction, PolicyRequest, PolicyTests};
+    let fail = |message: String| {
+        eprintln!("{message}");
+        ExitCode::FAILURE
+    };
+    match command {
+        PolicyCommand::Validate(args) => match load_policy(&args.file) {
+            Ok(engine) => {
+                let document = engine.document();
+                let rules = document.rules.len();
+                println!(
+                    "policy is valid: {rules} rule{}, {} group{}, {} protected branch{}",
+                    if rules == 1 { "" } else { "s" },
+                    document.groups.len(),
+                    if document.groups.len() == 1 { "" } else { "s" },
+                    document.protected_branches.len(),
+                    if document.protected_branches.len() == 1 {
+                        ""
+                    } else {
+                        "es"
+                    },
+                );
+                ExitCode::SUCCESS
+            }
+            Err(error) => fail(error),
+        },
+        PolicyCommand::Test(args) => {
+            let engine = match load_policy(&args.policy.file) {
+                Ok(engine) => engine,
+                Err(error) => return fail(error),
+            };
+            let tests: PolicyTests = match std::fs::read_to_string(&args.tests)
+                .map_err(|error| error.to_string())
+                .and_then(|text| yaml_serde::from_str(&text).map_err(|error| error.to_string()))
+            {
+                Ok(tests) => tests,
+                Err(error) => {
+                    return fail(format!("cannot read {}: {error}", args.tests.display()));
+                }
+            };
+            match engine.run_tests(&tests) {
+                Ok(failed) if failed.is_empty() => {
+                    println!("{} cases passed", tests.cases.len());
+                    ExitCode::SUCCESS
+                }
+                Ok(failed) => {
+                    for case in &failed {
+                        let expected = match case.expected {
+                            corrobore_http_server::policy::Expectation::Allow => "allow",
+                            corrobore_http_server::policy::Expectation::Deny => "deny",
+                        };
+                        println!("FAIL {}: expected {expected}", case.id);
+                    }
+                    println!("{} of {} cases failed", failed.len(), tests.cases.len());
+                    ExitCode::FAILURE
+                }
+                Err(error) => fail(error.to_string()),
+            }
+        }
+        PolicyCommand::Explain(args) => {
+            let engine = match load_policy(&args.policy.file) {
+                Ok(engine) => engine,
+                Err(error) => return fail(error),
+            };
+            let action: PolicyAction = match args.action.parse() {
+                Ok(action) => action,
+                Err(error) => return fail(format!("{error}")),
+            };
+            let decision = engine.authorize(
+                &args.actor,
+                &PolicyRequest {
+                    action,
+                    branch: args.branch,
+                    target_branch: args.target_branch,
+                },
+            );
+            match serde_json::to_string(&decision) {
+                Ok(json) => {
+                    println!("{json}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => fail(error.to_string()),
+            }
+        }
+    }
 }

@@ -334,6 +334,30 @@ pub(crate) fn require_admin_auth(state: &AppState, headers: &HeaderMap) -> Resul
     Ok(())
 }
 
+/// Admin routes accept the admin token, as before, or, under a policy, any
+/// credential whose actor the policy allows `request` (issue #384).
+pub(crate) async fn require_admin_or_policy(
+    state: &AppState,
+    headers: &HeaderMap,
+    request: crate::policy::PolicyRequest,
+) -> Result<(), ApiError> {
+    let admin = require_admin_auth(state, headers);
+    if admin.is_ok() || state.current_policy().is_none() {
+        return admin;
+    }
+    let Some(credential) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(bearer_credential)
+    else {
+        return admin;
+    };
+    let Ok(identity) = state.authenticator.authenticate(credential).await else {
+        return admin;
+    };
+    crate::policy_gate::authorize(state, Some(&identity), &request)
+}
+
 /// Whether a presented secret equals a configured one, in constant time.
 pub(crate) fn secret_matches(provided: &str, expected: &str) -> bool {
     token_matches(provided, expected)

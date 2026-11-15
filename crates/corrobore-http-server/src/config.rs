@@ -130,6 +130,10 @@ pub struct ServerConfig {
     pub cors_allowed_origins: Vec<String>,
     /// Named static tokens and the OAuth resource server (issue #382).
     pub identity: IdentityConfig,
+    /// Cedar policy file deciding what each actor may do (issue #384).
+    pub policy_file: Option<String>,
+    /// Actor the shared unnamed token stands for under a policy.
+    pub policy_shared_token_actor: Option<String>,
 }
 
 /// Who may call the server besides the single trusted token (issue #382).
@@ -442,6 +446,8 @@ impl fmt::Debug for ServerConfig {
             .field("embedding", &self.embedding)
             .field("cors_allowed_origins", &self.cors_allowed_origins)
             .field("identity", &self.identity)
+            .field("policy_file", &self.policy_file)
+            .field("policy_shared_token_actor", &self.policy_shared_token_actor)
             .finish()
     }
 }
@@ -1028,6 +1034,30 @@ impl ServerConfig {
         let content = Self::parse_content_store(vars)?;
         let embedding = Self::parse_embedding(vars)?;
         let cors_allowed_origins = Self::parse_cors_origins(vars)?;
+        let policy_file = vars
+            .get("CORROBORE_HTTP_POLICY_FILE")
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        let policy_shared_token_actor = vars
+            .get("CORROBORE_HTTP_POLICY_SHARED_TOKEN_ACTOR")
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        if let Some(actor) = policy_shared_token_actor.as_deref()
+            && (!valid_actor_id(actor) || policy_file.is_none())
+        {
+            return Err(ConfigError::InvalidEnv {
+                name: "CORROBORE_HTTP_POLICY_SHARED_TOKEN_ACTOR",
+                value: format!(
+                    "{actor} must be a valid actor id and needs CORROBORE_HTTP_POLICY_FILE"
+                ),
+            });
+        }
+        if policy_file.is_some() && auth_mode == AuthenticationMode::LocalInsecure {
+            return Err(ConfigError::InvalidEnv {
+                name: "CORROBORE_HTTP_POLICY_FILE",
+                value: "a policy needs authenticated actors; local-insecure has none".to_owned(),
+            });
+        }
 
         reject_removed_license_variables(vars)?;
 
@@ -1080,6 +1110,8 @@ impl ServerConfig {
             embedding,
             cors_allowed_origins,
             identity,
+            policy_file,
+            policy_shared_token_actor,
         })
     }
 
