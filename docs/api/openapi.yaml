@@ -3083,6 +3083,80 @@ paths:
             application/json:
               schema: {type: object}
 
+  /v1/content:
+    post:
+      operationId: uploadContent
+      summary: Place content by the storage policy, offloading it unless it stays inline
+      description: >-
+        Text and JSON up to CORROBORE_HTTP_CONTENT_INLINE_MAX_BYTES stay inline in
+        the returned handle and are not retained. Other content is stored once,
+        content-addressed, in the configured content store.
+      tags: [Content]
+      requestBody:
+        required: true
+        content:
+          '*/*':
+            schema: {type: string, format: binary}
+      responses:
+        '201':
+          description: Placement decision and the handle to store on a record
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, placement, policy_version, sha256, byte_length, handle]
+                properties:
+                  ok: {type: boolean}
+                  placement: {type: string, enum: [inline, offloaded]}
+                  policy_version: {type: string}
+                  content_id: {type: string, nullable: true, pattern: '^content--[0-9a-f]{64}$'}
+                  sha256: {type: string}
+                  byte_length: {type: integer, minimum: 1}
+                  media_type: {type: string, nullable: true}
+                  backend: {type: string, nullable: true}
+                  handle: {type: object}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '413':
+          description: The body exceeds CORROBORE_HTTP_CONTENT_MAX_BYTES
+
+  /v1/content/{content_id}:
+    get:
+      operationId: readContent
+      summary: Offloaded content by id, whole or one byte range
+      tags: [Content]
+      parameters:
+        - name: content_id
+          in: path
+          required: true
+          schema: {type: string, pattern: '^content--[0-9a-f]{64}$'}
+        - name: Range
+          in: header
+          required: false
+          description: A single `bytes=start-end`, `bytes=start-` or `bytes=-suffix` range.
+          schema: {type: string}
+      responses:
+        '200':
+          description: The whole content, with its media type and digest ETag
+          content:
+            '*/*':
+              schema: {type: string, format: binary}
+        '206':
+          description: The requested range, with Content-Range
+          content:
+            '*/*':
+              schema: {type: string, format: binary}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '410':
+          description: CONTENT_ERASED
+          content:
+            application/json:
+              schema: {type: object}
+        '416':
+          description: The range lies outside the content; Content-Range gives its length
+
   /v1/graph/search/vector:
     post:
       operationId: vectorSearchGraph
@@ -3262,6 +3336,7 @@ tags:
   - {name: Memory, description: Versioned domain-neutral high-level memory operations}
   - {name: Database Operations, description: Administrative snapshot and derived-index operations}
   - {name: GraphHistory, description: Addressable graph commits, branches, diffs and merges of the persistent store}
+  - {name: Content, description: Evidence content kept apart from the graph (ADR-0021)}
   - {name: Cypher, description: Graph reads and mutations}
   - {name: Seeds, description: Semantic working-set entry points}
   - {name: STIX, description: "Import, validation, and export"}

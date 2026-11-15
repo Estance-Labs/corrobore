@@ -207,9 +207,14 @@ remain environment-only:
 | `CORROBORE_OPENCTI_ELASTIC_FREE` | `false` | Require final operation without the reference search provider. |
 | `CORROBORE_OPENCTI_RATE_LIMIT_PER_SECOND` | `200` | Sustained rate reserved for authenticated OpenCTI provider traffic. |
 | `CORROBORE_OPENCTI_RATE_LIMIT_BURST` | `1000` | Burst allowance reserved for authenticated OpenCTI provider traffic. |
-| `CORROBORE_S3_ACCESS_KEY` | unset | Access-key identifier required by `export-snapshot-s3`. |
-| `CORROBORE_S3_SECRET_KEY` | unset | Secret access key required by `export-snapshot-s3`; inject it through the process environment. |
-| `CORROBORE_S3_SESSION_TOKEN` | unset | Optional temporary-credential session token used by `export-snapshot-s3`. |
+| `CORROBORE_HTTP_CONTENT_STORE_URL` | unset | Object store holding offloaded content (`s3://bucket/prefix`, `file:///path` or `memory://`). Unset, persistent servers use `<storage>/content` and ephemeral servers keep content in memory. See [Content plane](http-server.md#content-plane). |
+| `CORROBORE_HTTP_CONTENT_INLINE_MAX_BYTES` | `16384` | Text and JSON content up to this size stays inline in the returned handle; larger or binary content is offloaded. |
+| `CORROBORE_HTTP_CONTENT_MAX_BYTES` | `67108864` | Largest body `POST /v1/content` accepts (64 MiB). |
+| `CORROBORE_S3_REGION` | unset | Region of an `s3://` content store. |
+| `CORROBORE_S3_ENDPOINT` | unset | S3-compatible endpoint (MinIO) of an `s3://` content store; `http://` endpoints are allowed. |
+| `CORROBORE_S3_ACCESS_KEY` | unset | Access-key identifier required by `export-snapshot-s3`, and used by an `s3://` content store. `CORROBORE_S3_ACCESS_KEY_FILE` reads it from a file. |
+| `CORROBORE_S3_SECRET_KEY` | unset | Secret access key required by `export-snapshot-s3`, and used by an `s3://` content store; inject it through the process environment or `CORROBORE_S3_SECRET_KEY_FILE`. |
+| `CORROBORE_S3_SESSION_TOKEN` | unset | Optional temporary-credential session token used by `export-snapshot-s3` and an `s3://` content store. `CORROBORE_S3_SESSION_TOKEN_FILE` reads it from a file. |
 | `CORROBORE_BUILD_REVISION` | `unknown` at compile time | Build-time source revision embedded by release automation; it is not a runtime override. |
 
 The signed-license variables `CORROBORE_HTTP_LICENSE_PEM`,

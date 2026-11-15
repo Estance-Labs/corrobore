@@ -80,6 +80,7 @@ fn config(web_dir: Option<String>) -> ServerConfig {
         storage_max_warm_adjacency_entries: 65_536,
         domain_provider_dir: None,
         domain_provider_manifest_file: None,
+        content: corrobore_http_server::config::ContentStoreConfig::default(),
     }
 }
 

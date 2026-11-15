@@ -151,6 +151,8 @@ pub enum AppStateInitError {
     OpenCtiWriteStateFailed { reason: String },
     #[error("failed to restore OpenCTI reconciliation state: {reason}")]
     OpenCtiReconciliationStateFailed { reason: String },
+    #[error("failed to open the content store: {reason}")]
+    ContentStoreFailed { reason: String },
 }
 
 #[derive(Clone)]
@@ -175,6 +177,8 @@ pub struct AppState {
     /// Verifiers available to governance workflows, including adapters
     /// registered by loaded domain providers.
     pub verifier_registry: Arc<graph_core::VerifierRegistry>,
+    /// Content plane (ADR-0021): offloaded evidence content, by content id.
+    pub content: Arc<std::sync::RwLock<crate::content_plane::ContentPlane>>,
     pub started_at: Instant,
 }
 
@@ -326,6 +330,13 @@ impl AppState {
         .map_err(|reason| AppStateInitError::OpenCtiRoutingStateFailed { reason })?;
         let domain_providers = initialize_domain_providers(&config)?;
         let verifier_registry = initialize_verifier_registry(domain_providers.as_ref())?;
+        let content_root = match &runtime_store {
+            RuntimeStoreProvider::Persistent(runtime) => Some(runtime.root_path.clone()),
+            RuntimeStoreProvider::Ephemeral => None,
+        };
+        let content =
+            crate::content_plane::ContentPlane::open(&config.content, content_root.as_deref())
+                .map_err(|reason| AppStateInitError::ContentStoreFailed { reason })?;
         let timeline = ExplorerTimelineStore::new(&config.session_store_dir);
         let lifecycle = Arc::new(ServerLifecycle::initializing());
         let opencti_write_semaphore = Arc::new(tokio::sync::Semaphore::new(
@@ -351,6 +362,7 @@ impl AppState {
             opencti_write_semaphore,
             domain_providers,
             verifier_registry,
+            content: Arc::new(std::sync::RwLock::new(content)),
             started_at: Instant::now(),
         };
         lifecycle.mark_ready();
@@ -1203,8 +1215,18 @@ pub fn build_router(state: AppState) -> Router {
             .expect("rate limiter configuration must be valid"),
     );
 
+    // Issue #341: content uploads have their own size limit.
+    let content_routes = Router::new()
+        .route("/v1/content", post(crate::handlers::content::upload))
+        .route(
+            "/v1/content/{content_id}",
+            get(crate::handlers::content::read),
+        )
+        .layer(DefaultBodyLimit::max(state.config.content.max_bytes));
+
     let protected = protected
         .merge(import_routes)
+        .merge(content_routes)
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_bearer_auth,

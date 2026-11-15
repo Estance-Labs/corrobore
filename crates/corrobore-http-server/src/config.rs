@@ -116,6 +116,97 @@ pub struct ServerConfig {
     pub domain_provider_dir: Option<String>,
     /// Deployment manifest describing required provider libraries and hashes.
     pub domain_provider_manifest_file: Option<String>,
+    /// Where offloaded content lives and how much content stays inline.
+    pub content: ContentStoreConfig,
+}
+
+/// Default size, in bytes, up to which text and JSON content stays inline.
+pub const DEFAULT_CONTENT_INLINE_MAX_BYTES: u64 = 16 * 1024;
+/// Default upload limit of `POST /v1/content`, in bytes.
+pub const DEFAULT_CONTENT_MAX_BYTES: usize = 64 * 1024 * 1024;
+
+/// The content plane (ADR-0021): which object store holds offloaded content
+/// and where the inline threshold lies.
+///
+/// Without a URL, persistent servers keep content under `<storage>/content`
+/// and ephemeral servers keep it in memory.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ContentStoreConfig {
+    /// `s3://bucket/prefix`, `file:///path` or `memory://`.
+    pub url: Option<String>,
+    /// Text and JSON content up to this many bytes stays inline.
+    pub inline_max_bytes: u64,
+    /// Largest accepted upload, in bytes.
+    pub max_bytes: usize,
+    /// S3 region, for `s3://` URLs.
+    pub s3_region: Option<String>,
+    /// S3-compatible endpoint, for MinIO and similar services.
+    pub s3_endpoint: Option<String>,
+    /// S3 access key id.
+    pub s3_access_key: Option<String>,
+    /// S3 secret access key.
+    pub s3_secret_key: Option<String>,
+    /// S3 session token for temporary credentials.
+    pub s3_session_token: Option<String>,
+}
+
+impl Default for ContentStoreConfig {
+    fn default() -> Self {
+        Self {
+            url: None,
+            inline_max_bytes: DEFAULT_CONTENT_INLINE_MAX_BYTES,
+            max_bytes: DEFAULT_CONTENT_MAX_BYTES,
+            s3_region: None,
+            s3_endpoint: None,
+            s3_access_key: None,
+            s3_secret_key: None,
+            s3_session_token: None,
+        }
+    }
+}
+
+impl ContentStoreConfig {
+    /// Provider options for `object_store`, credentials included.
+    #[must_use]
+    pub fn object_store_options(&self) -> Vec<(String, String)> {
+        let mut options = Vec::new();
+        if let Some(region) = &self.s3_region {
+            options.push(("aws_region".to_owned(), region.clone()));
+        }
+        if let Some(endpoint) = &self.s3_endpoint {
+            if endpoint.starts_with("http://") {
+                options.push(("aws_allow_http".to_owned(), "true".to_owned()));
+            }
+            options.push(("aws_endpoint".to_owned(), endpoint.clone()));
+        }
+        for (option, value) in [
+            ("aws_access_key_id", &self.s3_access_key),
+            ("aws_secret_access_key", &self.s3_secret_key),
+            ("aws_session_token", &self.s3_session_token),
+        ] {
+            if let Some(value) = value {
+                options.push((option.to_owned(), value.clone()));
+            }
+        }
+        options
+    }
+}
+
+impl fmt::Debug for ContentStoreConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let redacted = |value: &Option<String>| value.as_ref().map(|_| "<redacted>");
+        formatter
+            .debug_struct("ContentStoreConfig")
+            .field("url", &self.url)
+            .field("inline_max_bytes", &self.inline_max_bytes)
+            .field("max_bytes", &self.max_bytes)
+            .field("s3_region", &self.s3_region)
+            .field("s3_endpoint", &self.s3_endpoint)
+            .field("s3_access_key", &redacted(&self.s3_access_key))
+            .field("s3_secret_key", &redacted(&self.s3_secret_key))
+            .field("s3_session_token", &redacted(&self.s3_session_token))
+            .finish()
+    }
 }
 
 impl fmt::Debug for ServerConfig {
@@ -194,6 +285,7 @@ impl fmt::Debug for ServerConfig {
                 "domain_provider_manifest_file",
                 &self.domain_provider_manifest_file,
             )
+            .field("content", &self.content)
             .finish()
     }
 }
@@ -717,6 +809,8 @@ impl ServerConfig {
         let (domain_provider_dir, domain_provider_manifest_file) =
             Self::parse_domain_provider_config(vars)?;
 
+        let content = Self::parse_content_store(vars)?;
+
         reject_removed_license_variables(vars)?;
 
         Ok(Self {
@@ -762,6 +856,60 @@ impl ServerConfig {
             storage_max_warm_adjacency_entries,
             domain_provider_dir,
             domain_provider_manifest_file,
+            content,
+        })
+    }
+
+    fn parse_content_store(
+        vars: &HashMap<String, String>,
+    ) -> Result<ContentStoreConfig, ConfigError> {
+        let optional = |name: &str| {
+            vars.get(name)
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        };
+        let inline_max_bytes = parse_positive_u64(
+            "CORROBORE_HTTP_CONTENT_INLINE_MAX_BYTES",
+            vars.get("CORROBORE_HTTP_CONTENT_INLINE_MAX_BYTES")
+                .map(String::as_str)
+                .unwrap_or("16384"),
+        )?;
+        let max_bytes = parse_positive_usize(
+            "CORROBORE_HTTP_CONTENT_MAX_BYTES",
+            vars.get("CORROBORE_HTTP_CONTENT_MAX_BYTES")
+                .map(String::as_str)
+                .unwrap_or("67108864"),
+        )?;
+        let (s3_access_key, _) = resolve_secret(
+            vars,
+            "CORROBORE_S3_ACCESS_KEY",
+            "CORROBORE_S3_ACCESS_KEY_FILE",
+            "content.s3_access_key",
+            "content.s3_access_key_file",
+        )?;
+        let (s3_secret_key, _) = resolve_secret(
+            vars,
+            "CORROBORE_S3_SECRET_KEY",
+            "CORROBORE_S3_SECRET_KEY_FILE",
+            "content.s3_secret_key",
+            "content.s3_secret_key_file",
+        )?;
+        let (s3_session_token, _) = resolve_secret(
+            vars,
+            "CORROBORE_S3_SESSION_TOKEN",
+            "CORROBORE_S3_SESSION_TOKEN_FILE",
+            "content.s3_session_token",
+            "content.s3_session_token_file",
+        )?;
+        Ok(ContentStoreConfig {
+            url: optional("CORROBORE_HTTP_CONTENT_STORE_URL"),
+            inline_max_bytes,
+            max_bytes,
+            s3_region: optional("CORROBORE_S3_REGION"),
+            s3_endpoint: optional("CORROBORE_S3_ENDPOINT"),
+            s3_access_key,
+            s3_secret_key,
+            s3_session_token,
         })
     }
 

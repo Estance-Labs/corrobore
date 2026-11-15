@@ -61,6 +61,10 @@ Application errors use the JSON envelope above. Transport middleware can reject 
 | `CORROBORE_HTTP_SESSION_IDLE_TTL_MS` | `0` | Idle auto-stop TTL; `0` disables expiration. |
 | `CORROBORE_HTTP_MAX_BODY_BYTES` | `2097152` | Standard protected-route body limit (2 MiB). |
 | `CORROBORE_HTTP_IMPORT_MAX_BODY_BYTES` | `33554432` | STIX import and OpenCTI transactional-write body limit (32 MiB). |
+| `CORROBORE_HTTP_CONTENT_MAX_BYTES` | `67108864` | `POST /v1/content` body limit (64 MiB). |
+| `CORROBORE_HTTP_CONTENT_INLINE_MAX_BYTES` | `16384` | Largest text or JSON content kept inline instead of offloaded. |
+| `CORROBORE_HTTP_CONTENT_STORE_URL` | unset | Object store for offloaded content; see [Content plane](#content-plane). |
+| `CORROBORE_S3_REGION`, `CORROBORE_S3_ENDPOINT` | unset | Region and S3-compatible endpoint of an `s3://` content store; credentials come from `CORROBORE_S3_ACCESS_KEY`, `CORROBORE_S3_SECRET_KEY` and `CORROBORE_S3_SESSION_TOKEN` (or their `_FILE` variants). |
 | `CORROBORE_OPENCTI_SYNC_MAX_OPERATIONS` | `512` | Maximum mutations admitted in one OpenCTI synchronization or transactional-write batch. |
 | `CORROBORE_OPENCTI_SYNC_MAX_REPLAY_IDENTITIES` | `4096` | Bounded replay identities, dead-letter diagnostics, and write-reconciliation records retained durably. |
 | `CORROBORE_OPENCTI_SHADOW_REFERENCE_ENDPOINT` | unset | Fixed Knowledge Data Engine endpoint backed by the reference Elasticsearch/OpenSearch provider. |
@@ -402,6 +406,59 @@ Admin token required. Prunes graph history outside a retention window from
 `{keep_commits?, keep_seconds?, dry_run?}` (default `keep_commits` 100) and
 compacts branch payloads and the WAL behind the latest checkpoint. See
 [Database operations](database-operations.md#history-retention).
+
+## Content plane
+
+Evidence content is kept apart from the graph (ADR-0021): a record owns a
+content handle, and traversals never read the bytes. `POST /v1/content`
+places content by the storage policy and returns the handle to store on the
+record.
+
+- Text and JSON up to `CORROBORE_HTTP_CONTENT_INLINE_MAX_BYTES` (16 KiB) stay
+  **inline**: the handle carries them and the server keeps nothing.
+- Anything larger, and all binary content, is **offloaded** to the content
+  store, addressed by its SHA-256 (`content--<sha256>`). Identical bytes are
+  stored once.
+
+The store is chosen at startup: `CORROBORE_HTTP_CONTENT_STORE_URL`
+(`s3://bucket/prefix` with the `CORROBORE_S3_*` variables, `file:///path`,
+`memory://`), otherwise `<storage>/content` in persistent mode, otherwise
+memory. A URL that cannot be opened fails startup.
+
+### `POST /v1/content`
+
+```bash
+curl -sS -X POST http://127.0.0.1:8080/v1/content \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/pdf' \
+  --data-binary @report.pdf
+```
+
+```json
+{
+  "ok": true,
+  "placement": "offloaded",
+  "policy_version": "content-policy-v1",
+  "content_id": "content--3f1c…",
+  "sha256": "3f1c…",
+  "byte_length": 482113,
+  "media_type": "application/pdf",
+  "backend": "filesystem",
+  "handle": { "external": { "content_id": "content--3f1c…", "…": "…" } }
+}
+```
+
+An empty body or text that is not UTF-8 returns `400 INVALID_CONTENT`; a body
+over `CORROBORE_HTTP_CONTENT_MAX_BYTES` returns `413`.
+
+### `GET /v1/content/{content_id}`
+
+The route serves offloaded content with its media type,
+`ETag` (the digest) and `Accept-Ranges: bytes`. A single `Range: bytes=…`
+returns `206` with `Content-Range`; a range outside the content returns `416`;
+multiple ranges or other units return the whole content. The digest is
+verified on every read. Errors: `400 INVALID_CONTENT_ID`,
+`404 CONTENT_NOT_RETAINED` (never offloaded, including inline content),
+`410 CONTENT_ERASED`.
 
 ## `POST /v1/admin/storage/export/parquet`
 

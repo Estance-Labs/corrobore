@@ -22,6 +22,7 @@ pub mod app;
 pub mod auth;
 pub mod bolt;
 pub mod config;
+pub mod content_plane;
 pub mod correlation;
 pub mod database_operations;
 mod domain_providers;
