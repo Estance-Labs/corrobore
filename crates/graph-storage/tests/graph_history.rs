@@ -141,6 +141,7 @@ fn applied_transition_publishes_one_main_commit_with_its_changes() {
                 audit_events: vec!["test".to_owned()],
                 actor: Some("analyst@example".to_owned()),
                 message: Some("seed indicator".to_owned()),
+                ..TransitionCommitContext::default()
             },
             None,
         )

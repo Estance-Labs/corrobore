@@ -50,6 +50,15 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   commits published on a branch; a cursor no longer retained answers
   `410 CHANGE_FEED_GAP`.
 
+- **Three-way branch merge (#321).** `POST /v1/graph/merge` merges a branch
+  into `main` or another branch from the merge base: `already_up_to_date`,
+  `fast_forward` or `merged`, with a `dry_run` preview, an optional
+  `expected_target_head` and `delete_source`. Conflicts (`concurrent_update`,
+  `update_delete`, `add_add`, `dangling_relationship`) are never resolved
+  automatically and answer `409 MERGE_CONFLICT` with the full report. Merges
+  into `main` go through the canonical WAL and keep the source head as a
+  second parent, also when the commit is republished from the journals.
+
 ### Removed
 
 - **Breaking:** the enterprise edition and its license gate leave Corrobore,

@@ -2893,6 +2893,46 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
 
+  /v1/graph/merge:
+    post:
+      operationId: mergeGraphBranch
+      summary: Three-way merge of one branch into another, with a dry-run preview
+      tags: [GraphHistory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source]
+              properties:
+                source: {type: string}
+                target: {type: string, default: main}
+                dry_run: {type: boolean, default: false}
+                expected_target_head: {type: string, pattern: '^gc[0-9a-f]{40}$'}
+                delete_source: {type: boolean, default: false}
+                actor: {type: string}
+                message: {type: string}
+      responses:
+        '200':
+          description: >-
+            Merge report: outcome already_up_to_date, fast_forward or merged,
+            heads, merge base, the published commit_id and change counts
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: >-
+            MERGE_CONFLICT with the full report and every conflict
+            (concurrent_update, update_delete, add_add, dangling_relationship),
+            or GRAPH_COMMIT_PRECONDITION_FAILED when the target head moved
+          content:
+            application/json:
+              schema: {type: object}
+
   /v1/graph/merge-base:
     get:
       operationId: getGraphMergeBase

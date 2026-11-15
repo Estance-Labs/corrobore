@@ -1089,6 +1089,7 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::delete(crate::handlers::graph_branches::delete_branch),
         )
         .route("/v1/graph/diff", get(crate::handlers::graph_diff::diff))
+        .route("/v1/graph/merge", post(crate::handlers::graph_merge::merge))
         .route(
             "/v1/graph/merge-base",
             get(crate::handlers::graph_diff::merge_base),

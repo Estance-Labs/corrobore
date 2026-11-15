@@ -64,11 +64,15 @@ use crate::{
 mod branches;
 mod commit_reads;
 mod diff;
+mod merge;
 
 pub use branches::GraphBranchStatus;
 pub use diff::{
     DiffValues, GraphChangeFeedPage, GraphDiffEntry, GraphDiffPage, GraphDiffTotals,
     RecordChangeKind,
+};
+pub use merge::{
+    GraphMergeReport, GraphMergeRequest, MergeConflict, MergeConflictKind, MergeOutcomeKind,
 };
 
 pub use commit_reads::{
@@ -382,7 +386,20 @@ pub struct TransitionCommitContext {
     pub actor: Option<String>,
     /// Commit message.
     pub message: Option<String>,
+    /// Extra commit parents: the source head when the transition merges a branch.
+    pub merge_parents: Vec<GraphCommitId>,
 }
+
+/// Caller metadata recorded on a `main` commit.
+struct MainCommitMetadata {
+    actor: Option<String>,
+    message: Option<String>,
+    merge_parents: Vec<GraphCommitId>,
+}
+
+/// Audit receipt prefix recording a merge parent in the WAL transaction, so a
+/// commit republished from the journals keeps its second parent.
+const MERGE_PARENT_RECEIPT: &str = "graph-merge-parent:";
 
 #[derive(Debug, Serialize, Deserialize)]
 struct LegacyMigrationRecord {
@@ -664,8 +681,7 @@ impl CanonicalEngineStore {
             transaction_id,
             TransitionCommitContext {
                 audit_events,
-                actor: None,
-                message: None,
+                ..TransitionCommitContext::default()
             },
             crash_stage,
         )
@@ -687,10 +703,16 @@ impl CanonicalEngineStore {
         crash_stage: Option<MutationCrashStage>,
     ) -> GraphStorageResult<AtomicPersistentMutationOutcome> {
         let TransitionCommitContext {
-            audit_events,
+            mut audit_events,
             actor,
             message,
+            merge_parents,
         } = context;
+        audit_events.extend(
+            merge_parents
+                .iter()
+                .map(|parent| format!("{MERGE_PARENT_RECEIPT}{parent}")),
+        );
         let batch = self.build_mutation_batch(previous, current, transaction_id.clone())?;
         let evidence_changed = previous.evidence_store() != current.evidence_store();
         let epistemic_changed = previous.epistemic_stores() != current.epistemic_stores();
@@ -780,8 +802,11 @@ impl CanonicalEngineStore {
                 &changed_relationships,
                 &transaction_id,
                 sequence.0,
-                actor,
-                message,
+                MainCommitMetadata {
+                    actor,
+                    message,
+                    merge_parents,
+                },
             );
         }
         // Full-text search is a rebuildable projection. The durable invalidation
@@ -796,9 +821,13 @@ impl CanonicalEngineStore {
         relationships: &[Relationship],
         transaction_id: &DurableTransactionId,
         sequence: u64,
-        actor: Option<String>,
-        message: Option<String>,
+        metadata: MainCommitMetadata,
     ) {
+        let MainCommitMetadata {
+            actor,
+            message,
+            merge_parents,
+        } = metadata;
         if self.history_needs_reconcile || !self.history.is_initialized() {
             // Earlier transactions are still missing from history; the next
             // reconciliation publishes this one in sequence order as well.
@@ -826,7 +855,7 @@ impl CanonicalEngineStore {
             .collect::<Vec<_>>();
         let draft = GraphCommitDraft {
             branch: MAIN_BRANCH.to_owned(),
-            extra_parents: Vec::new(),
+            extra_parents: merge_parents,
             transaction_id: Some(transaction_id.value.clone()),
             mutation_sequence_number: Some(sequence),
             actor,
@@ -920,9 +949,16 @@ impl CanonicalEngineStore {
         if changes.is_empty() {
             return Ok(());
         }
+        let extra_parents = journal
+            .audit_events
+            .iter()
+            .filter_map(|event| event.strip_prefix(MERGE_PARENT_RECEIPT))
+            .filter_map(|parent| GraphCommitId::new(parent).ok())
+            .filter(|parent| self.history.contains(parent))
+            .collect();
         self.history.record_commit(GraphCommitDraft {
             branch: MAIN_BRANCH.to_owned(),
-            extra_parents: Vec::new(),
+            extra_parents,
             transaction_id: Some(journal.transaction_id.value),
             mutation_sequence_number: Some(journal.sequence.0),
             actor: None,
