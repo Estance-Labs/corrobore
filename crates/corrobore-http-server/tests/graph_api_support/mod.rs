@@ -37,6 +37,7 @@ use serde_json::Value;
 use tower::ServiceExt;
 
 pub const TOKEN: &str = "graph-token";
+pub const ADMIN_TOKEN: &str = "graph-admin-token";
 
 pub fn unique_path(name: &str) -> PathBuf {
     let unique = SystemTime::now()
@@ -52,6 +53,10 @@ pub fn unique_path(name: &str) -> PathBuf {
 fn config(storage: Option<&Path>) -> ServerConfig {
     let mut values = HashMap::from([
         ("CORROBORE_HTTP_AUTH_TOKEN".to_owned(), TOKEN.to_owned()),
+        (
+            "CORROBORE_HTTP_ADMIN_AUTH_TOKEN".to_owned(),
+            ADMIN_TOKEN.to_owned(),
+        ),
         (
             "CORROBORE_HTTP_SESSION_STORE_DIR".to_owned(),
             unique_path("sessions").display().to_string(),
@@ -82,10 +87,21 @@ pub async fn send(
     body: Option<Value>,
     headers: &[(&str, &str)],
 ) -> (StatusCode, Value) {
+    send_as(app, TOKEN, method, uri, body, headers).await
+}
+
+pub async fn send_as(
+    app: &axum::Router,
+    token: &str,
+    method: Method,
+    uri: &str,
+    body: Option<Value>,
+    headers: &[(&str, &str)],
+) -> (StatusCode, Value) {
     let mut builder = Request::builder()
         .method(method)
         .uri(uri)
-        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"));
+        .header(header::AUTHORIZATION, format!("Bearer {token}"));
     for (name, value) in headers {
         builder = builder.header(*name, *value);
     }

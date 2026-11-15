@@ -24,6 +24,7 @@ corrobore server validate-config --config /etc/corrobore/corrobore.toml
 | `corrobore server rollback` | Offline storage | Rolls back the compatible manifest boundary after a completed migration. |
 | `corrobore server rebuild-indexes` | Offline storage | Rebuilds derived indexes from canonical data. |
 | `corrobore server cancel-rebuild` | Offline storage | Cancels an incomplete derived-index rebuild at its durable boundary. |
+| `corrobore server cleanup` | Offline storage | Prunes graph history outside a retention window and compacts branch payloads and the WAL. |
 
 `validate-config --print-effective` prints only non-secret effective settings.
 `status` exits `8` when the endpoint is unavailable and `9` when the remote
@@ -101,7 +102,7 @@ complete procedures and validation steps.
 
 | Option | Commands | Purpose |
 | --- | --- | --- |
-| `--storage-dir` | `snapshot`, `migrate`, `rollback`, `rebuild-indexes`, `cancel-rebuild` | Select the offline persistent storage root. |
+| `--storage-dir` | `snapshot`, `migrate`, `rollback`, `rebuild-indexes`, `cancel-rebuild`, `cleanup` | Select the offline persistent storage root. |
 | `--destination` | `snapshot` | Select the new local snapshot directory. |
 | `--encryption-key-id` | `snapshot`, `validate-snapshot`, `restore` | Record or verify the external key-provider identity without storing key material. |
 | `--retention-hook` | `snapshot` | Invoke an optional provider lifecycle or retention hook. |
@@ -113,6 +114,9 @@ complete procedures and validation steps.
 | `--target` | `restore` | Select the new empty restoration target. |
 | `--from` | `migrate` | Set the source storage version; the current supported value is `V0`. |
 | `--to` | `migrate` | Set the target storage version; the current supported value is `V1`. |
+| `--keep` | `cleanup` | Keep this many newest first-parent commits on every branch; the default is 100. |
+| `--keep-seconds` | `cleanup` | Also keep commits created less than this many seconds ago. |
+| `--dry-run` | `cleanup` | Report what would be pruned without writing. |
 
 ## TOML reference
 

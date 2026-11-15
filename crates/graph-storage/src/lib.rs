@@ -105,9 +105,10 @@ pub use canonical_engine_store::{
     CanonicalStartupReport, CanonicalStoreOptions, CanonicalStoreStats, CommitRecordPage,
     CommitWindow, DiffValues, GraphBranchStatus, GraphChangeFeedPage, GraphDiffEntry,
     GraphDiffPage, GraphDiffTotals, GraphMergeReport, GraphMergeRequest, GraphSchema,
-    MergeConflict, MergeConflictKind, MergeOutcomeKind, NeighbourDirection, NeighbourGroup,
-    NodeNeighbourhood, RecordChangeKind, SchemaEndpoint, SchemaLabel, SchemaProperty,
-    SchemaRelationshipType, TransitionCommitContext, property_value_type,
+    HistoryCleanupReport, HistoryCleanupRequest, MergeConflict, MergeConflictKind,
+    MergeOutcomeKind, NeighbourDirection, NeighbourGroup, NodeNeighbourhood, RecordChangeKind,
+    SchemaEndpoint, SchemaLabel, SchemaProperty, SchemaRelationshipType, TransitionCommitContext,
+    property_value_type,
 };
 pub use catalog::{
     GraphCatalog, HistoricalRecordCatalogEntry, LatestRecordCatalogEntry,

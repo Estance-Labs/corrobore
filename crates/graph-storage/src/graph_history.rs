@@ -42,7 +42,7 @@
 //! which mirrors the manifest publication that makes an Omnigraph write
 //! visible.
 
-use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -125,7 +125,12 @@ pub enum CommitPayloadRef {
     },
     /// Branch payload log, never indexed by the canonical catalog.
     Branch {
-        /// Byte offset in `history/branch_payloads.log`.
+        /// Branch payload file generation; `None` is the original
+        /// `history/branch_payloads.log`, `Some(g)` is
+        /// `history/branch_payloads.<g>.log` written by retention.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        segment: Option<u64>,
+        /// Byte offset in the branch payload file.
         offset: u64,
         /// Payload length in bytes.
         length: u64,
@@ -182,8 +187,13 @@ pub struct GraphCommit {
     pub message: Option<String>,
     /// RFC 3339 UTC creation time.
     pub created_at: String,
-    /// Record versions published relative to the first parent.
+    /// Record versions published relative to the first parent; for a
+    /// baseline, every record version visible at the commit.
     pub changes: Vec<CommitRecordChange>,
+    /// Set when retention replaced this commit's ancestors: `parents` was
+    /// emptied and `changes` holds the full view of the commit.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub baseline: bool,
 }
 
 impl GraphCommit {
@@ -319,7 +329,7 @@ impl CommitView {
 /// Graph ids are sequence-allocated (`node--N`). Branches allocate from the
 /// same space as `main`, so every writer must start above this floor or two
 /// branches could mint the same id for different records.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistoryIdFloor {
     /// Highest node sequence.
     pub node: u64,
@@ -374,6 +384,20 @@ enum HistoryEntry {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         deleted_by: Option<String>,
     },
+    /// First and only line of a log rewritten by retention: the retained
+    /// commits (baselines first in append order), every branch head, and the
+    /// counters the pruned commits contributed.
+    Compacted {
+        compacted_at: String,
+        commits: Vec<GraphCommit>,
+        branches: Vec<GraphBranchInfo>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last_main_sequence: Option<u64>,
+        id_floor: HistoryIdFloor,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        payload_generation: Option<u64>,
+        pruned_commits: usize,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -395,6 +419,7 @@ pub struct GraphHistory {
     repaired_torn_tail: bool,
     memo: HashMap<GraphCommitId, Arc<CommitView>>,
     memo_order: VecDeque<GraphCommitId>,
+    payload_generation: Option<u64>,
 }
 
 impl GraphHistory {
@@ -417,6 +442,7 @@ impl GraphHistory {
             repaired_torn_tail: false,
             memo: HashMap::new(),
             memo_order: VecDeque::new(),
+            payload_generation: None,
         };
         let path = history.log_path();
         if !path.is_file() {
@@ -527,6 +553,7 @@ impl GraphHistory {
             message: Some("genesis".to_owned()),
             created_at,
             changes,
+            baseline: false,
         };
         commit.commit_id = derive_commit_id(&commit)?;
         self.append(HistoryEntry::Commit(commit.clone()))?;
@@ -568,6 +595,7 @@ impl GraphHistory {
             message: draft.message,
             created_at: draft.created_at.unwrap_or_else(now_rfc3339),
             changes: draft.changes,
+            baseline: false,
         };
         commit.commit_id = derive_commit_id(&commit)?;
         self.append(HistoryEntry::Commit(commit.clone()))?;
@@ -838,7 +866,7 @@ impl GraphHistory {
         if payloads.is_empty() {
             return Ok(Vec::new());
         }
-        let path = self.directory.join(BRANCH_PAYLOAD_LOG);
+        let path = branch_payload_path(&self.directory, self.payload_generation);
         let created = self.ensure_directory()? || !path.exists();
         let mut file = OpenOptions::new()
             .create(true)
@@ -853,6 +881,7 @@ impl GraphHistory {
         for payload in payloads {
             let length = payload.len() as u64;
             references.push(CommitPayloadRef::Branch {
+                segment: self.payload_generation,
                 offset,
                 length,
                 sha256: hex_sha256(payload),
@@ -899,11 +928,12 @@ impl GraphHistory {
                 Ok(bytes)
             }
             CommitPayloadRef::Branch {
+                segment,
                 offset,
                 length,
                 sha256,
             } => {
-                let path = root.path().join(HISTORY_DIR).join(BRANCH_PAYLOAD_LOG);
+                let path = branch_payload_path(&root.path().join(HISTORY_DIR), *segment);
                 let bytes = read_range(&path, *offset, *length)?;
                 let actual = hex_sha256(&bytes);
                 if &actual != sha256 {
@@ -991,6 +1021,12 @@ impl GraphHistory {
                     if self.genesis.is_some() {
                         return Err(format!("second genesis commit {}", commit.commit_id));
                     }
+                    if commit.baseline {
+                        return Err(format!(
+                            "baseline commit {} outside a compacted history",
+                            commit.commit_id
+                        ));
+                    }
                     self.genesis = Some(commit.commit_id.clone());
                     self.branches.insert(
                         MAIN_BRANCH.to_owned(),
@@ -1060,9 +1096,381 @@ impl GraphHistory {
                     return Err(format!("branch {name} cannot be deleted"));
                 }
             }
+            HistoryEntry::Compacted {
+                commits,
+                branches,
+                last_main_sequence,
+                id_floor,
+                payload_generation,
+                ..
+            } => {
+                if !self.order.is_empty() || !self.branches.is_empty() {
+                    return Err("a compacted history must be the first line".to_owned());
+                }
+                for commit in commits {
+                    // Retained commits may name pruned merge parents; walks skip them.
+                    if commit.parents.is_empty() && self.genesis.is_none() {
+                        self.genesis = Some(commit.commit_id.clone());
+                    }
+                    for change in &commit.changes {
+                        self.id_floor.observe(change);
+                    }
+                    self.order.push(commit.commit_id.clone());
+                    self.commits
+                        .insert(commit.commit_id.clone(), Arc::new(commit));
+                }
+                for branch in branches {
+                    if !self.commits.contains_key(&branch.head) {
+                        return Err(format!("branch {} heads a pruned commit", branch.name));
+                    }
+                    self.branches.insert(branch.name.clone(), branch);
+                }
+                if !self.branches.contains_key(MAIN_BRANCH) {
+                    return Err("a compacted history must keep main".to_owned());
+                }
+                self.last_main_sequence = last_main_sequence;
+                self.id_floor.node = self.id_floor.node.max(id_floor.node);
+                self.id_floor.node_version = self.id_floor.node_version.max(id_floor.node_version);
+                self.id_floor.relationship = self.id_floor.relationship.max(id_floor.relationship);
+                self.id_floor.relationship_version = self
+                    .id_floor
+                    .relationship_version
+                    .max(id_floor.relationship_version);
+                self.payload_generation = payload_generation;
+            }
         }
         Ok(())
     }
+}
+
+/// Which commits retention keeps.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RetentionPlan {
+    /// Retained commits in append order.
+    pub retained: Vec<GraphCommitId>,
+    /// Retained commits whose ancestors are pruned; each becomes a baseline
+    /// holding its full view.
+    pub baselines: BTreeSet<GraphCommitId>,
+    /// Commits the plan prunes.
+    pub pruned: usize,
+}
+
+/// Bytes and commits before and after a history compaction.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct HistoryCompaction {
+    /// Commits before compaction.
+    pub commits_before: usize,
+    /// Commits after compaction.
+    pub commits_after: usize,
+    /// Baseline commits written.
+    pub baselines: usize,
+    /// History log size before, in bytes.
+    pub history_bytes_before: u64,
+    /// History log size after, in bytes.
+    pub history_bytes_after: u64,
+    /// Branch payload bytes before, in bytes.
+    pub branch_payload_bytes_before: u64,
+    /// Branch payload bytes after, in bytes.
+    pub branch_payload_bytes_after: u64,
+}
+
+impl GraphHistory {
+    /// Plan retention: on every branch keep the newest `keep` first-parent
+    /// commits and every commit created at or after `cutoff` (RFC 3339),
+    /// then cut. The first commit past the window on each chain stays as a
+    /// baseline, so every retained commit keeps an exact view.
+    pub fn plan_retention(&self, keep: usize, cutoff: Option<&str>) -> RetentionPlan {
+        let keep = keep.max(1);
+        let recent = |commit: &GraphCommit| {
+            cutoff.is_some_and(|cutoff| commit.created_at.as_str() >= cutoff)
+        };
+        let mut normal: HashSet<GraphCommitId> = HashSet::new();
+        let mut boundary: HashSet<GraphCommitId> = HashSet::new();
+        // Walk a first-parent chain, keeping the first `count` commits and any
+        // recent ones, and mark the first commit past the window as a boundary.
+        let mut walk =
+            |start: Arc<GraphCommit>, count: usize, normal: &mut HashSet<GraphCommitId>| {
+                let mut current = Some(start);
+                let mut index = 0;
+                while let Some(commit) = current {
+                    if index < count || recent(&commit) {
+                        if !normal.insert(commit.commit_id.clone()) {
+                            break;
+                        }
+                        current = self.first_parent(&commit);
+                        index += 1;
+                    } else {
+                        boundary.insert(commit.commit_id.clone());
+                        break;
+                    }
+                }
+            };
+        for branch in self.branches.values() {
+            if let Some(head) = self.commits.get(&branch.head).cloned() {
+                walk(head, keep, &mut normal);
+            }
+        }
+        // Recent work merged from other branches stays readable as well.
+        loop {
+            let pending: Vec<Arc<GraphCommit>> = normal
+                .iter()
+                .filter_map(|commit_id| self.commits.get(commit_id))
+                .flat_map(|commit| commit.parents.iter().skip(1))
+                .filter(|parent| !normal.contains(*parent))
+                .filter_map(|parent| self.commits.get(parent).cloned())
+                .filter(|parent| recent(parent))
+                .collect();
+            if pending.is_empty() {
+                break;
+            }
+            for parent in pending {
+                walk(parent, 0, &mut normal);
+            }
+        }
+        // A commit kept in full on one chain keeps its ancestors on that chain.
+        let baselines: BTreeSet<GraphCommitId> = boundary
+            .into_iter()
+            .filter(|commit_id| !normal.contains(commit_id))
+            .collect();
+        // A normal commit whose first parent is neither kept nor a baseline
+        // would lose its view: that cannot happen because each chain stops
+        // exactly at its boundary, which is kept as a baseline.
+        let retained: Vec<GraphCommitId> = self
+            .order
+            .iter()
+            .filter(|commit_id| normal.contains(*commit_id) || baselines.contains(*commit_id))
+            .cloned()
+            .collect();
+        RetentionPlan {
+            pruned: self.order.len().saturating_sub(retained.len()),
+            retained,
+            baselines,
+        }
+    }
+
+    /// Rewrite the history log to the retained commits and copy the branch
+    /// payloads they still reference into a new payload generation.
+    ///
+    /// The rename of the rewritten log is the commit point. A crash before it
+    /// leaves the old log and an unreferenced payload file; a crash after it
+    /// leaves old payload files that the next compaction removes.
+    pub fn compact(
+        &mut self,
+        root: &StorageRoot,
+        plan: &RetentionPlan,
+    ) -> GraphStorageResult<HistoryCompaction> {
+        let commits_before = self.order.len();
+        let history_bytes_before = file_len(&self.log_path());
+        let branch_payload_bytes_before = self.branch_payload_bytes();
+        if plan.pruned == 0 {
+            return Ok(HistoryCompaction {
+                commits_before,
+                commits_after: commits_before,
+                baselines: 0,
+                history_bytes_before,
+                history_bytes_after: history_bytes_before,
+                branch_payload_bytes_before,
+                branch_payload_bytes_after: branch_payload_bytes_before,
+            });
+        }
+        let retained: HashSet<&GraphCommitId> = plan.retained.iter().collect();
+        let mut commits = Vec::with_capacity(plan.retained.len());
+        for commit_id in &plan.retained {
+            let mut commit = (*self.commit(commit_id)?).clone();
+            if plan.baselines.contains(commit_id) {
+                let view = self.view(commit_id)?;
+                commit.changes = view_changes(&view);
+                commit.parents.clear();
+                commit.baseline = true;
+            } else {
+                commit.parents.retain(|parent| retained.contains(parent));
+                if commit.parents.is_empty() && !self.commit(commit_id)?.parents.is_empty() {
+                    return Err(GraphStorageError::OperationFailed {
+                        operation: "compact_graph_history",
+                        message: format!("retained commit {commit_id} lost its first parent"),
+                    });
+                }
+            }
+            commits.push(commit);
+        }
+
+        let generation = self
+            .payload_generation
+            .map_or(1, |generation| generation + 1);
+        let new_payloads = branch_payload_path(&self.directory, Some(generation));
+        let mut copied: HashMap<(Option<u64>, u64), u64> = HashMap::new();
+        let mut buffer = Vec::new();
+        for commit in &mut commits {
+            for change in &mut commit.changes {
+                if let CommitPayloadRef::Branch {
+                    segment,
+                    offset,
+                    length,
+                    sha256,
+                } = &mut change.payload
+                {
+                    let key = (*segment, *offset);
+                    let new_offset = match copied.get(&key) {
+                        Some(new_offset) => *new_offset,
+                        None => {
+                            let bytes = Self::read_payload(
+                                root,
+                                change.kind,
+                                &CommitPayloadRef::Branch {
+                                    segment: *segment,
+                                    offset: *offset,
+                                    length: *length,
+                                    sha256: sha256.clone(),
+                                },
+                            )?;
+                            let new_offset = buffer.len() as u64;
+                            buffer.extend_from_slice(&bytes);
+                            copied.insert(key, new_offset);
+                            new_offset
+                        }
+                    };
+                    *segment = Some(generation);
+                    *offset = new_offset;
+                }
+            }
+        }
+        self.ensure_directory()?;
+        write_synced(&new_payloads, &buffer)?;
+
+        let retained_ids: HashSet<GraphCommitId> = commits
+            .iter()
+            .map(|commit| commit.commit_id.clone())
+            .collect();
+        let branches: Vec<GraphBranchInfo> = self
+            .branches
+            .values()
+            .map(|branch| {
+                let mut branch = branch.clone();
+                if !retained_ids.contains(&branch.created_from) {
+                    branch.created_from = self
+                        .oldest_retained_on_chain(&branch.head, &retained_ids)
+                        .unwrap_or_else(|| branch.head.clone());
+                }
+                branch
+            })
+            .collect();
+        let entry = HistoryEntry::Compacted {
+            compacted_at: now_rfc3339(),
+            commits,
+            branches,
+            last_main_sequence: self.last_main_sequence,
+            id_floor: self.id_floor,
+            payload_generation: Some(generation),
+            pruned_commits: plan.pruned,
+        };
+        let line = encode_line(&entry)?;
+        let next = self.directory.join(format!("{HISTORY_LOG}.next"));
+        write_synced(&next, &line)?;
+        fs::rename(&next, self.log_path())
+            .map_err(|error| io_error("compact_graph_history", &next, error))?;
+        sync_directory(&self.directory)?;
+
+        let reopened = Self::open(root)?;
+        *self = reopened;
+        self.remove_stale_payload_files(generation);
+        Ok(HistoryCompaction {
+            commits_before,
+            commits_after: self.order.len(),
+            baselines: plan.baselines.len(),
+            history_bytes_before,
+            history_bytes_after: file_len(&self.log_path()),
+            branch_payload_bytes_before,
+            branch_payload_bytes_after: self.branch_payload_bytes(),
+        })
+    }
+
+    fn oldest_retained_on_chain(
+        &self,
+        head: &GraphCommitId,
+        retained: &HashSet<GraphCommitId>,
+    ) -> Option<GraphCommitId> {
+        let mut oldest = None;
+        let mut current = self.commits.get(head).cloned();
+        while let Some(commit) = current {
+            if !retained.contains(&commit.commit_id) {
+                break;
+            }
+            oldest = Some(commit.commit_id.clone());
+            current = self.first_parent(&commit);
+        }
+        oldest
+    }
+
+    fn branch_payload_files(&self) -> Vec<(Option<u64>, PathBuf)> {
+        let Ok(entries) = fs::read_dir(&self.directory) else {
+            return Vec::new();
+        };
+        entries
+            .flatten()
+            .filter_map(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name == BRANCH_PAYLOAD_LOG {
+                    return Some((None, entry.path()));
+                }
+                name.strip_prefix("branch_payloads.")
+                    .and_then(|rest| rest.strip_suffix(".log"))
+                    .and_then(|generation| generation.parse::<u64>().ok())
+                    .map(|generation| (Some(generation), entry.path()))
+            })
+            .collect()
+    }
+
+    fn branch_payload_bytes(&self) -> u64 {
+        self.branch_payload_files()
+            .iter()
+            .map(|(_, path)| file_len(path))
+            .sum()
+    }
+
+    fn remove_stale_payload_files(&self, current: u64) {
+        for (generation, path) in self.branch_payload_files() {
+            if generation != Some(current) {
+                // Unreferenced since the compacted log was published.
+                let _ = fs::remove_file(path);
+            }
+        }
+    }
+}
+
+fn view_changes(view: &CommitView) -> Vec<CommitRecordChange> {
+    let mut changes = Vec::with_capacity(view.nodes.len() + view.relationships.len());
+    for (kind, entries) in [
+        (HistoryRecordKind::Node, &view.nodes),
+        (HistoryRecordKind::Relationship, &view.relationships),
+    ] {
+        for (record_id, entry) in entries {
+            changes.push(CommitRecordChange {
+                kind,
+                record_id: record_id.clone(),
+                version_id: entry.version_id.clone(),
+                deleted: entry.deleted,
+                labels: entry.labels.clone(),
+                source: entry.source.clone(),
+                target: entry.target.clone(),
+                payload: entry.payload.clone(),
+            });
+        }
+    }
+    changes
+}
+
+fn file_len(path: &Path) -> u64 {
+    fs::metadata(path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0)
+}
+
+fn write_synced(path: &Path, bytes: &[u8]) -> GraphStorageResult<()> {
+    let mut file =
+        File::create(path).map_err(|error| io_error("write_graph_history", path, error))?;
+    file.write_all(bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|error| io_error("write_graph_history", path, error))
 }
 
 /// Validate a branch name: 1-128 characters from `[A-Za-z0-9._/-]`, not `main`,
@@ -1141,6 +1549,13 @@ fn derive_commit_id(commit: &GraphCommit) -> GraphStorageResult<GraphCommitId> {
         "{COMMIT_ID_PREFIX}{}",
         &digest[..COMMIT_ID_HEX_LEN]
     )))
+}
+
+fn branch_payload_path(directory: &Path, segment: Option<u64>) -> PathBuf {
+    match segment {
+        None => directory.join(BRANCH_PAYLOAD_LOG),
+        Some(generation) => directory.join(format!("branch_payloads.{generation}.log")),
+    }
 }
 
 fn read_range(path: &Path, offset: u64, length: u64) -> GraphStorageResult<Vec<u8>> {

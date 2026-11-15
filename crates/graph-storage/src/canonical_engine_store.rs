@@ -65,6 +65,7 @@ mod branches;
 mod commit_reads;
 mod diff;
 mod merge;
+mod retention;
 mod schema;
 
 pub use branches::GraphBranchStatus;
@@ -75,6 +76,7 @@ pub use diff::{
 pub use merge::{
     GraphMergeReport, GraphMergeRequest, MergeConflict, MergeConflictKind, MergeOutcomeKind,
 };
+pub use retention::{HistoryCleanupReport, HistoryCleanupRequest};
 pub use schema::{
     GraphSchema, SchemaEndpoint, SchemaLabel, SchemaProperty, SchemaRelationshipType,
     property_value_type,

@@ -87,6 +87,40 @@ indexable file metadata remain authoritative. `rebuilding`, `cancelled` and
 `failed` states are never reported as complete; startup resumes an interrupted
 rebuild before readiness.
 
+## History retention
+
+Graph history keeps every commit until you clean it up. Retention keeps, on
+every branch, the newest first-parent commits (`keep`), plus any commit created
+within the last `keep_seconds` and recent work merged from other branches. The
+first commit past the window on each branch becomes a *baseline*: it keeps its
+id and the full view of the graph at that commit, so every retained commit
+still reads exactly as before. Older commits become unreadable. Reads at them
+answer `404 GRAPH_COMMIT_NOT_FOUND`, and change-feed cursors on them answer
+`410 CHANGE_FEED_GAP`.
+
+The same pass rewrites the branch payloads into a new
+`history/branch_payloads.<generation>.log` holding only payloads that retained
+commits reference, and compacts the WAL and transaction journals behind the
+latest checkpoint. The rewritten history log is published by an atomic rename,
+so an interrupted cleanup leaves the previous history intact.
+
+```bash
+corrobore server cleanup --storage-dir /var/lib/corrobore/graph --keep 100 --dry-run
+corrobore server cleanup --storage-dir /var/lib/corrobore/graph --keep 100 --keep-seconds 2592000
+```
+
+Online, with the admin token:
+
+```bash
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' \
+  -d '{"keep_commits": 100, "keep_seconds": 2592000, "dry_run": true}' \
+  https://corrobore.example/v1/admin/storage/cleanup
+```
+
+The report gives `pruned_commits`, `retained_commits`, `baselines`, history and
+branch payload bytes before and after, and the WAL bytes reclaimed. When no
+checkpoint exists yet, WAL compaction is skipped and `wal_skipped` says why.
+
 ## Observability and recovery checks
 
 `GET /v1/admin/storage/operations` provides bounded counters. `/metrics` exports
