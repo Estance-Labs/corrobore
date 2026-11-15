@@ -46,7 +46,7 @@ documentation = "https://docs.corrobore.org/"
 [workspace.dependencies]
 axum = { version = "0.8", features = ["multipart"] }
 axum-server = { version = "0.8", features = ["tls-rustls"] }
-calamine = "0.36"
+calamine = "0.38"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { version = "4", features = ["derive"] }
 csv = "1"
