@@ -121,6 +121,9 @@ complete procedures and validation steps.
 | `--actor` | `policy explain` | Actor the request is decided for. |
 | `--action` | `policy explain` | Action to decide, such as `read` or `change`. |
 | `--target-branch` | `policy explain` | Branch a creation, merge or deletion targets. |
+| `--cold-tier` | `cleanup` | Archive the pruned `main` commits to this Lance cold tier first (builds with `lance-cold-tier`). |
+| `--cold-tier-endpoint` | `cleanup` | S3-compatible endpoint of the cold tier. |
+| `--cold-tier-allow-http` | `cleanup` | Allow a plain-HTTP cold tier endpoint. |
 | `--config` | `cluster validate`, `cluster plan`, `cluster apply` | Bundle directory holding `cluster.yaml`; the default is the current directory. |
 | `--root` | `cluster plan`, `cluster apply`, `cluster status` | Persistent storage root of the server. |
 | `--deployment-id` | `cluster apply` | Deployment id; repeating it with the same bundle returns the recorded deployment. |
@@ -235,6 +238,9 @@ remain environment-only:
 | `CORROBORE_HTTP_OAUTH_JWKS_MIN_REFRESH_SECONDS` | `30` | Shortest pause between two key-set fetches caused by an unknown key id. |
 | `CORROBORE_HTTP_POLICY_FILE` | unset | Graph policy (YAML, compiled to Cedar) deciding what each actor may do. See [Graph policy](http-server.md#graph-policy). |
 | `CORROBORE_HTTP_POLICY_SHARED_TOKEN_ACTOR` | unset | Actor the shared token stands for under a policy. |
+| `CORROBORE_STORAGE_COLD_TIER_URL` | unset | Lance cold tier (`s3://`, `file://` or a path) that keeps the history cleanup prunes; needs a build with `lance-cold-tier`. See [Lance cold tier](http-server.md#lance-cold-tier). |
+| `CORROBORE_STORAGE_COLD_TIER_ENDPOINT` | unset | S3-compatible endpoint of the cold tier. |
+| `CORROBORE_STORAGE_COLD_TIER_ALLOW_HTTP` | `false` | Allow a plain-HTTP cold tier endpoint. |
 | `CORROBORE_MODEL_ENDPOINT` | unset | OpenAI-compatible `chat/completions` URL behind the viewer's model features. See [Chat model](http-server.md#chat-model). |
 | `CORROBORE_MODEL_NAME` | required with an endpoint | Model name sent to the endpoint. |
 | `CORROBORE_MODEL_API_KEY` | unset | Key sent to the endpoint only. |

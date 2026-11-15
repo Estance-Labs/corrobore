@@ -211,6 +211,39 @@ pub struct CommitDetailView {
     #[serde(flatten)]
     pub summary: CommitSummaryView,
     pub changes: Vec<CommitChangeView>,
+    /// The commit was pruned and is read from the Lance cold tier (#392);
+    /// its change list is not kept.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub archived: bool,
+}
+
+/// `GET /v1/graph/cold/commits` (issue #392).
+#[derive(Debug, Serialize)]
+pub struct ColdCommitList {
+    /// Whether this server has a cold tier.
+    pub configured: bool,
+    pub commits: Vec<crate::cold_tier::ArchivedCommit>,
+}
+
+/// `GET /v1/graph/cold/commits`: commits archived in the Lance cold tier,
+/// oldest first.
+pub async fn cold_commits(
+    State(state): State<AppState>,
+) -> Result<Json<Envelope<ColdCommitList>>, ApiError> {
+    let Some(cold) = state.cold_tier.clone() else {
+        return Ok(ok(ColdCommitList {
+            configured: false,
+            commits: Vec::new(),
+        }));
+    };
+    let commits = cold
+        .commits()
+        .await
+        .map_err(|error| ApiError::service_unavailable("COLD_TIER_FAILED", error))?;
+    Ok(ok(ColdCommitList {
+        configured: true,
+        commits,
+    }))
 }
 
 #[derive(Debug, Serialize)]
@@ -267,6 +300,39 @@ pub async fn get_commit(
     Path(commit_id): Path<String>,
 ) -> Result<Json<Envelope<CommitDetailView>>, ApiError> {
     let commit_id = parse_commit_id(&commit_id)?;
+    let cold = state.cold_tier.clone();
+    let lookup = commit_id.clone();
+    let hot = with_store(&state, move |store| match store.graph_commit(&lookup) {
+        Err(graph_storage::GraphStorageError::UnknownGraphCommit { .. }) => Ok(None),
+        other => other.map(Some).map_err(map_history_error),
+    })
+    .await?;
+    if hot.is_none()
+        && let Some(cold) = cold
+        && let Some(archived) = cold
+            .commit(commit_id.as_str())
+            .await
+            .map_err(|error| ApiError::service_unavailable("COLD_TIER_FAILED", error))?
+    {
+        return Ok(ok(CommitDetailView {
+            summary: CommitSummaryView {
+                commit_id: archived.commit_id,
+                parents: archived.parents,
+                branch: archived.branch,
+                generation: archived.generation,
+                transaction_id: None,
+                mutation_sequence_number: None,
+                actor: archived.actor,
+                message: archived.message,
+                created_at: archived.created_at,
+                node_changes: 0,
+                relationship_changes: 0,
+                deletions: 0,
+            },
+            changes: Vec::new(),
+            archived: true,
+        }));
+    }
     with_store(&state, move |store| {
         let commit = store.graph_commit(&commit_id).map_err(map_history_error)?;
         Ok(ok(CommitDetailView {
@@ -284,6 +350,7 @@ pub async fn get_commit(
                     target: change.target.clone(),
                 })
                 .collect(),
+            archived: false,
         }))
     })
     .await

@@ -68,7 +68,38 @@ pub struct HistoryCleanupReport {
     pub wal_skipped: Option<String>,
 }
 
+/// Creation-time cutoff of `keep_seconds`, as an RFC 3339 string.
+fn retention_cutoff(request: &HistoryCleanupRequest) -> Option<String> {
+    request.keep_seconds.map(|seconds| {
+        let seconds = i64::try_from(seconds).unwrap_or(i64::MAX);
+        (chrono::Utc::now() - chrono::Duration::seconds(seconds))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    })
+}
+
 impl CanonicalEngineStore {
+    /// The `main` commits `request` would prune, oldest first, while their
+    /// views are still readable: what a cold tier archives before cleanup
+    /// (ADR-0023). Commits of other branches are not listed.
+    pub fn retention_pruned_commits(
+        &mut self,
+        request: &HistoryCleanupRequest,
+    ) -> GraphStorageResult<Vec<std::sync::Arc<crate::GraphCommit>>> {
+        self.reconcile_history()?;
+        let plan = self
+            .history
+            .plan_retention(request.keep_commits, retention_cutoff(request).as_deref());
+        let retained: std::collections::HashSet<&crate::GraphCommitId> =
+            plan.retained.iter().collect();
+        Ok(self
+            .history
+            .commits_in_append_order()
+            .filter(|commit| {
+                commit.branch == crate::MAIN_BRANCH && !retained.contains(&commit.commit_id)
+            })
+            .collect())
+    }
+
     /// Prune graph history outside the retention window, compact the branch
     /// payloads it no longer references, and compact the WAL and transaction
     /// journals behind the latest checkpoint.
@@ -82,14 +113,9 @@ impl CanonicalEngineStore {
         request: &HistoryCleanupRequest,
     ) -> GraphStorageResult<HistoryCleanupReport> {
         self.reconcile_history()?;
-        let cutoff = request.keep_seconds.map(|seconds| {
-            let seconds = i64::try_from(seconds).unwrap_or(i64::MAX);
-            (chrono::Utc::now() - chrono::Duration::seconds(seconds))
-                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-        });
         let plan = self
             .history
-            .plan_retention(request.keep_commits, cutoff.as_deref());
+            .plan_retention(request.keep_commits, retention_cutoff(request).as_deref());
         let mut report = HistoryCleanupReport {
             dry_run: request.dry_run,
             pruned_commits: plan.pruned,

@@ -18,6 +18,7 @@ members = [
     "crates/opencti-adapter",
     "crates/opencti-file-search",
     "crates/opencti-search",
+    "crates/corrobore-cold-tier",
     "crates/corrobore-engine",
     "crates/corrobore-http-server",
     "crates/corrobore-ingest",

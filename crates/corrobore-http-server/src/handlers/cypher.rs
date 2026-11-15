@@ -113,6 +113,39 @@ fn read_target(payload: &ExecuteCypherRequest) -> ReadTarget {
     }
 }
 
+/// Run a read on a commit pruned from the hot store, from its archived view.
+fn execute_archived(
+    state: &AppState,
+    engine_request: EngineRequest,
+    commit: Option<&graph_storage::GraphCommitId>,
+) -> Result<(CypherResponse, String), ApiError> {
+    use crate::handlers::graph_history::map_history_error;
+    use crate::pinned_graph::PinnedGraphPersistence;
+    let (Some(cold), Some(commit)) = (state.cold_tier.as_ref(), commit) else {
+        return Err(ApiError::internal(
+            "COLD_TIER_FAILED",
+            "no archived commit to read",
+        ));
+    };
+    let graph = cold
+        .graph_at(commit.as_str())
+        .map_err(|error| ApiError::service_unavailable("COLD_TIER_FAILED", error))?
+        .ok_or_else(|| {
+            map_history_error(graph_storage::GraphStorageError::UnknownGraphCommit {
+                commit_id: commit.to_string(),
+            })
+        })?;
+    let mut engine = corrobore_engine::CorroboreEngine::builder()
+        .persistence(Box::new(PinnedGraphPersistence::read_only(graph)))
+        .read_only(true)
+        .build()
+        .map_err(map_engine_error)?;
+    let response = engine
+        .execute_request(engine_request)
+        .map_err(map_engine_error)?;
+    Ok((response, commit.to_string()))
+}
+
 /// Where a pinned request reads or writes, and who writes.
 struct PinnedTarget<'a> {
     branch: Option<&'a str>,
@@ -151,9 +184,17 @@ fn execute_pinned(
         let mut store = store.lock().map_err(|_| {
             ApiError::internal("STATE_LOCK_FAILED", "canonical store lock poisoned")
         })?;
-        let commit_id = store
-            .resolve_graph_ref(branch, commit.as_ref())
-            .map_err(map_history_error)?;
+        let commit_id = match store.resolve_graph_ref(branch, commit.as_ref()) {
+            Ok(commit_id) => commit_id,
+            // A pruned commit is read from the Lance cold tier (issue #392).
+            Err(graph_storage::GraphStorageError::UnknownGraphCommit { .. })
+                if branch.is_none() && commit.is_some() && state.cold_tier.is_some() =>
+            {
+                drop(store);
+                return execute_archived(state, engine_request, commit.as_ref());
+            }
+            Err(error) => return Err(map_history_error(error)),
+        };
         if let (None, Some(expected)) = (commit.as_ref(), expected)
             && expected != commit_id.as_str()
         {

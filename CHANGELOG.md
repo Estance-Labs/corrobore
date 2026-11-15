@@ -265,6 +265,19 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   The key stays on the server; the new `model_call` policy action decides
   who may spend tokens. Provider errors answer 502, timeouts 504.
 
+- **Lance cold tier (#392).** The new `corrobore-cold-tier` crate archives
+  pruned history to Lance datasets (`lance` 14, local or `s3://`). With the
+  `lance-cold-tier` feature of `corrobore-http-server` and
+  `CORROBORE_STORAGE_COLD_TIER_URL` (or `corrobore server cleanup
+  --cold-tier`), cleanup archives exactly the `main` commits it prunes, then
+  prunes them; `GET /v1/graph/commits/{id}` and Cypher reads pinned to a
+  pruned commit are served from the archive, and `GET /v1/graph/cold/commits`
+  lists it. `CanonicalEngineStore::retention_pruned_commits` lists the commits
+  a cleanup would prune. Builds without the feature refuse the setting. The
+  cleanup answer gains `cold_tier`; `CommitDetailView` gains `archived`.
+  `deny.toml` allows `BSL-1.0` (`xxhash-rust`) and ignores the `paste`
+  unmaintained advisory (RUSTSEC-2024-0436), both pulled by Lance.
+
 ### Removed
 
 - **Breaking:** the enterprise edition and its license gate leave Corrobore,

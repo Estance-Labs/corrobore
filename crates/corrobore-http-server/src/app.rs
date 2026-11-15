@@ -196,6 +196,8 @@ pub struct AppState {
     pub cluster_state: Arc<crate::cluster::ClusterState>,
     /// Serializes deployments.
     pub deploy_lock: Arc<Mutex<()>>,
+    /// Lance archive of pruned history (issue #392), if configured.
+    pub cold_tier: Option<crate::cold_tier::ColdTierHandle>,
     pub started_at: Instant,
 }
 
@@ -410,6 +412,7 @@ impl AppState {
             config.opencti_shadow.max_concurrency,
         ));
         let authenticator = Arc::new(crate::auth::Authenticator::new(&config));
+        let cold_tier_config = config.cold_tier.clone();
         // The applied deployment of this root (issue #388).
         let cluster_state = Arc::new(match &runtime_store {
             RuntimeStoreProvider::Persistent(runtime) => {
@@ -479,6 +482,9 @@ impl AppState {
             revision: Arc::new(std::sync::RwLock::new(Arc::new(applied_revision))),
             cluster_state,
             deploy_lock: Arc::new(Mutex::new(())),
+            cold_tier: cold_tier_config
+                .as_ref()
+                .map(crate::cold_tier::ColdTierHandle::open),
             started_at: Instant::now(),
         };
         lifecycle.mark_ready();
@@ -1204,6 +1210,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/cluster/status", get(crate::cluster_api::status))
         .route("/v1/queries", get(crate::cluster_api::list_queries))
         .route("/v1/model", get(crate::model::status))
+        .route(
+            "/v1/graph/cold/commits",
+            get(crate::handlers::graph_history::cold_commits),
+        )
         .route("/v1/model/complete", post(crate::model::complete))
         .route("/v1/queries/{name}", post(crate::cluster_api::invoke))
         .route("/v1/cypher/execute", post(execute_cypher))

@@ -136,6 +136,77 @@ pub struct ServerConfig {
     pub policy_shared_token_actor: Option<String>,
     /// Chat model behind `/v1/model/complete` (issue #390), if any.
     pub model: Option<crate::model::ModelConfig>,
+    /// Lance archive of pruned history (issue #392), if any.
+    pub cold_tier: Option<ColdTierConfig>,
+}
+
+/// Where the Lance cold tier lives (issue #392).
+#[derive(Clone, PartialEq, Eq)]
+pub struct ColdTierConfig {
+    /// Local path, `file://` or `s3://bucket/prefix` URL.
+    pub uri: String,
+    /// Lance storage options (`aws_endpoint`, `aws_allow_http`).
+    pub options: std::collections::HashMap<String, String>,
+}
+
+impl fmt::Debug for ColdTierConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ColdTierConfig")
+            .field("uri", &self.uri)
+            .field("options", &self.options.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
+
+impl ColdTierConfig {
+    /// `CORROBORE_STORAGE_COLD_TIER_*`. A build without the
+    /// `lance-cold-tier` feature refuses the setting instead of ignoring it.
+    pub fn from_vars(vars: &HashMap<String, String>) -> Result<Option<Self>, ConfigError> {
+        let optional = |name: &str| {
+            vars.get(name)
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        };
+        let Some(uri) = optional("CORROBORE_STORAGE_COLD_TIER_URL") else {
+            for name in [
+                "CORROBORE_STORAGE_COLD_TIER_ENDPOINT",
+                "CORROBORE_STORAGE_COLD_TIER_ALLOW_HTTP",
+            ] {
+                if optional(name).is_some() {
+                    return Err(ConfigError::InvalidEnv {
+                        name,
+                        value: "requires CORROBORE_STORAGE_COLD_TIER_URL".to_owned(),
+                    });
+                }
+            }
+            return Ok(None);
+        };
+        if !cfg!(feature = "lance-cold-tier") {
+            return Err(ConfigError::InvalidEnv {
+                name: "CORROBORE_STORAGE_COLD_TIER_URL",
+                value: "this build has no Lance cold tier; build with the lance-cold-tier feature"
+                    .to_owned(),
+            });
+        }
+        let mut options = std::collections::HashMap::new();
+        if let Some(endpoint) = optional("CORROBORE_STORAGE_COLD_TIER_ENDPOINT") {
+            options.insert("aws_endpoint".to_owned(), endpoint);
+        }
+        if let Some(allow) = optional("CORROBORE_STORAGE_COLD_TIER_ALLOW_HTTP") {
+            let allow = match allow.to_ascii_lowercase().as_str() {
+                "true" | "1" => "true",
+                "false" | "0" => "false",
+                _ => {
+                    return Err(ConfigError::InvalidEnv {
+                        name: "CORROBORE_STORAGE_COLD_TIER_ALLOW_HTTP",
+                        value: allow,
+                    });
+                }
+            };
+            options.insert("aws_allow_http".to_owned(), allow.to_owned());
+        }
+        Ok(Some(Self { uri, options }))
+    }
 }
 
 /// Who may call the server besides the single trusted token (issue #382).
@@ -451,6 +522,7 @@ impl fmt::Debug for ServerConfig {
             .field("policy_file", &self.policy_file)
             .field("policy_shared_token_actor", &self.policy_shared_token_actor)
             .field("model", &self.model)
+            .field("cold_tier", &self.cold_tier)
             .finish()
     }
 }
@@ -1038,6 +1110,7 @@ impl ServerConfig {
         let embedding = Self::parse_embedding(vars)?;
         let cors_allowed_origins = Self::parse_cors_origins(vars)?;
         let model = Self::parse_model(vars)?;
+        let cold_tier = ColdTierConfig::from_vars(vars)?;
         let policy_file = vars
             .get("CORROBORE_HTTP_POLICY_FILE")
             .map(|value| value.trim().to_owned())
@@ -1117,6 +1190,7 @@ impl ServerConfig {
             policy_file,
             policy_shared_token_actor,
             model,
+            cold_tier,
         })
     }
 

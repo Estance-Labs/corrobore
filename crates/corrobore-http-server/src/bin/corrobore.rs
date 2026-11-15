@@ -250,6 +250,15 @@ struct CleanupArgs {
     /// Report what would be pruned without writing.
     #[arg(long)]
     dry_run: bool,
+    /// Archive pruned `main` commits to this Lance cold tier first.
+    #[arg(long)]
+    cold_tier: Option<String>,
+    /// S3-compatible endpoint of the cold tier.
+    #[arg(long)]
+    cold_tier_endpoint: Option<String>,
+    /// Allow a plain-HTTP cold tier endpoint.
+    #[arg(long)]
+    cold_tier_allow_http: bool,
 }
 
 #[derive(Args)]
@@ -820,11 +829,48 @@ fn run_history_cleanup(args: CleanupArgs) -> ExitCode {
         keep_seconds: args.keep_seconds,
         dry_run: args.dry_run,
     };
+    let cold = match cold_tier_from_args(&args) {
+        Ok(cold) => cold,
+        Err(error) => return database_operation_failure("cleanup", started, error),
+    };
     let result = open_storage_root(&args.storage_dir)
         .and_then(|root| CanonicalEngineStore::open(root, CanonicalStoreOptions::default()))
-        .and_then(|mut store| store.cleanup_graph_history(&request));
+        .map_err(|error| error.to_string())
+        .and_then(|mut store| {
+            corrobore_http_server::cold_tier::cleanup(cold.as_ref(), &mut store, &request)
+        });
     drop(ownership);
     print_database_operation("cleanup", started, result)
+}
+
+/// The cold tier named on the command line, through the same validation
+/// as `CORROBORE_STORAGE_COLD_TIER_*`.
+fn cold_tier_from_args(
+    args: &CleanupArgs,
+) -> Result<Option<corrobore_http_server::cold_tier::ColdTierHandle>, String> {
+    let mut vars = HashMap::new();
+    if let Some(uri) = &args.cold_tier {
+        vars.insert("CORROBORE_STORAGE_COLD_TIER_URL".to_owned(), uri.clone());
+    }
+    if let Some(endpoint) = &args.cold_tier_endpoint {
+        vars.insert(
+            "CORROBORE_STORAGE_COLD_TIER_ENDPOINT".to_owned(),
+            endpoint.clone(),
+        );
+    }
+    if args.cold_tier_allow_http {
+        vars.insert(
+            "CORROBORE_STORAGE_COLD_TIER_ALLOW_HTTP".to_owned(),
+            "true".to_owned(),
+        );
+    }
+    corrobore_http_server::config::ColdTierConfig::from_vars(&vars)
+        .map(|config| {
+            config
+                .as_ref()
+                .map(corrobore_http_server::cold_tier::ColdTierHandle::open)
+        })
+        .map_err(|error| error.to_string())
 }
 
 fn run_snapshot(args: SnapshotArgs) -> ExitCode {
