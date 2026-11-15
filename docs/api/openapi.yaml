@@ -58,6 +58,23 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorEnvelope'
   schemas:
+    GraphReview:
+      type: object
+      required: [branch, head, reviewer, decision, at_ms]
+      properties:
+        branch: {type: string}
+        head: {type: string}
+        reviewer: {type: string}
+        decision: {type: string, enum: [approved, changes_requested]}
+        comment: {type: string, nullable: true}
+        at_ms: {type: integer}
+    GraphReviewListed:
+      allOf:
+        - {$ref: '#/components/schemas/GraphReview'}
+        - type: object
+          required: [current]
+          properties:
+            current: {type: boolean}
     StageMeasurement:
       type: object
       additionalProperties: false
@@ -3035,6 +3052,115 @@ paths:
             MERGE_CONFLICT with the full report and every conflict
             (concurrent_update, update_delete, add_add, dangling_relationship),
             or GRAPH_COMMIT_PRECONDITION_FAILED when the target head moved
+          content:
+            application/json:
+              schema: {type: object}
+
+  /v1/graph/revert:
+    post:
+      operationId: revertGraphChange
+      summary: Put one record of a branch back to its merge-base version as one commit
+      tags: [GraphHistory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [branch, record_kind, record_id]
+              properties:
+                branch: {type: string}
+                record_kind: {type: string, enum: [node, relationship]}
+                record_id: {type: string}
+                expected_head: {type: string}
+                actor: {type: string}
+      responses:
+        '200':
+          description: The branch commit holding the revert
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: true}
+                  result:
+                    type: object
+                    properties:
+                      commit_id: {type: string}
+                      branch: {type: string}
+                      record_kind: {type: string, enum: [node, relationship]}
+                      record_id: {type: string}
+                      restored: {type: string, enum: [base_version, removed, recreated]}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: GRAPH_COMMIT_PRECONDITION_FAILED, GRAPH_REVERT_BLOCKED or PERSISTENT_STORAGE_REQUIRED
+          content:
+            application/json:
+              schema: {type: object}
+        '422':
+          description: GRAPH_REVERT_NO_CHANGE
+          content:
+            application/json:
+              schema: {type: object}
+
+  /v1/graph/reviews:
+    get:
+      operationId: listGraphReviews
+      summary: Reviews of a branch, newest first
+      tags: [GraphHistory]
+      parameters:
+        - {name: branch, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Reviews, each marked current when it looked at the current head
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: true}
+                  result:
+                    type: object
+                    properties:
+                      reviews:
+                        type: array
+                        items: {$ref: '#/components/schemas/GraphReviewListed'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+    post:
+      operationId: submitGraphReview
+      summary: Record a review decision on the branch's current head
+      tags: [GraphHistory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [branch, head, decision]
+              properties:
+                branch: {type: string}
+                head: {type: string}
+                decision: {type: string, enum: [approved, changes_requested]}
+                comment: {type: string, maxLength: 4000}
+                reviewer: {type: string}
+      responses:
+        '201':
+          description: The recorded review
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: true}
+                  result: {$ref: '#/components/schemas/GraphReview'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: GRAPH_COMMIT_PRECONDITION_FAILED when head is not the current head
           content:
             application/json:
               schema: {type: object}
