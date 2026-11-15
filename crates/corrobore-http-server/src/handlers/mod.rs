@@ -20,6 +20,7 @@
 // THE SOFTWARE.
 pub mod candidates;
 pub mod cypher;
+pub mod cypher_validate;
 pub mod database_operations;
 pub mod domain_provider_status;
 pub mod domain_validate;

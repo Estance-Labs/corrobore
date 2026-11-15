@@ -305,6 +305,25 @@ The response embeds the typed shared-runtime response, including `status`, `data
 
 Cypher parameters preserve homogeneous JSON arrays of strings, integers, decimals, or booleans as bounded typed lists (1 to 256 items); arrays are never flattened into JSON text. Mutation summaries distinguish `matched_rows`, `native_fields_changed`, and `property_fields_changed`, alongside created, updated, and deleted node/relationship counts. The reserved fields `confidence`, `status`, and `evidence_refs` address native graph metadata; when such a field is updated, any legacy generic property with the same name is removed and native read-back takes precedence. Cypher confidence uses native `0..=1`; use `0.9` for 90% STIX confidence.
 
+## `POST /v1/cypher/validate`
+
+Parses `{query}` and reports diagnostics without executing anything: no
+projection, no engine and no write. Editors can call it on every keystroke.
+Prefer it to `mode: "validate"`, which is not a mutation-safety boundary. The
+result holds `valid`, `kind` (`read`, `mutation`, `mixed`, or `null` when the
+query does not parse), the recognised `clauses`, and `diagnostics`. Each
+diagnostic has a `severity`, a `code` and a `message`, plus a `suggestion` when
+one exists.
+
+- `error` codes are `EMPTY_QUERY`, `UNSUPPORTED_FEATURE`, `INVALID_SYNTAX` and
+  `INVALID_PARAMETER`.
+- `UNBOUND_PARAMETER` is a warning: `$name` values are bound when the query
+  runs.
+- `UNSTRUCTURED_QUERY` is a warning: the clauses were recognised but not their
+  structure.
+
+Queries longer than 64 KiB answer `400 QUERY_TOO_LARGE`.
+
 ## `POST /v1/cypher/write`
 
 Executes a forced mutation request with the same body shape. Host runtime policy still controls whether mutations are permitted.
