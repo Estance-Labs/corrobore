@@ -66,6 +66,7 @@ mod database_operations;
 mod engine_snapshot;
 mod error;
 mod filesystem_object_store;
+mod graph_history;
 mod graph_pager;
 mod log;
 mod manifest;
@@ -101,7 +102,18 @@ pub use backup_restore::{
 pub use canonical_engine_store::{
     CanonicalAdjacencyProjection, CanonicalEngineStore, CanonicalProjectionRequest,
     CanonicalProjectionStats, CanonicalPropertyFilter, CanonicalPropertyOperator,
-    CanonicalStartupReport, CanonicalStoreOptions, CanonicalStoreStats,
+    CanonicalStartupReport, CanonicalStoreOptions, CanonicalStoreStats, CommitRecordPage,
+    CommitWindow, DEFAULT_EMBEDDING_PROPERTY, DEFAULT_HNSW_MIN_VECTORS, DiffValues,
+    ExactVectorIndex, GraphBranchStatus, GraphChangeFeedPage, GraphDiffEntry, GraphDiffPage,
+    GraphDiffTotals, GraphEdit, GraphEditReport, GraphEditRequest, GraphMergeReport,
+    GraphMergeRequest, GraphRevertReport, GraphRevertRequest, GraphRevertRestoration, GraphReview,
+    GraphReviewDecision, GraphReviewStatus, GraphSchema, GraphSearchHit, HistoryCleanupReport,
+    HistoryCleanupRequest, HnswParams, HnswVectorIndex, HybridSearchRequest, MAX_GRAPH_EDITS,
+    MergeConflict, MergeConflictKind, MergeOutcomeKind, NeighbourDirection, NeighbourGroup,
+    NodeNeighbourhood, RRF_K, RecordChangeKind, RelatedDirection, RelatedRecordFilter,
+    SchemaEndpoint, SchemaLabel, SchemaProperty, SchemaRelationshipType, TransitionCommitContext,
+    VectorIndex, VectorIndexKind, VectorIndexMode, VectorIndexPolicy, VectorMetric,
+    property_value_type, reciprocal_rank_fusion,
 };
 pub use catalog::{
     GraphCatalog, HistoricalRecordCatalogEntry, LatestRecordCatalogEntry,
@@ -142,12 +154,17 @@ pub use database_operations::{
     MigrationRequest, OperationReadiness, SnapshotArtifactStore, SnapshotExportReport,
     SnapshotReport, SnapshotRequest, SnapshotValidationReport, cancel_derived_index_rebuild,
     create_consistent_snapshot, derived_index_rebuild_status, export_snapshot_to_store,
-    migrate_storage, rebuild_derived_indexes, restore_consistent_snapshot,
-    rollback_storage_migration, validate_consistent_snapshot,
+    import_snapshot_from_store, migrate_storage, rebuild_derived_indexes,
+    restore_consistent_snapshot, rollback_storage_migration, validate_consistent_snapshot,
 };
 pub use engine_snapshot::{load_engine_graph_snapshot, persist_engine_graph_snapshot};
 pub use error::{GraphStorageError, GraphStorageResult};
 pub use filesystem_object_store::FilesystemObjectStore;
+pub use graph_history::{
+    CommitPayloadRef, CommitRecordChange, CommitView, CommitViewEntry, GraphBranchInfo,
+    GraphCommit, GraphCommitDraft, GraphCommitId, GraphCommitPage, GraphHistory, HistoryIdFloor,
+    HistoryRecordKind, MAIN_BRANCH, validate_branch_name,
+};
 pub use graph_pager::{
     FileBackedGraphPager, FileBackedGraphStore, create_file_backed_graph_pager,
     create_file_backed_graph_store, map_storage_error_to_graph_pager_error,

@@ -195,6 +195,22 @@ pub struct FullTextRebuildOutcome {
     pub generation: String,
 }
 
+/// Result of an incremental index update.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FullTextDeltaOutcome {
+    /// The published generation now includes the delta.
+    Applied {
+        /// New published generation.
+        generation: String,
+        /// Documents added or replaced.
+        upserted: usize,
+        /// Documents removed.
+        deleted: usize,
+    },
+    /// The index must be rebuilt; the invalidation marker stays in place.
+    RebuildRequired,
+}
+
 /// Low-cardinality resource measurements for the current index.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FullTextStorageStats {
@@ -356,6 +372,89 @@ impl FullTextIndex {
         Index::open_in_dir(&staging).map_err(backend_error)?;
         self.publish_staging()?;
         Ok(metadata.outcome(published_generation.as_deref() != Some(generation.as_str())))
+    }
+
+    /// Generation of the published index when it is ready to serve reads.
+    pub fn ready_generation(&self) -> Option<String> {
+        let status = self.inspect();
+        (status.readiness == FullTextSearchReadiness::Ready)
+            .then_some(status.generation)
+            .flatten()
+    }
+
+    /// Update the published generation in place with the documents one
+    /// canonical transaction changed, instead of rebuilding every document.
+    ///
+    /// The caller passes the generation it saw as ready before it invalidated
+    /// the index for the transaction. The delta applies only if the published
+    /// index still holds exactly that generation and already knows every
+    /// field the upserts carry; otherwise the outcome is `RebuildRequired`
+    /// and the invalidation stays in place, so the next search rebuilds.
+    /// A crash before the invalidation marker is cleared also leaves the
+    /// marker, so a partly applied delta can never serve reads.
+    pub fn apply_delta(
+        &self,
+        expected_generation: &str,
+        upserts: &[FullTextDocument],
+        deletes: &[String],
+    ) -> Result<FullTextDeltaOutcome, FullTextSearchError> {
+        let published = self.index_path();
+        let Some(metadata) = ready_metadata(&published, &self.settings.schema_version) else {
+            return Ok(FullTextDeltaOutcome::RebuildRequired);
+        };
+        if metadata.generation != expected_generation || self.staging_path().exists() {
+            return Ok(FullTextDeltaOutcome::RebuildRequired);
+        }
+        let upserts = canonical_documents(upserts)?;
+        let index = Index::open_in_dir(&published).map_err(backend_error)?;
+        let fields = SearchSchemaFields::from_schema(&index.schema())?;
+        let knows_every_field = upserts.iter().all(|document| {
+            document
+                .fields
+                .keys()
+                .all(|field| fields.text_fields.contains_key(&field_suffix(field)))
+        });
+        if !knows_every_field {
+            return Ok(FullTextDeltaOutcome::RebuildRequired);
+        }
+        let mut writer: IndexWriter = index
+            .writer(self.settings.writer_memory_bytes)
+            .map_err(backend_error)?;
+        for id in deletes
+            .iter()
+            .chain(upserts.iter().map(|document| &document.id))
+        {
+            writer.delete_term(tantivy::Term::from_field_text(fields.id, id.trim()));
+        }
+        for document in &upserts {
+            writer
+                .add_document(tantivy_document(document, &fields)?)
+                .map_err(backend_error)?;
+        }
+        writer.commit().map_err(backend_error)?;
+        writer.wait_merging_threads().map_err(backend_error)?;
+        let documents = index.reader().map_err(backend_error)?.searcher().num_docs() as usize;
+        let generation = hex_digest(
+            &serde_json::to_vec(&(&metadata.generation, &upserts, deletes)).map_err(|error| {
+                FullTextSearchError::Backend(format!("failed to fingerprint delta: {error}"))
+            })?,
+        );
+        write_metadata(
+            &published,
+            &LifecycleMetadata {
+                schema_version: self.settings.schema_version.clone(),
+                generation: generation.clone(),
+                readiness: FullTextSearchReadiness::Ready,
+                processed_documents: documents,
+                total_documents: documents,
+            },
+        )?;
+        self.clear_invalidation()?;
+        Ok(FullTextDeltaOutcome::Applied {
+            generation,
+            upserted: upserts.len(),
+            deleted: deletes.len(),
+        })
     }
 
     /// Prevent the currently published generation from serving reads until a

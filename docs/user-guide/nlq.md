@@ -97,6 +97,14 @@ A model backend implements `NlqCompiler` and returns an `Envelope`; its output
 goes through the same `validate` call. A model that emits JSON directly is
 validated by passing that JSON to `validate`.
 
+## Use it over HTTP
+
+`POST /v1/nlq/compile` runs the template compiler and `validate` on the
+server and returns the kind, the canonical action and the envelope, without
+executing anything; see the [HTTP server reference](http-server.md#post-v1nlqcompile).
+The viewer's agent panel uses it and runs write proposals only on `agent/…`
+branches.
+
 ## The template compiler
 
 `TemplateCompiler` is the deterministic baseline and the fallback when no

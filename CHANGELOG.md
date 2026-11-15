@@ -11,6 +11,207 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
+### Added
+
+- **Graph commit history (#317).** In persistent mode every applied write on
+  `main` is an addressable graph commit (`gc` + 40 hex digits) with its parents,
+  generation, transaction id and the record versions it published, kept in an
+  append-only, checksummed `history/graph_history.log`. Stores that predate the
+  history start it with a genesis commit; a commit lost between the WAL apply
+  and the history append is republished from the transaction journals on the
+  next open, and a torn final line is truncated. New routes
+  `GET /v1/graph/commits` and `GET /v1/graph/commits/{commit_id}`. Snapshots
+  and restores carry the history.
+
+- **Commit-pinned reads (#318).** `POST /v1/cypher/read` and `/execute` accept
+  `commit` or `branch` and run on a read-only projection of that commit;
+  Cypher responses carry `graph_commit_id`. In persistent mode the explorer
+  graph now reads a commit: the boundary's transaction, the newest commit at a
+  timeshot's time, an explicit `commit`, or the `main` head. Previously it
+  projected whatever graph the last request had paged in, and echoed the
+  boundary without applying it. New routes `GET /v1/graph/records` (typed
+  keyset pages pinned to a commit) and `GET /v1/graph/nodes/{node_id}`
+  (relationship groups with neighbours).
+
+- **Persisted branches (#319).** `GET/POST /v1/graph/branches` and
+  `DELETE /v1/graph/branches/{*name}` create branches at any branch head or
+  retained commit and delete merged ones (or any with `force`). Cypher writes
+  with `branch` publish branch commits whose record versions live in
+  `history/branch_payloads.log`, which the canonical catalog never indexes;
+  `main` is unchanged until a merge. A branch write from a head that moved
+  meanwhile answers `409 GRAPH_COMMIT_PRECONDITION_FAILED`. Every writer
+  allocates graph ids above the highest id published on any branch.
+
+- **Graph diff, merge base and change feed (#320).** `GET /v1/graph/diff`
+  lists added, changed and removed records between two commits or branch
+  heads, with totals, cursor paging and, on request, both versions and their
+  property changes. `GET /v1/graph/merge-base` returns the best common
+  ancestor. `GET /v1/graph/changes` is an at-least-once cursor feed of the
+  commits published on a branch; a cursor no longer retained answers
+  `410 CHANGE_FEED_GAP`.
+
+- **Three-way branch merge (#321).** `POST /v1/graph/merge` merges a branch
+  into `main` or another branch from the merge base: `already_up_to_date`,
+  `fast_forward` or `merged`, with a `dry_run` preview, an optional
+  `expected_target_head` and `delete_source`. Conflicts (`concurrent_update`,
+  `update_delete`, `add_add`, `dangling_relationship`) are never resolved
+  automatically and answer `409 MERGE_CONFLICT` with the full report. Merges
+  into `main` go through the canonical WAL and keep the source head as a
+  second parent, also when the commit is republished from the journals.
+
+- **Optimistic write preconditions (#322).** Cypher writes accept the
+  `If-Graph-Commit` header or `expected_commit` and commit only if the target
+  branch (`main` or a branch head) is still at that commit; otherwise
+  `409 GRAPH_COMMIT_PRECONDITION_FAILED`, with nothing written. Merges into
+  `main` check the target head inside the WAL transaction, so a write that
+  lands between the merge plan and its commit is refused, not overwritten.
+
+- **Schema registry (#323).** `GET /v1/graph/schema` describes the records
+  visible at a commit or branch head: labels and relationship types with
+  stable ids (persisted in `history/schema_registry.log`, never reused),
+  counts, property keys with their value types, and the label pairs each
+  relationship type connects.
+
+- **History retention (#324).** `corrobore server cleanup` and
+  `POST /v1/admin/storage/cleanup` keep, on every branch, the newest commits,
+  commits younger than `keep_seconds`, and recent merged work. The first commit
+  past the window becomes a baseline that keeps its id and full view. The pass
+  rewrites branch payloads into a new generation holding only referenced
+  payloads, and compacts the WAL and journals behind the latest checkpoint;
+  segment compaction was previously never called. Pruned commits answer
+  `404`, and feed cursors on them `410 CHANGE_FEED_GAP`.
+
+- **Parse-only Cypher validation (#336).** `POST /v1/cypher/validate` parses
+  a query and returns its kind (`read`, `mutation`, `mixed`), clauses and
+  diagnostics without executing anything, so editors can validate while the
+  user types; unbound parameters and partially structured queries are
+  warnings.
+
+- **Incremental full-text maintenance (#325).** A canonical write now
+  updates the published tantivy generation in place with the documents it
+  changed. Before, it invalidated the index and the next search rebuilt every
+  document. The index stays marked invalid during the transaction and is
+  cleared only once the delta is published, so a crash, an index already
+  being rebuilt, or a property field the index schema does not know yet still
+  fall back to the full rebuild.
+
+- **Vector index and hybrid retrieval (#326).** `POST /v1/graph/search/vector`
+  ranks nodes by cosine or L2 similarity of an embedding property at a commit,
+  through an exact index kept per commit and moved forward with later node
+  changes, behind a `VectorIndex` trait. `POST /v1/graph/search/hybrid` fuses
+  BM25 full text, vector similarity and graph proximity with Reciprocal Rank
+  Fusion, reporting each signal's rank. The `vector` and `hybrid` modes of
+  `/v1/seed/search` still need an embedding provider for their text
+  objective and are unchanged.
+
+- **Object storage and open columnar export (#327).** A new
+  `storage-interchange` crate adopts the `object_store` crate (pinned 0.14.2)
+  for `s3://`, `file://` and `memory://` stores behind the content-plane
+  `ObjectStore` and snapshot `SnapshotArtifactStore` interfaces. `corrobore
+  server import-snapshot` downloads and validates a snapshot from such a store
+  for `restore`, which closes the S3 restore gap. It also adds Apache Parquet
+  export of a commit (Arrow and Parquet pinned 60.1.0): one file per label and
+  relationship type, with typed `prop_<key>` columns, through
+  `corrobore server export-parquet` and `POST /v1/admin/storage/export/parquet`.
+
+- **Deterministic simulation of the persistence layer (#328).**
+  `crates/graph-storage/tests/deterministic_simulation.rs` drives seeded
+  universes of main writes, crashes at every mutation stage, branch writes,
+  merges, history cleanup, reopens and torn history tails, and checks each step
+  against an in-memory model: visible records, history continuity, the `main`
+  head view against the canonical catalog, and atomicity after a crash. A
+  failing seed replays exactly.
+
+- **Content plane served over HTTP (#341).** `POST /v1/content` places
+  content by the ADR-0021 storage policy: text and JSON up to
+  `CORROBORE_HTTP_CONTENT_INLINE_MAX_BYTES` (16 KiB) come back inline in the
+  handle, while anything else is stored once, content-addressed, and gets a
+  `content--<sha256>` id. `GET /v1/content/{content_id}` serves it with its
+  media type, a digest `ETag` and single `Range` requests (`206`/`416`),
+  verifying the digest on every read. The store is
+  `CORROBORE_HTTP_CONTENT_STORE_URL` (`s3://` with the `CORROBORE_S3_*`
+  variables, `file://`, `memory://`), else `<storage>/content`, else memory.
+  `UrlObjectStore` now shuts its runtime down in the background when dropped,
+  so async hosts can own one.
+
+- **Embedding provider for seed search (#343).** `CORROBORE_EMBEDDING_PROVIDER`
+  selects `hashing` (local, deterministic feature hashing of words and
+  character trigrams, no model) or `http` (an OpenAI-compatible
+  `/v1/embeddings` endpoint, such as a local Ollama, TEI or vLLM server).
+  `POST /v1/embeddings` returns its vectors so clients store comparable node
+  embeddings. With a provider and persistent storage, the `vector` and
+  `semantic` seed modes rank nodes by cosine similarity at the head of `main`,
+  and `hybrid` fuses that ranking with full text by reciprocal rank fusion.
+  Seed results now say how they were resolved (`retrieval`, `commit_id`); the
+  lexical resolver still answers, with a boundary note, when no provider is
+  configured, in ephemeral mode, or when no node carries an embedding.
+
+- **Revert one change and review approvals (#348).** `POST /v1/graph/revert`
+  puts one node or relationship of a branch back to its version at the merge
+  base with `main`, as one branch commit guarded by `expected_head`: changed
+  records get their base version, added ones are tombstoned, deleted ones come
+  back. A revert that would leave a relationship without an endpoint is
+  refused (`409 GRAPH_REVERT_BLOCKED`). `POST /v1/graph/reviews` records an
+  `approved` or `changes_requested` decision on the branch's exact current
+  head, and `GET /v1/graph/reviews` lists them, marking those on the current
+  head; reviews live in the append-only, checksummed `history/reviews.log`.
+
+- **Batch record edits (#352).** `POST /v1/graph/edits` applies
+  `set_properties`, `create_node` and `delete_node` edits to the head of a
+  branch and publishes them as one commit, through the canonical WAL on `main`
+  and branch payloads elsewhere, guarded by `expected_head`. The batch is
+  validated in full before anything is written; deleting a node that still has
+  live relationships is refused (`409 GRAPH_EDIT_BLOCKED`). `NodePatch` gains
+  `remove_property`, so a patch can drop keys while keeping the node's other
+  fields and its version history.
+
+- **Natural-language compile route (#353).** `POST /v1/nlq/compile` exposes
+  the `corrobore-nlq` template compiler: a French or English request becomes
+  one `nlq/v1` action, validated against the trust boundary the request sets
+  (allowed evidence, `allow_writes`) and returned with its kind and canonical
+  form. Nothing is executed; the caller runs the action through the routes it
+  already uses.
+
+- **Opt-in CORS (#359).** `CORROBORE_HTTP_CORS_ALLOWED_ORIGINS` lists the
+  exact origins a browser client may call the server from, such as a viewer
+  holding several connections. Preflights are answered before
+  authentication, responses expose `Content-Range`, `ETag` and
+  `Accept-Ranges`, and credentials are never allowed. `*` and origins with a
+  path are refused; unset keeps sending no CORS headers.
+
+- **Explain from the validate route (#360).** `POST /v1/cypher/validate`
+  returns the logical plan of a query that parses: operators in execution
+  order, the query kind, and the pattern bindings with their element and
+  whether they are projected. Validation stays side-effect free.
+
+- **Filter records across relationships (#361).** `GET /v1/graph/records`
+  accepts `related_type`, `related_direction` (`out`, `in`, `any`) and
+  `related_label` to keep nodes with a matching live relationship to a live
+  neighbour at the commit read; totals and keyset paging count only matching
+  nodes.
+
+- **Relationship edits (#366).** `POST /v1/graph/edits` also creates
+  relationships (between live nodes or nodes created earlier in the batch,
+  named `$n`), edits and removes their properties, and deletes them, in the
+  same single commit; the result lists `created_relationships`. A node can be
+  deleted together with its last relationships in one batch.
+  `RelationshipPatch` gains `remove_property`.
+
+- **Approximate vector search with HNSW (#342).** `HnswVectorIndex` implements
+  `VectorIndex` with a deterministic Hierarchical Navigable Small World graph:
+  layers are seeded from the record id, removals are tombstoned and the graph
+  is rebuilt once tombstones outnumber live vectors. `VectorIndexPolicy` on
+  `CanonicalStoreOptions::vector_index` keeps the exact index below 10,000
+  vectors and switches to HNSW from there. The server sets the policy with
+  `CORROBORE_STORAGE_VECTOR_INDEX` (`auto`, `exact`, `hnsw`) and
+  `CORROBORE_STORAGE_VECTOR_HNSW_MIN_VECTORS`, also available as
+  `storage.vector_index`, `storage.vector_hnsw_min_vectors`,
+  `--storage-vector-index` and `--storage-vector-hnsw-min-vectors`. Recall@10
+  against the exact index is at least 0.95 for cosine and L2 on 5,000 seeded
+  64-dimension vectors. The `vector_search` criterion bench compares the query
+  latency of both implementations. `CanonicalStoreOptions` gains a field, so
+  struct literals need `..CanonicalStoreOptions::default()`.
+
 ### Removed
 
 - **Breaking:** the enterprise edition and its license gate leave Corrobore,
@@ -33,6 +234,12 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
 ### Fixed
 
+- History cleanup kept the commits each live branch can reach but could prune
+  the commit where that branch split from `main`, so its next merge found no
+  merge base. Cleanup now keeps the whole merge-base closure of every live
+  branch (#328, found by the simulator).
+- A three-way merge reported a conflict when both branches deleted the same
+  record; that agreement now merges cleanly (#328, found by the simulator).
 - Workspace compatibility after the `hmac` 0.13 and `fs4` 1.1 upgrades:
   direct SHA-2 consumers now share `digest` 0.11 with HMAC, hexadecimal digest
   rendering and key initialization use the current APIs, and file-worker

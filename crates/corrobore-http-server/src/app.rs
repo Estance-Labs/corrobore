@@ -151,6 +151,8 @@ pub enum AppStateInitError {
     OpenCtiWriteStateFailed { reason: String },
     #[error("failed to restore OpenCTI reconciliation state: {reason}")]
     OpenCtiReconciliationStateFailed { reason: String },
+    #[error("failed to open the content store: {reason}")]
+    ContentStoreFailed { reason: String },
 }
 
 #[derive(Clone)]
@@ -175,6 +177,10 @@ pub struct AppState {
     /// Verifiers available to governance workflows, including adapters
     /// registered by loaded domain providers.
     pub verifier_registry: Arc<graph_core::VerifierRegistry>,
+    /// Content plane (ADR-0021): offloaded evidence content, by content id.
+    pub content: Arc<std::sync::RwLock<crate::content_plane::ContentPlane>>,
+    /// Embedding provider of the vector and hybrid seed modes, if configured.
+    pub embedding: Option<Arc<dyn crate::embedding::EmbeddingProvider>>,
     pub started_at: Instant,
 }
 
@@ -326,6 +332,14 @@ impl AppState {
         .map_err(|reason| AppStateInitError::OpenCtiRoutingStateFailed { reason })?;
         let domain_providers = initialize_domain_providers(&config)?;
         let verifier_registry = initialize_verifier_registry(domain_providers.as_ref())?;
+        let content_root = match &runtime_store {
+            RuntimeStoreProvider::Persistent(runtime) => Some(runtime.root_path.clone()),
+            RuntimeStoreProvider::Ephemeral => None,
+        };
+        let content =
+            crate::content_plane::ContentPlane::open(&config.content, content_root.as_deref())
+                .map_err(|reason| AppStateInitError::ContentStoreFailed { reason })?;
+        let config_embedding = config.embedding.clone();
         let timeline = ExplorerTimelineStore::new(&config.session_store_dir);
         let lifecycle = Arc::new(ServerLifecycle::initializing());
         let opencti_write_semaphore = Arc::new(tokio::sync::Semaphore::new(
@@ -351,6 +365,8 @@ impl AppState {
             opencti_write_semaphore,
             domain_providers,
             verifier_registry,
+            content: Arc::new(std::sync::RwLock::new(content)),
+            embedding: crate::embedding::provider_from_config(&config_embedding).map(Arc::from),
             started_at: Instant::now(),
         };
         lifecycle.mark_ready();
@@ -628,6 +644,7 @@ fn initialize_runtime_store(
                     max_hot_nodes: config.storage_max_hot_nodes,
                     max_hot_relationships: config.storage_max_hot_relationships,
                     max_warm_adjacency_entries: config.storage_max_warm_adjacency_entries,
+                    vector_index: config.vector_index_policy(),
                 },
             )
             .map(|store| RuntimeStoreProvider::Persistent(Box::new(store)))
@@ -714,7 +731,7 @@ fn initialize_persistent_runtime_store(
     })
 }
 
-fn canonical_projection_for_query(query: &str) -> CanonicalProjectionRequest {
+pub(crate) fn canonical_projection_for_query(query: &str) -> CanonicalProjectionRequest {
     let Ok(ast) = cypher_parser::parse_query(query) else {
         return CanonicalProjectionRequest::all();
     };
@@ -1053,9 +1070,15 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/cypher/execute", post(execute_cypher))
         .route("/v1/cypher/read", post(execute_read_cypher))
         .route("/v1/cypher/write", post(execute_write_cypher))
+        .route(
+            "/v1/cypher/validate",
+            post(crate::handlers::cypher_validate::validate_cypher),
+        )
         .route("/v1/domains/{domain}/validate", post(validate_domain))
         .route("/v1/stix/validate", post(validate_stix))
         .route("/v1/seed/search", post(seed_search))
+        .route("/v1/nlq/compile", post(crate::handlers::nlq::compile))
+        .route("/v1/embeddings", post(crate::handlers::embeddings::embed))
         .route("/v1/memory/operations", post(execute_memory_operation))
         .route("/v1/sessions/start", post(start_session))
         .route("/v1/sessions/{session_id}/stop", post(stop_session))
@@ -1071,6 +1094,62 @@ pub fn build_router(state: AppState) -> Router {
             get(explorer_graph),
         )
         .route("/v1/export/stix", get(export_stix))
+        .route(
+            "/v1/graph/commits",
+            get(crate::handlers::graph_history::list_commits),
+        )
+        .route(
+            "/v1/graph/commits/{commit_id}",
+            get(crate::handlers::graph_history::get_commit),
+        )
+        .route(
+            "/v1/graph/branches",
+            get(crate::handlers::graph_branches::list_branches)
+                .post(crate::handlers::graph_branches::create_branch),
+        )
+        .route(
+            "/v1/graph/branches/{*name}",
+            axum::routing::delete(crate::handlers::graph_branches::delete_branch),
+        )
+        .route("/v1/graph/diff", get(crate::handlers::graph_diff::diff))
+        .route("/v1/graph/merge", post(crate::handlers::graph_merge::merge))
+        .route("/v1/graph/edits", post(crate::handlers::graph_edits::apply))
+        .route(
+            "/v1/graph/revert",
+            post(crate::handlers::graph_reviews::revert),
+        )
+        .route(
+            "/v1/graph/reviews",
+            get(crate::handlers::graph_reviews::list).post(crate::handlers::graph_reviews::submit),
+        )
+        .route(
+            "/v1/graph/search/vector",
+            post(crate::handlers::graph_search::vector_search),
+        )
+        .route(
+            "/v1/graph/search/hybrid",
+            post(crate::handlers::graph_search::hybrid_search),
+        )
+        .route(
+            "/v1/graph/schema",
+            get(crate::handlers::graph_schema::schema),
+        )
+        .route(
+            "/v1/graph/merge-base",
+            get(crate::handlers::graph_diff::merge_base),
+        )
+        .route(
+            "/v1/graph/changes",
+            get(crate::handlers::graph_diff::changes),
+        )
+        .route(
+            "/v1/graph/records",
+            get(crate::handlers::graph_records::list_records),
+        )
+        .route(
+            "/v1/graph/nodes/{node_id}",
+            get(crate::handlers::graph_records::get_node),
+        )
         // 2.3: standard JSON routes get a tight body limit.
         .layer(DefaultBodyLimit::max(state.config.max_body_bytes));
 
@@ -1152,8 +1231,18 @@ pub fn build_router(state: AppState) -> Router {
             .expect("rate limiter configuration must be valid"),
     );
 
+    // Issue #341: content uploads have their own size limit.
+    let content_routes = Router::new()
+        .route("/v1/content", post(crate::handlers::content::upload))
+        .route(
+            "/v1/content/{content_id}",
+            get(crate::handlers::content::read),
+        )
+        .layer(DefaultBodyLimit::max(state.config.content.max_bytes));
+
     let protected = protected
         .merge(import_routes)
+        .merge(content_routes)
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_bearer_auth,
@@ -1202,6 +1291,14 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/admin/storage/snapshots", post(create_snapshot))
         .route("/v1/admin/storage/indexes/rebuild", post(rebuild_indexes))
         .route(
+            "/v1/admin/storage/cleanup",
+            post(crate::handlers::database_operations::cleanup_history),
+        )
+        .route(
+            "/v1/admin/storage/export/parquet",
+            post(crate::handlers::database_operations::export_parquet),
+        )
+        .route(
             "/v1/admin/storage/operations",
             get(database_operation_status),
         )
@@ -1230,13 +1327,58 @@ pub fn build_router(state: AppState) -> Router {
         .merge(operational)
         .with_state(state.clone());
 
-    attach_web_delivery(router, web_dir.as_deref())
+    let cors = cors_layer(&state.config.cors_allowed_origins);
+    let router = attach_web_delivery(router, web_dir.as_deref())
         .layer(middleware::from_fn_with_state(
             state,
             lifecycle_request_gate,
         ))
         .layer(http_trace)
-        .layer(middleware::from_fn(correlate_request))
+        .layer(middleware::from_fn(correlate_request));
+    // Outermost, so preflights are answered before authentication (#359).
+    match cors {
+        Some(cors) => router.layer(cors),
+        None => router,
+    }
+}
+
+/// CORS for the configured exact origins, or none when the list is empty.
+/// Bearer tokens travel in `Authorization`, so credentials are never allowed.
+fn cors_layer(origins: &[String]) -> Option<tower_http::cors::CorsLayer> {
+    use axum::http::{HeaderName, HeaderValue, Method, header};
+    use tower_http::cors::{AllowOrigin, CorsLayer};
+
+    let origins: Vec<HeaderValue> = origins
+        .iter()
+        .filter_map(|origin| HeaderValue::from_str(origin).ok())
+        .collect();
+    if origins.is_empty() {
+        return None;
+    }
+    Some(
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(origins))
+            .allow_methods([
+                Method::GET,
+                Method::HEAD,
+                Method::POST,
+                Method::DELETE,
+                Method::OPTIONS,
+            ])
+            .allow_headers([
+                header::AUTHORIZATION,
+                header::CONTENT_TYPE,
+                header::RANGE,
+                HeaderName::from_static("if-graph-commit"),
+            ])
+            .expose_headers([
+                header::CONTENT_RANGE,
+                header::ETAG,
+                header::ACCEPT_RANGES,
+                header::CONTENT_LENGTH,
+            ])
+            .max_age(Duration::from_secs(600)),
+    )
 }
 
 fn rate_limit_period(requests_per_second: u64) -> Duration {

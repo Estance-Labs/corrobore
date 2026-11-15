@@ -13,6 +13,7 @@ name = "graph_storage"
 path = "src/lib.rs"
 
 [dependencies]
+chrono = { workspace = true }
 getrandom = { workspace = true }
 graph-core = { path = "../graph-core" }
 opencti-access = { path = "../opencti-access" }
@@ -30,6 +31,10 @@ proptest = { workspace = true }
 
 [[bench]]
 name = "page_in"
+harness = false
+
+[[bench]]
+name = "vector_search"
 harness = false
 
 [lints]

@@ -339,4 +339,122 @@ pub enum GraphStorageError {
     /// before they are implemented.
     #[error("not implemented yet: {0}")]
     NotImplemented(&'static str),
+
+    /// A complete line of the graph history log failed its checksum or could
+    /// not be decoded. Only a torn final line is repaired automatically.
+    #[error("graph history log is corrupted at line {line}: {reason}")]
+    GraphHistoryCorrupted {
+        /// One-based line number in the history log.
+        line: usize,
+        /// Decoder or checksum diagnostic.
+        reason: String,
+    },
+
+    /// The requested graph commit is not retained in the history.
+    #[error("unknown graph commit {commit_id}")]
+    UnknownGraphCommit {
+        /// Requested commit id.
+        commit_id: String,
+    },
+
+    /// The requested branch does not exist.
+    #[error("unknown graph branch {branch}")]
+    UnknownGraphBranch {
+        /// Requested branch name.
+        branch: String,
+    },
+
+    /// A branch operation conflicts with the current branch set.
+    #[error("graph branch {branch} cannot be changed: {reason}")]
+    GraphBranchConflict {
+        /// Branch name.
+        branch: String,
+        /// Why the operation was refused.
+        reason: String,
+    },
+
+    /// A write expected a branch head that is no longer current.
+    #[error("graph branch {branch} moved: expected head {expected}, found {actual}")]
+    GraphHeadMoved {
+        /// Branch name.
+        branch: String,
+        /// Head the writer read.
+        expected: String,
+        /// Current head.
+        actual: String,
+    },
+
+    /// An edit of a batch is not valid; nothing was written.
+    #[error("edit {index} is invalid: {reason}")]
+    GraphEditInvalid {
+        /// Position of the edit in the batch (0 when the batch itself is invalid).
+        index: usize,
+        /// What is wrong.
+        reason: String,
+    },
+
+    /// An edit names a node that is not live at the head it applies to.
+    #[error("node {node_id} is not on branch {branch}")]
+    GraphEditNodeNotFound {
+        /// Branch edited.
+        branch: String,
+        /// Node the edit names.
+        node_id: String,
+    },
+
+    /// An edit names a relationship that is not live at the head it applies to.
+    #[error("relationship {relationship_id} is not on branch {branch}")]
+    GraphEditRelationshipNotFound {
+        /// Branch edited.
+        branch: String,
+        /// Relationship the edit names.
+        relationship_id: String,
+    },
+
+    /// An edit would leave the branch inconsistent.
+    #[error("node {node_id} on branch {branch} cannot be deleted: {reason}")]
+    GraphEditBlocked {
+        /// Branch edited.
+        branch: String,
+        /// Node the edit names.
+        node_id: String,
+        /// What has to change first.
+        reason: String,
+    },
+
+    /// A revert names a record that does not differ from the merge base.
+    #[error("record {record_id} on branch {branch} does not differ from its merge base")]
+    GraphRevertNoChange {
+        /// Branch name.
+        branch: String,
+        /// Record that was asked to be reverted.
+        record_id: String,
+    },
+
+    /// A revert would leave the branch inconsistent.
+    #[error("record {record_id} on branch {branch} cannot be reverted: {reason}")]
+    GraphRevertBlocked {
+        /// Branch name.
+        branch: String,
+        /// Record that was asked to be reverted.
+        record_id: String,
+        /// What has to be reverted first.
+        reason: String,
+    },
+
+    /// A change feed cursor names a commit the history no longer retains.
+    #[error("change feed cursor {cursor} is no longer retained; restart from a baseline")]
+    ChangeFeedGap {
+        /// Unretained cursor commit.
+        cursor: String,
+    },
+
+    /// A branch name does not follow the naming rules.
+    #[error("invalid graph branch name {branch:?}: {reason}")]
+    InvalidGraphBranchName {
+        /// Rejected branch name.
+        branch: String,
+        /// Naming rule that failed.
+        reason: String,
+    },
 }

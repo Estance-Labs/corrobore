@@ -44,6 +44,61 @@ catalog. Recovery loads the last safe checkpoint and replays newer committed
 transactions idempotently. Compaction operates behind that checkpoint boundary
 and never rewrites active node or relationship payload references.
 
+### Deterministic simulation
+
+`crates/graph-storage/tests/deterministic_simulation.rs` tests the persistent
+store as a whole. Each universe starts from a seed and draws a sequence of
+operations from a xorshift generator: writes on `main`, writes interrupted at
+each `MutationCrashStage`, branch creation and branch writes, merges (with or
+without deleting the source), history cleanup, reopening the store and
+truncating the last history line. After every step it checks four oracles:
+
+- the records visible on `main` and on each branch match an in-memory model;
+- the commit history stays continuous: every parent exists and generations grow;
+- the view of the `main` head equals what the canonical catalog holds;
+- a write interrupted by a crash is either fully visible or absent after reopen.
+
+A failure reports its seed and step; rerunning that seed replays the same
+universe. Add new persistence operations to the simulator together with the
+model change that describes their expected effect.
+
+### Vector index selection
+
+Vector search (`canonical_engine_store/vector_search.rs`) goes through the
+`VectorIndex` trait. `CanonicalStoreOptions::vector_index`, a
+`VectorIndexPolicy`, picks the implementation each time an index is built or
+moved forward to a commit:
+
+- `ExactVectorIndex` compares the query with every vector. It answers every
+  metric and is the default below `hnsw_min_vectors` (10,000) vectors, where a
+  scan costs less than building a graph.
+- `HnswVectorIndex` (`vector_search/hnsw.rs`) is a Hierarchical Navigable Small
+  World graph, implemented in the crate without a new dependency, with
+  `m = 16`, `ef_construction = 128` and `ef_search = 128` by default. A graph
+  is built for one metric. A query with another metric is answered by an exact
+  scan of the same vectors, and the store keeps one graph per metric that has
+  been queried. A query asking for at least as many hits as there are vectors,
+  as a label-filtered search does, is also answered exactly.
+
+`auto` mode switches to HNSW once an index reaches the threshold and back to
+exact below it. `exact` and `hnsw` force one implementation. The server reads
+the policy from `CORROBORE_STORAGE_VECTOR_INDEX` and
+`CORROBORE_STORAGE_VECTOR_HNSW_MIN_VECTORS`.
+
+The graph is deterministic. A vector's layer comes from a hash of its record
+id and a fixed seed, and the store inserts vectors in id order. Every heap and
+sort breaks ties by insertion slot, so the same operations build the same graph
+and return the same hits. A removal leaves a tombstone, which still routes
+searches but is never returned. A replaced vector is tombstoned and inserted
+again. Once tombstones outnumber the live vectors, the graph is rebuilt from
+the live vectors. Hits are rescored with the exact similarity, so HNSW and
+exact scores are comparable.
+
+`crates/graph-storage/tests/hnsw_vector_index.rs` measures recall@10 against
+the exact index on 5,000 seeded 64-dimension vectors and requires at least
+0.95 for cosine and L2. `cargo bench -p graph-storage --bench vector_search`
+compares the query latency of both implementations.
+
 ## Working-set subsystem
 
 The subsystem is split by responsibility:

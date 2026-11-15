@@ -58,6 +58,23 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorEnvelope'
   schemas:
+    GraphReview:
+      type: object
+      required: [branch, head, reviewer, decision, at_ms]
+      properties:
+        branch: {type: string}
+        head: {type: string}
+        reviewer: {type: string}
+        decision: {type: string, enum: [approved, changes_requested]}
+        comment: {type: string, nullable: true}
+        at_ms: {type: integer}
+    GraphReviewListed:
+      allOf:
+        - {$ref: '#/components/schemas/GraphReview'}
+        - type: object
+          required: [current]
+          properties:
+            current: {type: boolean}
     StageMeasurement:
       type: object
       additionalProperties: false
@@ -253,11 +270,35 @@ components:
         workspace_id: {type: string}
         session_id: {type: string}
         budget_ref: {type: string}
+        branch:
+          type: string
+          description: >-
+            Read or write the head of this branch instead of main. Persistent
+            mode only. A branch write publishes a branch commit and answers
+            409 GRAPH_COMMIT_PRECONDITION_FAILED if the head moved meanwhile.
+        commit:
+          type: string
+          pattern: '^gc[0-9a-f]{40}$'
+          description: >-
+            Read at this graph commit. Persistent mode only. Pinned reads are
+            read-only and a write answers 409 GRAPH_COMMIT_READ_ONLY.
+        expected_commit:
+          type: string
+          pattern: '^gc[0-9a-f]{40}$'
+          description: >-
+            Optimistic precondition: write only if the target branch head is
+            still this commit, else 409 GRAPH_COMMIT_PRECONDITION_FAILED. The
+            If-Graph-Commit header takes precedence.
     CypherEnvelope:
       type: object
       required: [ok, result]
       properties:
         ok: {type: boolean, const: true}
+        graph_commit_id:
+          type: string
+          description: >-
+            Commit a pinned read used, or the main head right after the request.
+            Present in persistent mode only.
         result:
           type: object
           required: [status]
@@ -1341,6 +1382,64 @@ paths:
                   ok: {type: boolean, const: true}
                   result: {$ref: '#/components/schemas/SnapshotReport'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+  /v1/admin/storage/cleanup:
+    post:
+      operationId: cleanupGraphHistory
+      summary: Prune graph history outside a retention window and compact payloads
+      tags: [Database Operations]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                keep_commits: {type: integer, minimum: 1, default: 100}
+                keep_seconds: {type: integer, minimum: 0}
+                dry_run: {type: boolean, default: false}
+      responses:
+        '200':
+          description: Pruned and retained commits, baselines and reclaimed bytes
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '503':
+          description: DATABASE_OPERATION_FAILED
+          content:
+            application/json:
+              schema: {type: object}
+
+  /v1/admin/storage/export/parquet:
+    post:
+      operationId: exportGraphParquet
+      summary: Export one commit to Apache Parquet files on the server
+      tags: [Database Operations]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [destination]
+              properties:
+                destination: {type: string}
+                branch: {type: string, default: main}
+                commit: {type: string, pattern: '^gc[0-9a-f]{40}$'}
+      responses:
+        '200':
+          description: Commit, files written with rows and typed columns, total rows
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503':
+          description: DATABASE_OPERATION_FAILED
+          content:
+            application/json:
+              schema: {type: object}
+
   /v1/admin/storage/indexes/rebuild:
     post:
       operationId: rebuildDatabaseIndexes
@@ -1602,11 +1701,65 @@ paths:
               schema: {$ref: '#/components/schemas/CypherEnvelope'}
         '401': {$ref: '#/components/responses/Unauthorized'}
 
+  /v1/cypher/validate:
+    post:
+      operationId: validateCypher
+      summary: Parse a Cypher query and report diagnostics without executing it
+      tags: [Cypher]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query: {type: string, maxLength: 65536}
+      responses:
+        '200':
+          description: >-
+            valid, kind (read, mutation, mixed or null), clauses, diagnostics
+            with severity (error or warning), code, message and suggestion, and
+            the logical plan of a parsed query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: true}
+                  result:
+                    type: object
+                    properties:
+                      valid: {type: boolean}
+                      kind: {type: string, nullable: true, enum: [read, mutation, mixed]}
+                      clauses: {type: array, items: {type: string}}
+                      diagnostics: {type: array, items: {type: object}}
+                      plan:
+                        type: object
+                        nullable: true
+                        properties:
+                          operators:
+                            type: array
+                            items: {type: string, enum: [node_scan, expand_relationship, filter, projection, sort, skip, limit, mutation, function_call]}
+                          query_kind: {type: string, enum: [read, mutation, mixed]}
+                          bindings:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                variable: {type: string}
+                                element: {type: string, enum: [node, relationship]}
+                                projected: {type: boolean}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
   /v1/cypher/write:
     post:
       operationId: executeCypherWrite
       summary: Execute a forced mutation Cypher request
       tags: [Cypher]
+      parameters:
+        - {name: If-Graph-Commit, in: header, description: Optimistic write precondition (the head the caller read), schema: {type: string, pattern: '^gc[0-9a-f]{40}$'}}
       requestBody:
         required: true
         content:
@@ -1618,6 +1771,11 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/CypherEnvelope'}
+        '409':
+          description: GRAPH_COMMIT_PRECONDITION_FAILED or GRAPH_COMMIT_READ_ONLY
+          content:
+            application/json:
+              schema: {type: object}
         '401': {$ref: '#/components/responses/Unauthorized'}
 
   /v1/cypher/execute:
@@ -1625,6 +1783,8 @@ paths:
       operationId: executeCypher
       summary: Execute Cypher with explicit or automatic mode
       tags: [Cypher]
+      parameters:
+        - {name: If-Graph-Commit, in: header, description: Optimistic write precondition (the head the caller read), schema: {type: string, pattern: '^gc[0-9a-f]{40}$'}}
       requestBody:
         required: true
         content:
@@ -1636,6 +1796,11 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/CypherEnvelope'}
+        '409':
+          description: GRAPH_COMMIT_PRECONDITION_FAILED or GRAPH_COMMIT_READ_ONLY
+          content:
+            application/json:
+              schema: {type: object}
         '401': {$ref: '#/components/responses/Unauthorized'}
 
   /v1/seed/search:
@@ -1673,6 +1838,8 @@ paths:
                   result:
                     type: object
                     properties:
+                      retrieval: {type: string, enum: [vector, hybrid, lexical]}
+                      commit_id: {type: string, nullable: true}
                       candidates:
                         type: array
                         items:
@@ -2734,6 +2901,7 @@ paths:
         - {name: max_properties_per_record, in: query, schema: {type: integer, minimum: 1, maximum: 256, default: 32}}
         - {name: max_payload_bytes, in: query, schema: {type: integer, minimum: 1024, maximum: 16777216, default: 2097152}}
         - {name: max_computation_units, in: query, schema: {type: integer, minimum: 1, maximum: 1000000, default: 100000}}
+        - {name: commit, in: query, description: Project this graph commit (persistent mode), schema: {type: string, pattern: '^gc[0-9a-f]{40}$'}}
       responses:
         '200':
           description: Bounded deterministic graph projection with exact boundary identity
@@ -2741,6 +2909,675 @@ paths:
             application/json:
               schema: {type: object}
         '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/graph/commits:
+    get:
+      operationId: listGraphCommits
+      summary: List the first-parent commit history of a branch, newest first
+      tags: [GraphHistory]
+      parameters:
+        - {name: branch, in: query, schema: {type: string, default: main}}
+        - {name: cursor, in: query, description: next_cursor of the previous page, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 500, default: 50}}
+      responses:
+        '200':
+          description: One page of commits with the branch head and the next cursor
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: PERSISTENT_STORAGE_REQUIRED in ephemeral mode
+          content:
+            application/json:
+              schema: {type: object}
+
+  /v1/graph/commits/{commit_id}:
+    get:
+      operationId: getGraphCommit
+      summary: Read one graph commit and the record versions it published
+      tags: [GraphHistory]
+      parameters:
+        - {name: commit_id, in: path, required: true, schema: {type: string, pattern: '^gc[0-9a-f]{40}$'}}
+      responses:
+        '200':
+          description: Commit summary with its record changes
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: PERSISTENT_STORAGE_REQUIRED in ephemeral mode
+          content:
+            application/json:
+              schema: {type: object}
+
+  /v1/graph/branches:
+    get:
+      operationId: listGraphBranches
+      summary: List branches with their head, origin and merge state, main first
+      tags: [GraphHistory]
+      responses:
+        '200':
+          description: Branches with head, created_from, merged and commits_ahead
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+    post:
+      operationId: createGraphBranch
+      summary: Create a branch at a branch head or a retained commit
+      tags: [GraphHistory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string, pattern: '^[A-Za-z0-9._/-]{1,128}$'}
+                from_branch: {type: string, default: main}
+                from_commit: {type: string, pattern: '^gc[0-9a-f]{40}$'}
+                actor: {type: string}
+      responses:
+        '200':
+          description: The created branch
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: GRAPH_BRANCH_CONFLICT when the name exists
+          content:
+            application/json:
+              schema: {type: object}
+
+  /v1/graph/branches/{*name}:
+    delete:
+      operationId: deleteGraphBranch
+      summary: Delete a merged branch, or any branch other than main with force
+      tags: [GraphHistory]
+      parameters:
+        - {name: name, in: path, required: true, description: Branch name, slashes included, schema: {type: string}}
+        - {name: force, in: query, schema: {type: boolean, default: false}}
+      responses:
+        '200':
+          description: The deleted branch name
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: GRAPH_BRANCH_CONFLICT for main or an unmerged branch without force
+          content:
+            application/json:
+              schema: {type: object}
+
+  /v1/graph/diff:
+    get:
+      operationId: diffGraphCommits
+      summary: List records that differ between two commits or branch heads
+      tags: [GraphHistory]
+      parameters:
+        - {name: from, in: query, required: true, description: Commit id or branch name, schema: {type: string}}
+        - {name: to, in: query, required: true, description: Commit id or branch name, schema: {type: string}}
+        - {name: kind, in: query, schema: {type: string, enum: [node, relationship]}}
+        - {name: cursor, in: query, description: 'node:<id> or relationship:<id> from the previous page', schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 2000, default: 200}}
+        - {name: include_values, in: query, schema: {type: boolean, default: false}}
+      responses:
+        '200':
+          description: Totals and one page of added, changed and removed records
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/graph/merge:
+    post:
+      operationId: mergeGraphBranch
+      summary: Three-way merge of one branch into another, with a dry-run preview
+      tags: [GraphHistory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source]
+              properties:
+                source: {type: string}
+                target: {type: string, default: main}
+                dry_run: {type: boolean, default: false}
+                expected_target_head: {type: string, pattern: '^gc[0-9a-f]{40}$'}
+                delete_source: {type: boolean, default: false}
+                actor: {type: string}
+                message: {type: string}
+      responses:
+        '200':
+          description: >-
+            Merge report: outcome already_up_to_date, fast_forward or merged,
+            heads, merge base, the published commit_id and change counts
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: >-
+            MERGE_CONFLICT with the full report and every conflict
+            (concurrent_update, update_delete, add_add, dangling_relationship),
+            or GRAPH_COMMIT_PRECONDITION_FAILED when the target head moved
+          content:
+            application/json:
+              schema: {type: object}
+
+  /v1/graph/edits:
+    post:
+      operationId: applyGraphEdits
+      summary: Apply a batch of record edits to a branch head as one commit
+      tags: [GraphHistory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [edits]
+              properties:
+                branch: {type: string, default: main}
+                expected_head: {type: string}
+                message: {type: string}
+                actor: {type: string}
+                edits:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items:
+                    type: object
+                    required: [op]
+                    properties:
+                      op: {type: string, enum: [set_properties, create_node, delete_node, create_relationship, set_relationship_properties, delete_relationship]}
+                      node_id: {type: string}
+                      relationship_id: {type: string}
+                      source_id: {type: string, description: 'A live node id, or $n for the n-th create_node of the batch'}
+                      target_id: {type: string, description: 'A live node id, or $n for the n-th create_node of the batch'}
+                      type: {type: string}
+                      set: {type: object}
+                      remove: {type: array, items: {type: string}}
+                      labels: {type: array, items: {type: string}}
+                      properties: {type: object}
+      responses:
+        '200':
+          description: The commit holding the batch
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: true}
+                  result:
+                    type: object
+                    properties:
+                      commit_id: {type: string}
+                      branch: {type: string}
+                      created: {type: array, items: {type: string}}
+                      created_relationships: {type: array, items: {type: string}}
+                      changed: {type: integer}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: GRAPH_COMMIT_PRECONDITION_FAILED, GRAPH_EDIT_BLOCKED or PERSISTENT_STORAGE_REQUIRED
+          content:
+            application/json:
+              schema: {type: object}
+
+  /v1/graph/revert:
+    post:
+      operationId: revertGraphChange
+      summary: Put one record of a branch back to its merge-base version as one commit
+      tags: [GraphHistory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [branch, record_kind, record_id]
+              properties:
+                branch: {type: string}
+                record_kind: {type: string, enum: [node, relationship]}
+                record_id: {type: string}
+                expected_head: {type: string}
+                actor: {type: string}
+      responses:
+        '200':
+          description: The branch commit holding the revert
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: true}
+                  result:
+                    type: object
+                    properties:
+                      commit_id: {type: string}
+                      branch: {type: string}
+                      record_kind: {type: string, enum: [node, relationship]}
+                      record_id: {type: string}
+                      restored: {type: string, enum: [base_version, removed, recreated]}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: GRAPH_COMMIT_PRECONDITION_FAILED, GRAPH_REVERT_BLOCKED or PERSISTENT_STORAGE_REQUIRED
+          content:
+            application/json:
+              schema: {type: object}
+        '422':
+          description: GRAPH_REVERT_NO_CHANGE
+          content:
+            application/json:
+              schema: {type: object}
+
+  /v1/graph/reviews:
+    get:
+      operationId: listGraphReviews
+      summary: Reviews of a branch, newest first
+      tags: [GraphHistory]
+      parameters:
+        - {name: branch, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Reviews, each marked current when it looked at the current head
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: true}
+                  result:
+                    type: object
+                    properties:
+                      reviews:
+                        type: array
+                        items: {$ref: '#/components/schemas/GraphReviewListed'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+    post:
+      operationId: submitGraphReview
+      summary: Record a review decision on the branch's current head
+      tags: [GraphHistory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [branch, head, decision]
+              properties:
+                branch: {type: string}
+                head: {type: string}
+                decision: {type: string, enum: [approved, changes_requested]}
+                comment: {type: string, maxLength: 4000}
+                reviewer: {type: string}
+      responses:
+        '201':
+          description: The recorded review
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: true}
+                  result: {$ref: '#/components/schemas/GraphReview'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: GRAPH_COMMIT_PRECONDITION_FAILED when head is not the current head
+          content:
+            application/json:
+              schema: {type: object}
+
+  /v1/graph/merge-base:
+    get:
+      operationId: getGraphMergeBase
+      summary: Best common ancestor of two commits or branch heads
+      tags: [GraphHistory]
+      parameters:
+        - {name: a, in: query, required: true, schema: {type: string}}
+        - {name: b, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Resolved commits and their merge base, or null
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/graph/changes:
+    get:
+      operationId: listGraphChanges
+      summary: Commits published on a branch after a cursor, oldest first
+      tags: [GraphHistory]
+      parameters:
+        - {name: branch, in: query, schema: {type: string, default: main}}
+        - {name: after, in: query, description: Last commit already processed, schema: {type: string, pattern: '^gc[0-9a-f]{40}$'}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 500, default: 50}}
+      responses:
+        '200':
+          description: Commits with their changes, the next cursor and has_more
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: The cursor is not on the branch's first-parent history
+          content:
+            application/json:
+              schema: {type: object}
+        '410':
+          description: CHANGE_FEED_GAP when the cursor commit is no longer retained
+          content:
+            application/json:
+              schema: {type: object}
+
+  /v1/nlq/compile:
+    post:
+      operationId: compileNlq
+      summary: Compile a natural-language request into a validated nlq/v1 action without executing it
+      tags: [Seeds]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: {type: string, maxLength: 4000}
+                language: {type: string, enum: [fr, en]}
+                evidence_refs: {type: array, items: {type: string}, maxItems: 100}
+                allow_writes: {type: boolean, default: false}
+      responses:
+        '200':
+          description: The validated action
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: true}
+                  result:
+                    type: object
+                    properties:
+                      kind: {type: string, enum: [cypher_read, cypher_write_proposal, investigation, memory_operation, clarification_required, abstain, unsupported]}
+                      language: {type: string}
+                      canonical: {type: string}
+                      writes: {type: boolean}
+                      compiler: {type: string}
+                      envelope: {type: object}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '422':
+          description: NLQ_REJECTED
+          content:
+            application/json:
+              schema: {type: object}
+
+  /v1/embeddings:
+    post:
+      operationId: embedTexts
+      summary: Embed texts with the configured embedding provider
+      tags: [Seeds]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [texts]
+              properties:
+                texts: {type: array, items: {type: string}, minItems: 1, maxItems: 256}
+      responses:
+        '200':
+          description: One vector per text, in order
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: true}
+                  result:
+                    type: object
+                    properties:
+                      provider: {type: string}
+                      dimensions: {type: integer}
+                      vectors: {type: array, items: {type: array, items: {type: number}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '502':
+          description: EMBEDDING_PROVIDER_FAILED
+          content:
+            application/json:
+              schema: {type: object}
+        '503':
+          description: EMBEDDING_PROVIDER_NOT_CONFIGURED
+          content:
+            application/json:
+              schema: {type: object}
+
+  /v1/content:
+    post:
+      operationId: uploadContent
+      summary: Place content by the storage policy, offloading it unless it stays inline
+      description: >-
+        Text and JSON up to CORROBORE_HTTP_CONTENT_INLINE_MAX_BYTES stay inline in
+        the returned handle and are not retained. Other content is stored once,
+        content-addressed, in the configured content store.
+      tags: [Content]
+      requestBody:
+        required: true
+        content:
+          '*/*':
+            schema: {type: string, format: binary}
+      responses:
+        '201':
+          description: Placement decision and the handle to store on a record
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, placement, policy_version, sha256, byte_length, handle]
+                properties:
+                  ok: {type: boolean}
+                  placement: {type: string, enum: [inline, offloaded]}
+                  policy_version: {type: string}
+                  content_id: {type: string, nullable: true, pattern: '^content--[0-9a-f]{64}$'}
+                  sha256: {type: string}
+                  byte_length: {type: integer, minimum: 1}
+                  media_type: {type: string, nullable: true}
+                  backend: {type: string, nullable: true}
+                  handle: {type: object}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '413':
+          description: The body exceeds CORROBORE_HTTP_CONTENT_MAX_BYTES
+
+  /v1/content/{content_id}:
+    get:
+      operationId: readContent
+      summary: Offloaded content by id, whole or one byte range
+      tags: [Content]
+      parameters:
+        - name: content_id
+          in: path
+          required: true
+          schema: {type: string, pattern: '^content--[0-9a-f]{64}$'}
+        - name: Range
+          in: header
+          required: false
+          description: A single `bytes=start-end`, `bytes=start-` or `bytes=-suffix` range.
+          schema: {type: string}
+      responses:
+        '200':
+          description: The whole content, with its media type and digest ETag
+          content:
+            '*/*':
+              schema: {type: string, format: binary}
+        '206':
+          description: The requested range, with Content-Range
+          content:
+            '*/*':
+              schema: {type: string, format: binary}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '410':
+          description: CONTENT_ERASED
+          content:
+            application/json:
+              schema: {type: object}
+        '416':
+          description: The range lies outside the content; Content-Range gives its length
+
+  /v1/graph/search/vector:
+    post:
+      operationId: vectorSearchGraph
+      summary: Nodes whose embedding property is closest to a vector at a commit
+      tags: [GraphHistory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vector]
+              properties:
+                vector: {type: array, items: {type: number}, minItems: 1, maxItems: 8192}
+                property: {type: string, default: embedding}
+                k: {type: integer, minimum: 1, maximum: 1000, default: 10}
+                metric: {type: string, enum: [cosine, l2], default: cosine}
+                label: {type: string}
+                branch: {type: string}
+                commit: {type: string, pattern: '^gc[0-9a-f]{40}$'}
+      responses:
+        '200':
+          description: Hits with node id, similarity, labels and vector rank
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/graph/search/hybrid:
+    post:
+      operationId: hybridSearchGraph
+      summary: Full text, vector and graph-proximity rankings fused with Reciprocal Rank Fusion
+      tags: [GraphHistory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text: {type: string}
+                vector: {type: array, items: {type: number}, maxItems: 8192}
+                property: {type: string, default: embedding}
+                k: {type: integer, minimum: 1, maximum: 1000, default: 10}
+                graph_expansion: {type: boolean, default: true}
+                branch: {type: string}
+                commit: {type: string, pattern: '^gc[0-9a-f]{40}$'}
+      responses:
+        '200':
+          description: Hits with fused score and the rank each signal gave them
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/graph/schema:
+    get:
+      operationId: getGraphSchema
+      summary: Labels, relationship types and property keys of the records visible at a commit
+      tags: [GraphHistory]
+      parameters:
+        - {name: branch, in: query, schema: {type: string, default: main}}
+        - {name: commit, in: query, schema: {type: string, pattern: '^gc[0-9a-f]{40}$'}}
+      responses:
+        '200':
+          description: >-
+            Labels and relationship types with stable ids, counts, property keys
+            with their value types, and the label pairs each type connects
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/graph/records:
+    get:
+      operationId: listGraphRecords
+      summary: Page the nodes or relationships visible at a commit
+      tags: [GraphHistory]
+      parameters:
+        - {name: branch, in: query, schema: {type: string, default: main}}
+        - {name: commit, in: query, schema: {type: string, pattern: '^gc[0-9a-f]{40}$'}}
+        - {name: kind, in: query, schema: {type: string, enum: [node, relationship], default: node}}
+        - {name: label, in: query, description: Node label, or relationship type, schema: {type: string}}
+        - {name: cursor, in: query, description: Last record id of the previous page, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 1000, default: 100}}
+        - {name: include_deleted, in: query, schema: {type: boolean, default: false}}
+        - {name: related_type, in: query, description: Keep nodes with a live relationship of this type, schema: {type: string}}
+        - {name: related_direction, in: query, description: Which end the listed node is, schema: {type: string, enum: [out, in, any], default: any}}
+        - {name: related_label, in: query, description: Label of the live node at the other end, schema: {type: string}}
+      responses:
+        '200':
+          description: One keyset page in record-id order with the commit and total
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/graph/nodes/{node_id}:
+    get:
+      operationId: getGraphNode
+      summary: Read a node and its relationship groups at a commit
+      tags: [GraphHistory]
+      parameters:
+        - {name: node_id, in: path, required: true, schema: {type: string}}
+        - {name: branch, in: query, schema: {type: string, default: main}}
+        - {name: commit, in: query, schema: {type: string, pattern: '^gc[0-9a-f]{40}$'}}
+        - {name: group_limit, in: query, schema: {type: integer, minimum: 0, maximum: 200, default: 8}}
+      responses:
+        '200':
+          description: Node with relationship groups by type and direction
+          content:
+            application/json:
+              schema: {type: object}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
 
@@ -2802,6 +3639,8 @@ tags:
   - {name: Operations, description: Public health and observability}
   - {name: Memory, description: Versioned domain-neutral high-level memory operations}
   - {name: Database Operations, description: Administrative snapshot and derived-index operations}
+  - {name: GraphHistory, description: Addressable graph commits, branches, diffs and merges of the persistent store}
+  - {name: Content, description: Evidence content kept apart from the graph (ADR-0021)}
   - {name: Cypher, description: Graph reads and mutations}
   - {name: Seeds, description: Semantic working-set entry points}
   - {name: STIX, description: "Import, validation, and export"}

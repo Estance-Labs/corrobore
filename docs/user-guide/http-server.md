@@ -7,7 +7,8 @@ point and deployment runbooks, start with
 [Deployment Modes](deployment-modes.md).
 
 Administrative database operations are available at
-`POST /v1/admin/storage/snapshots`, `POST /v1/admin/storage/indexes/rebuild`, and
+`POST /v1/admin/storage/snapshots`, `POST /v1/admin/storage/indexes/rebuild`,
+`POST /v1/admin/storage/cleanup`, `POST /v1/admin/storage/export/parquet`, and
 `GET /v1/admin/storage/operations`. They require the administrative bearer token;
 see [Database operations](database-operations.md) for restore, migration, S3/MinIO,
 rollback, cancellation and recovery procedures.
@@ -60,6 +61,16 @@ Application errors use the JSON envelope above. Transport middleware can reject 
 | `CORROBORE_HTTP_SESSION_IDLE_TTL_MS` | `0` | Idle auto-stop TTL; `0` disables expiration. |
 | `CORROBORE_HTTP_MAX_BODY_BYTES` | `2097152` | Standard protected-route body limit (2 MiB). |
 | `CORROBORE_HTTP_IMPORT_MAX_BODY_BYTES` | `33554432` | STIX import and OpenCTI transactional-write body limit (32 MiB). |
+| `CORROBORE_HTTP_CORS_ALLOWED_ORIGINS` | unset | Comma-separated exact origins (`https://viewer.example`, `http://localhost:5173`) allowed to call the server from a browser. Preflights are answered before authentication; responses expose `Content-Range`, `ETag` and `Accept-Ranges`. `*`, paths and credentials are refused; unset sends no CORS headers. |
+| `CORROBORE_HTTP_CONTENT_MAX_BYTES` | `67108864` | `POST /v1/content` body limit (64 MiB). |
+| `CORROBORE_HTTP_CONTENT_INLINE_MAX_BYTES` | `16384` | Largest text or JSON content kept inline instead of offloaded. |
+| `CORROBORE_HTTP_CONTENT_STORE_URL` | unset | Object store for offloaded content; see [Content plane](#content-plane). |
+| `CORROBORE_EMBEDDING_PROVIDER` | `none` | `hashing` or `http` enables `POST /v1/embeddings` and embedding-backed seed search; see [Embedding-backed seeds](#embedding-backed-seeds). |
+| `CORROBORE_EMBEDDING_DIMENSIONS` | `256` | Vector size of the `hashing` provider (1 to 8192). |
+| `CORROBORE_EMBEDDING_ENDPOINT`, `CORROBORE_EMBEDDING_MODEL` | unset | OpenAI-compatible endpoint and model of the `http` provider; both required by it. |
+| `CORROBORE_EMBEDDING_API_KEY` | unset | Bearer key of the `http` provider; `CORROBORE_EMBEDDING_API_KEY_FILE` reads it from a file. |
+| `CORROBORE_EMBEDDING_TIMEOUT_MS` | `10000` | Timeout of one `http` embedding call. |
+| `CORROBORE_S3_REGION`, `CORROBORE_S3_ENDPOINT` | unset | Region and S3-compatible endpoint of an `s3://` content store; credentials come from `CORROBORE_S3_ACCESS_KEY`, `CORROBORE_S3_SECRET_KEY` and `CORROBORE_S3_SESSION_TOKEN` (or their `_FILE` variants). |
 | `CORROBORE_OPENCTI_SYNC_MAX_OPERATIONS` | `512` | Maximum mutations admitted in one OpenCTI synchronization or transactional-write batch. |
 | `CORROBORE_OPENCTI_SYNC_MAX_REPLAY_IDENTITIES` | `4096` | Bounded replay identities, dead-letter diagnostics, and write-reconciliation records retained durably. |
 | `CORROBORE_OPENCTI_SHADOW_REFERENCE_ENDPOINT` | unset | Fixed Knowledge Data Engine endpoint backed by the reference Elasticsearch/OpenSearch provider. |
@@ -87,6 +98,8 @@ Application errors use the JSON envelope above. Transport middleware can reject 
 | `CORROBORE_STORAGE_MAX_HOT_NODES` | `16384` | Maximum node payloads admitted into one persistent request projection. |
 | `CORROBORE_STORAGE_MAX_HOT_RELATIONSHIPS` | `32768` | Maximum relationship payloads admitted into one persistent request projection. |
 | `CORROBORE_STORAGE_MAX_WARM_ADJACENCY_ENTRIES` | `65536` | Maximum lightweight adjacency entries retained for one persistent request projection. |
+| `CORROBORE_STORAGE_VECTOR_INDEX` | `auto` | Vector search index: `exact`, `hnsw`, or `auto` (exact below `CORROBORE_STORAGE_VECTOR_HNSW_MIN_VECTORS` vectors, HNSW from there). |
+| `CORROBORE_STORAGE_VECTOR_HNSW_MIN_VECTORS` | `10000` | Vectors from which `auto` switches from the exact index to HNSW. |
 | `CORROBORE_OPERATIONAL_ENDPOINT_POLICY` | `public` | `public` or `authenticated`; non-loopback binds require `authenticated`. |
 | `CORROBORE_TLS_ENABLED` | `false` | Enables HTTPS. Non-loopback binds require TLS. |
 | `CORROBORE_TLS_CERTIFICATE_FILE` | unset | PEM certificate chain loaded and validated at startup. |
@@ -278,11 +291,62 @@ Executes a forced read-only request.
 }
 ```
 
-Only `query` is required. When a real started session id is supplied, the server transitions it through `working`, `processing`, and `idle` (or `degraded` on failure).
+Only `query` is required. In persistent mode, `commit` reads at a graph commit
+on a read-only projection, and a write there answers
+`409 GRAPH_COMMIT_READ_ONLY`. `branch` reads or writes the head of a branch: a
+write publishes a commit on that branch only, and answers
+`409 GRAPH_COMMIT_PRECONDITION_FAILED` if another write moved the branch
+between the read and the commit.
+The response then carries `graph_commit_id`, the commit that was read; for
+`main` reads and writes it is the head right after the request.
+
+Writes take an optimistic precondition: send the head you read in the
+`If-Graph-Commit` header (or `expected_commit` in the body). The write commits
+only if the target branch is still at that commit; otherwise it answers
+`409 GRAPH_COMMIT_PRECONDITION_FAILED` and changes nothing. A client therefore
+always knows how a write ended:
+
+- **committed**: `200`, and `graph_commit_id` is the new head;
+- **refused**: a `4xx` with an error code, and nothing was written;
+- **unknown**: the connection failed after the request left. Read the branch
+  head (`GET /v1/graph/commits?limit=1`) before deciding to resend; never
+  resend blindly.
+
+When a real started session id is supplied, the server transitions it through `working`, `processing`, and `idle` (or `degraded` on failure).
 
 The response embeds the typed shared-runtime response, including `status`, `data`, mutation summary, validation errors, warnings, fix hints, budget usage, and audit references when present. `Rejected` and `ValidationFailed` are valid runtime results and can still arrive with HTTP 200; inspect the inner status.
 
 Cypher parameters preserve homogeneous JSON arrays of strings, integers, decimals, or booleans as bounded typed lists (1 to 256 items); arrays are never flattened into JSON text. Mutation summaries distinguish `matched_rows`, `native_fields_changed`, and `property_fields_changed`, alongside created, updated, and deleted node/relationship counts. The reserved fields `confidence`, `status`, and `evidence_refs` address native graph metadata; when such a field is updated, any legacy generic property with the same name is removed and native read-back takes precedence. Cypher confidence uses native `0..=1`; use `0.9` for 90% STIX confidence.
+
+## `POST /v1/cypher/validate`
+
+Parses `{query}` and reports diagnostics without executing anything: no
+projection, no engine and no write. Editors can call it on every keystroke.
+Prefer it to `mode: "validate"`, which is not a mutation-safety boundary. The
+result holds `valid`, `kind` (`read`, `mutation`, `mixed`, or `null` when the
+query does not parse), the recognised `clauses`, and `diagnostics`. Each
+diagnostic has a `severity`, a `code` and a `message`, plus a `suggestion` when
+one exists.
+
+- `error` codes are `EMPTY_QUERY`, `UNSUPPORTED_FEATURE`, `INVALID_SYNTAX` and
+  `INVALID_PARAMETER`.
+- `UNBOUND_PARAMETER` is a warning: `$name` values are bound when the query
+  runs.
+- `UNSTRUCTURED_QUERY` is a warning: the clauses were recognised but not their
+  structure.
+
+A query that parses also returns its logical `plan`, for Explain: the
+`operators` in execution order (`node_scan`, `expand_relationship`, `filter`,
+`projection`, `sort`, `skip`, `limit`, `mutation`, `function_call`), the
+`query_kind`, and the pattern `bindings` (`variable`, `element` `node` or
+`relationship`, and whether it is `projected`). `plan` is `null` when the query
+does not parse or its parameters are not bound yet.
+
+```json
+{ "operators": ["node_scan", "expand_relationship", "filter", "projection", "limit"], "query_kind": "read", "bindings": [{ "variable": "a", "element": "node", "projected": true }] }
+```
+
+Queries longer than 64 KiB answer `400 QUERY_TOO_LARGE`.
 
 ## `POST /v1/cypher/write`
 
@@ -310,6 +374,89 @@ Resolves a natural-language objective into ranked graph seeds.
 Defaults are cross-domain, hybrid retrieval, `top_k=10`, and threshold `0.0`. Profiles are `cti`, `fimi`, `crisis`, or `cross_domain`; modes are `hybrid`, `full_text`, `semantic`, or `vector`. Each candidate includes `node_id`, `score`, and an explanation with rationale, source refs, and boundary notes. Expected 422 errors include `NO_SEED`, `AMBIGUOUS_SEED`, and `OVERBROAD_OBJECTIVE`.
 
 The domain-scoped profiles (`cti`, `fimi`, `crisis`) take their seed semantics from domain packs that are not distributed with Corrobore; requests naming them return `403 FEATURE_NOT_AVAILABLE`. Only `cross_domain` resolves against the core runtime.
+
+### Embedding-backed seeds
+
+With an embedding provider (`CORROBORE_EMBEDDING_PROVIDER=hashing` or `http`)
+and persistent storage, the `vector` and `semantic` modes embed the objective
+and rank nodes by cosine similarity of their `embedding` property, and the
+`hybrid` mode fuses that ranking with BM25 full text by reciprocal rank fusion
+(the retrieval of `POST /v1/graph/search/hybrid`). Both read the head of
+`main`. The result says how it was resolved:
+
+```json
+{ "ok": true, "result": { "retrieval": "vector", "commit_id": "gc…", "candidates": [ … ] } }
+```
+
+`retrieval` is `vector`, `hybrid` or `lexical`. The lexical resolver still
+answers, with a boundary note saying why, when no provider is configured, in
+ephemeral mode, or when no node at `main` carries an embedding. Candidates
+scoring below `score_threshold` are dropped (`422 NO_SEED` when none remain);
+node embeddings from another provider or of another size return
+`422 EMBEDDING_MISMATCH`, and a failing provider `502 EMBEDDING_PROVIDER_FAILED`.
+
+Node embeddings must come from the same provider: compute them with
+`POST /v1/embeddings` and store them in the `embedding` property.
+
+### `POST /v1/embeddings`
+
+Embeds up to 256 texts with the configured provider.
+
+```json
+{ "texts": ["acme phishing campaign targeting regional banks"] }
+```
+
+```json
+{ "ok": true, "result": { "provider": "hashing", "dimensions": 256, "vectors": [[0.0, -0.18, …]] } }
+```
+
+- `hashing` needs no model: words and character trigrams are hashed (FNV-1a)
+  into `CORROBORE_EMBEDDING_DIMENSIONS` buckets and normalized. Similarity is
+  lexical and deterministic, not semantic.
+- `http` calls an OpenAI-compatible endpoint (`POST {model, input}` →
+  `data[].embedding`): a hosted API or a local Ollama, TEI or vLLM server
+  running a real embedding model. `CORROBORE_EMBEDDING_ENDPOINT` and
+  `CORROBORE_EMBEDDING_MODEL` are required; `CORROBORE_EMBEDDING_API_KEY`
+  (or `_FILE`) is sent as a bearer token; redirects are not followed.
+
+Errors: `400 INVALID_EMBEDDING_REQUEST` (no texts, more than 256, or text
+without words for `hashing`), `503 EMBEDDING_PROVIDER_NOT_CONFIGURED`,
+`502 EMBEDDING_PROVIDER_FAILED`.
+
+## `POST /v1/nlq/compile`
+
+Compiles a French or English request into one validated `nlq/v1` action and
+**executes nothing** (see [Natural-Language Queries](nlq.md)). The caller reads
+the canonical action, applies its own authorization, and runs it through the
+route it already uses: `cypher_read` through `POST /v1/cypher/read`, a
+`cypher_write_proposal` through `POST /v1/cypher/write`, preferably on a
+branch.
+
+```json
+{ "text": "Quels acteurs de menace utilisent le malware \"X-Agent\" ?", "language": "fr", "evidence_refs": [], "allow_writes": false }
+```
+
+```json
+{
+  "ok": true,
+  "result": {
+    "kind": "cypher_read",
+    "language": "fr",
+    "canonical": "MATCH (a:ThreatActor)-[r:USES]->(m:Malware) WHERE m.name = 'X-Agent' RETURN a.name LIMIT 50",
+    "writes": false,
+    "compiler": "template",
+    "envelope": { "schema_version": "nlq/v1", "…": "…" }
+  }
+}
+```
+
+`language` is optional (`fr` or `en`; detected otherwise), `evidence_refs`
+lists the references the action may cite, and `allow_writes` (default
+`false`) lets the compiler propose writes. `clarification_required`, `abstain`
+and `unsupported` are answers, not errors. Errors: `400 INVALID_NLQ_REQUEST`
+(blank text, more than 4,000 characters, another language, blank or more than
+100 evidence references) and `422 NLQ_REJECTED` with the stable rejection code
+when validation refuses the envelope.
 
 ## `POST /v1/memory/operations`
 
@@ -354,6 +501,73 @@ Error behavior:
 Creates a consistent online canonical snapshot through the administrative
 Bearer boundary. See [Database operations](database-operations.md) for request,
 restore, retention, and object-store rules.
+
+## `POST /v1/admin/storage/cleanup`
+
+Admin token required. Prunes graph history outside a retention window from
+`{keep_commits?, keep_seconds?, dry_run?}` (default `keep_commits` 100) and
+compacts branch payloads and the WAL behind the latest checkpoint. See
+[Database operations](database-operations.md#history-retention).
+
+## Content plane
+
+Evidence content is kept apart from the graph (ADR-0021): a record owns a
+content handle, and traversals never read the bytes. `POST /v1/content`
+places content by the storage policy and returns the handle to store on the
+record.
+
+- Text and JSON up to `CORROBORE_HTTP_CONTENT_INLINE_MAX_BYTES` (16 KiB) stay
+  **inline**: the handle carries them and the server keeps nothing.
+- Anything larger, and all binary content, is **offloaded** to the content
+  store, addressed by its SHA-256 (`content--<sha256>`). Identical bytes are
+  stored once.
+
+The store is chosen at startup: `CORROBORE_HTTP_CONTENT_STORE_URL`
+(`s3://bucket/prefix` with the `CORROBORE_S3_*` variables, `file:///path`,
+`memory://`), otherwise `<storage>/content` in persistent mode, otherwise
+memory. A URL that cannot be opened fails startup.
+
+### `POST /v1/content`
+
+```bash
+curl -sS -X POST http://127.0.0.1:8080/v1/content \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/pdf' \
+  --data-binary @report.pdf
+```
+
+```json
+{
+  "ok": true,
+  "placement": "offloaded",
+  "policy_version": "content-policy-v1",
+  "content_id": "content--3f1c…",
+  "sha256": "3f1c…",
+  "byte_length": 482113,
+  "media_type": "application/pdf",
+  "backend": "filesystem",
+  "handle": { "external": { "content_id": "content--3f1c…", "…": "…" } }
+}
+```
+
+An empty body or text that is not UTF-8 returns `400 INVALID_CONTENT`; a body
+over `CORROBORE_HTTP_CONTENT_MAX_BYTES` returns `413`.
+
+### `GET /v1/content/{content_id}`
+
+The route serves offloaded content with its media type,
+`ETag` (the digest) and `Accept-Ranges: bytes`. A single `Range: bytes=…`
+returns `206` with `Content-Range`; a range outside the content returns `416`;
+multiple ranges or other units return the whole content. The digest is
+verified on every read. Errors: `400 INVALID_CONTENT_ID`,
+`404 CONTENT_NOT_RETAINED` (never offloaded, including inline content),
+`410 CONTENT_ERASED`.
+
+## `POST /v1/admin/storage/export/parquet`
+
+Admin token required. Exports one commit (`commit`, else the head of `branch`,
+else `main`) to Apache Parquet files under `destination` on the server, one per
+label and relationship type, with a `manifest.json`. See
+[Database operations](database-operations.md#object-storage-and-parquet-export).
 
 ## `POST /v1/admin/storage/indexes/rebuild`
 
@@ -1054,10 +1268,293 @@ defaults to `current`; `snapshot` and `timeshot` require `boundary_id`. Optional
 budgets are `max_nodes`, `max_relationships`, `max_properties_per_record`,
 `max_payload_bytes`, and `max_computation_units`.
 
+In persistent mode the projection reads a graph commit and the response carries
+`graph_commit_id`. An explicit `commit` query parameter wins. Otherwise a
+snapshot or timeshot anchored to a transaction reads the commit that recorded
+it, a timeshot without one reads the newest `main` commit at its time, and
+`current` reads the `main` head. `omitted_nodes` and `omitted_relationships`
+count against the commit's totals.
+
 Unknown sessions return `SESSION_NOT_FOUND`. Unknown, wrong-kind, and
 cross-session boundaries all return the leak-safe `TEMPORAL_BOUNDARY_NOT_FOUND`.
 Invalid selections return `INVALID_TEMPORAL_BOUNDARY`; invalid budgets return
 `INVALID_VISUALIZATION_PROJECTION`.
+
+## Graph history API
+
+In persistent mode every applied write on `main` becomes an addressable graph
+commit. The WAL keeps making the write durable; the commit gives it an identity
+that later reads, diffs and branches refer to. A commit lists the record
+versions it published, relative to its first parent, which is the previous
+head of its branch. Commit ids are `gc` followed by 40 lowercase hex digits.
+
+A store that predates the history starts it with one genesis commit holding the
+records present at the first open. If the process stops after the WAL apply and
+before the commit is appended, the next open publishes the missing commit from
+the transaction journals. In ephemeral mode these routes return
+`409 PERSISTENT_STORAGE_REQUIRED`.
+
+### `GET /v1/graph/commits`
+
+Lists the first-parent history of a branch, newest first. Query parameters:
+`branch` (default `main`), `limit` (1-500, default 50) and `cursor`, the
+`next_cursor` of the previous page. The result holds `branch`, `head`,
+`commits` and `next_cursor`. Each commit carries `commit_id`, `parents`,
+`branch`, `generation`, `created_at`, optional `transaction_id`,
+`mutation_sequence_number`, `actor` and `message`, and the counts
+`node_changes`, `relationship_changes` and `deletions`. An unknown branch
+returns `404 GRAPH_BRANCH_NOT_FOUND`.
+
+### `GET /v1/graph/commits/{commit_id}`
+
+Returns one commit with its `changes`. Each change has `kind` (`node` or
+`relationship`), `record_id`, `version_id`, `deleted`, `labels` (the
+relationship type for a relationship), and `source` and `target` for
+relationships. An unknown or malformed id returns `404 GRAPH_COMMIT_NOT_FOUND`.
+
+### `GET /v1/graph/branches`
+
+Lists branches, `main` first, each with `name`, `head`, `created_from`,
+`created_at`, optional `created_by`, `merged` (the head is reachable from the
+`main` head) and `commits_ahead` (first-parent commits since creation). Branch
+writes keep their record versions in `history/branch_payloads.log`, which the
+canonical catalog never indexes, so they stay off `main` until merged.
+
+### `POST /v1/graph/branches`
+
+Creates a branch from `{name, from_branch?, from_commit?, actor?}`.
+`from_commit` wins over `from_branch`, which defaults to `main`. Names have
+1-128 characters from `[A-Za-z0-9._/-]`, with no leading or trailing `/` and
+no `..`; `main` is reserved. An invalid name returns
+`400 INVALID_BRANCH_NAME`, an existing one `409 GRAPH_BRANCH_CONFLICT`.
+
+### `DELETE /v1/graph/branches/{*name}`
+
+Deletes a branch; the name may contain `/`. A branch whose head `main` does
+not contain is refused with `409 GRAPH_BRANCH_CONFLICT` unless `force=true`.
+`main` cannot be deleted. Commits of a deleted branch stay retained until
+cleanup.
+
+### `GET /v1/graph/diff`
+
+Lists the records that differ between `from` and `to`, each a commit id or a
+branch name. A record is `added` when it is not visible at `from` and visible
+at `to`, `removed` in the opposite case (a tombstone counts as not visible),
+and `changed` when both versions differ. `totals` counts the whole diff;
+`entries` is one page in (kind, record id) order, filtered by `kind`, with
+`limit` 1-2000 (default 200) and a `cursor` of the form `node:<id>` or
+`relationship:<id>`. With `include_values=true` each entry also carries
+`before` and `after` records, `property_changes` (`key`, `before`, `after`)
+and `field_changes` (`labels`, `status`, `confidence`).
+
+### `POST /v1/graph/merge`
+
+Merges `source` into `target` (default `main`) from
+`{source, target?, dry_run?, expected_target_head?, delete_source?, actor?, message?}`.
+The merge base is the best common ancestor of the two heads. A record the source
+changed since the base and the target did not is taken from the source.
+
+- `already_up_to_date`: the target already contains the source head.
+- `fast_forward`: the target head is an ancestor of the source head.
+- `merged`: both sides changed different records.
+
+The published commit has the target head as first parent and the source head
+as second parent. Merging into `main` goes through the canonical WAL, so the
+merged records are indexed like any other write. `dry_run=true` returns the
+same report without writing.
+
+Conflicts are never resolved automatically. A conflicted merge answers
+`409 MERGE_CONFLICT`, writes nothing, and returns the report with every
+conflict: `concurrent_update`, `update_delete`, `add_add`, or
+`dangling_relationship` (the merged graph would keep a relationship whose
+endpoint is deleted). `expected_target_head` refuses the merge with
+`409 GRAPH_COMMIT_PRECONDITION_FAILED` when the target moved after the
+preview.
+
+### `POST /v1/graph/edits`
+
+Applies a batch of record edits to the head of a branch and publishes them as
+**one** commit: through the canonical WAL on `main` (indexed like any other
+write), through branch payloads elsewhere.
+
+```json
+{
+  "branch": "main",
+  "expected_head": "gc…",
+  "message": "tidy indicators",
+  "edits": [
+    { "op": "set_properties", "node_id": "node--…", "set": { "name": "x", "score": 0.5 }, "remove": ["alias"] },
+    { "op": "create_node", "labels": ["Indicator"], "properties": { "name": "y" } },
+    { "op": "delete_node", "node_id": "node--…" },
+    { "op": "create_relationship", "source_id": "node--…", "target_id": "$0", "type": "INDICATES", "properties": { "weight": 2 } },
+    { "op": "set_relationship_properties", "relationship_id": "relationship--…", "set": { "weight": 3 }, "remove": ["note"] },
+    { "op": "delete_relationship", "relationship_id": "relationship--…" }
+  ]
+}
+```
+
+```json
+{ "ok": true, "result": { "commit_id": "gc…", "branch": "main", "created": ["node--…"], "created_relationships": ["relationship--…"], "changed": 5 } }
+```
+
+A relationship's endpoints are live nodes or nodes created earlier in the same
+batch, named `$n` for the n-th `create_node` (from 0). A `delete_node` is
+accepted when the batch also deletes every live relationship of that node.
+`branch` defaults to `main` and `actor` to `CORROBORE_MEMORY_ACTOR_ID`. A batch
+holds 1 to 500 edits; several `set_properties` of one node merge into one new
+version. Values are scalars or lists of one scalar type (integers and floats
+mix into a float list); objects are refused. The whole batch is validated
+before anything is written: `400 INVALID_EDIT` (unknown op, blank key, invalid
+labels, unsupported value, a node both edited and deleted),
+`404 GRAPH_NODE_NOT_FOUND`, `404 GRAPH_RELATIONSHIP_NOT_FOUND`,
+`409 GRAPH_EDIT_BLOCKED` (deleting a node whose live relationships the batch
+keeps), and `409 GRAPH_COMMIT_PRECONDITION_FAILED` when
+`expected_head` is stale.
+
+### `POST /v1/graph/revert`
+
+Puts one record of a branch back to its version at the branch's merge base
+with `main`, as one branch commit, from
+`{branch, record_kind: "node" | "relationship", record_id, expected_head?, actor?}`:
+
+- a record the branch changed gets its base version back (`restored: "base_version"`);
+- a record the branch added is tombstoned (`removed`);
+- a record the branch deleted comes back (`recreated`).
+
+```json
+{ "ok": true, "result": { "commit_id": "gc…", "branch": "review/7", "record_kind": "node", "record_id": "node--…", "restored": "base_version" } }
+```
+
+`expected_head` refuses the revert with `409 GRAPH_COMMIT_PRECONDITION_FAILED`
+when the branch moved after the caller read it. A record that does not differ
+from the base answers `422 GRAPH_REVERT_NO_CHANGE`. A revert that would leave a
+live relationship without an endpoint (removing a node the branch also linked,
+recreating a relationship whose endpoint is gone) answers
+`409 GRAPH_REVERT_BLOCKED` naming what to revert first. `main`, a blank id or
+an unknown kind answer `400 INVALID_REVERT`. `actor` defaults to the trusted
+`CORROBORE_MEMORY_ACTOR_ID`.
+
+### `POST /v1/graph/reviews`
+
+Records a review of the branch's current head from
+`{branch, head, decision: "approved" | "changes_requested", comment?, reviewer?}`
+and answers `201` with the review (`branch`, `head`, `reviewer`, `decision`,
+`comment`, `at_ms`). A review names the exact head it looked at, so an approval
+never covers commits added after it: a `head` that is no longer current answers
+`409 GRAPH_COMMIT_PRECONDITION_FAILED`. `main`, an unknown decision or a
+comment over 4,000 characters answer `400 INVALID_REVIEW`.
+
+Authentication is a shared bearer token without per-user identity, so
+`reviewer` comes from the request and defaults to `CORROBORE_MEMORY_ACTOR_ID`.
+Reviews are informational: merges do not require an approval. They are kept
+in the append-only, checksummed `history/reviews.log` and travel with
+snapshots.
+
+### `GET /v1/graph/reviews`
+
+Lists `?branch=` reviews newest first, each with `current: true` when it looked
+at the branch's current head. A deleted branch keeps its past reviews, none of
+them current.
+
+### `GET /v1/graph/merge-base`
+
+Returns the best common ancestor of `a` and `b` (commit ids or branch names):
+the shared ancestor with the highest generation, or `null`.
+
+### `GET /v1/graph/changes`
+
+A change feed for consumers that follow a branch. It returns the commits
+published after `after` along the branch's first-parent history, oldest first,
+each with its changes, plus `next_cursor` (the last commit returned, or the
+cursor itself when nothing is new) and `has_more`. Without `after` the feed
+starts at the genesis commit. Delivery is at least once: store the cursor after
+processing a page. A cursor the history no longer retains returns
+`410 CHANGE_FEED_GAP`; read the branch at a commit and resume from that
+commit. A retained commit that is not on the branch returns
+`409 GRAPH_BRANCH_CONFLICT`.
+
+### `POST /v1/graph/search/vector`
+
+Returns the `k` nodes (default 10, at most 1,000) whose embedding is closest to
+`vector`, read at a commit or branch head. Embeddings are numeric list
+properties: `property` defaults to `embedding`, and Cypher can write one as
+`{embedding: $vector}`.
+
+- `metric` is `cosine` (the default) or `l2`.
+- `label` restricts the candidates to one label.
+
+The index is kept for the last commit searched and moves forward with the
+node changes of later commits; an older commit rebuilds it. Below
+`CORROBORE_STORAGE_VECTOR_HNSW_MIN_VECTORS` embeddings (10,000 by default) it
+is exact. From there it is an approximate HNSW graph built for the requested
+metric, which keeps recall@10 at or above 0.95 against the exact index in the
+test suite; `CORROBORE_STORAGE_VECTOR_INDEX` forces `exact` or `hnsw`. With a
+`label`, every candidate is scored, so the result is exact.
+
+A query whose dimensions differ from the indexed embeddings, a non-finite
+value, or an unknown metric answers `400 INVALID_SEARCH`.
+
+### `POST /v1/graph/search/hybrid`
+
+Fuses up to three rankings with Reciprocal Rank Fusion (k = 60). Each hit
+reports its fused `score` and the 1-based rank each signal gave it in `ranks`.
+
+- **`full_text`.** BM25 over `text`. It joins only when the read target is the
+  `main` head, because the index follows `main`. It is access-aware; this route
+  has no caller identity, so it uses an empty access context.
+- **`vector`.** Cosine similarity of `vector` over `property`.
+- **`graph`.** Neighbours of the best text and vector hits, ranked by how many
+  of those hits they connect to. Set `graph_expansion: false` to leave it out.
+
+At least `text` or `vector` is required.
+
+### `GET /v1/graph/schema`
+
+Describes the records visible at a commit (`commit`, else the head of
+`branch`, else `main`). Corrobore graphs are schema-free, so this schema is
+derived from the records rather than declared. `labels` and
+`relationship_types` each carry a stable `id`, a `count` of live records and
+their `properties`: `key`, `value_types` (`string`, `integer`, `float`,
+`boolean`, `null`, the `*_list` forms, `json`) and how many records carry the
+key. Relationship types also list `endpoints`: the source and target label
+pairs they connect, most frequent first.
+
+Ids are assigned the first time any commit's schema contains a label, type or
+property key. They are persisted in `history/schema_registry.log` and never
+reused, so a type keeps its id across commits even after it disappears and
+comes back.
+
+### `GET /v1/graph/records`
+
+Pages the records visible at a commit in record-id order. The read target is
+`commit`, else the head of `branch`, else the `main` head. `kind` is `node`
+(default) or `relationship`; `label` filters node labels or the relationship
+type; `cursor` is the last id of the previous page; `limit` is 1-1000
+(default 100); `include_deleted=true` adds tombstoned versions. The result
+holds `commit_id`, `kind`, `total` (records matching at that commit), `nodes`
+or `relationships`, and `next_cursor`. Pages read the same commit however many
+writes land in between. Properties are plain JSON values.
+
+Nodes can also be filtered across their relationships: `related_type` keeps
+nodes with a live relationship of that type, `related_direction` (`out`, `in`
+or `any`, default `any`) says which end the listed node is, and
+`related_label` requires the node at the other end to carry that label. The
+neighbour must be live at the commit, and `total` and paging count only the
+matching nodes. `related_*` on `kind=relationship` or an unknown direction
+answers `400 INVALID_RECORD_FILTER`.
+
+```bash
+curl -sS -H "Authorization: Bearer $TOKEN" \
+  'http://127.0.0.1:8080/v1/graph/records?label=Indicator&related_type=INDICATES&related_direction=out&related_label=Malware'
+```
+
+### `GET /v1/graph/nodes/{node_id}`
+
+Returns a node at a commit with its relationship groups. Each group has
+`type`, `direction` (`outgoing` or `incoming`), `count`, and up to
+`group_limit` items (0-200, default 8), each with the relationship and the
+neighbour node. A node not visible at that commit returns
+`404 GRAPH_NODE_NOT_FOUND`.
 
 ## Explorer frontend split
 

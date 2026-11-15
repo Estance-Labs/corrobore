@@ -1295,6 +1295,9 @@ impl Graph {
         for (key, value) in patch.properties_to_set {
             node.properties.insert(key, value);
         }
+        for key in &patch.properties_to_remove {
+            node.properties.remove(key);
+        }
         if let Some(status) = patch.status {
             node.status = status;
         }
@@ -1323,6 +1326,9 @@ impl Graph {
         let requests_exportable = patch.status == Some(RecordStatus::Exportable);
         for (key, value) in patch.properties_to_set {
             relationship.properties.insert(key, value);
+        }
+        for key in &patch.properties_to_remove {
+            relationship.properties.remove(key);
         }
         if let Some(status) = patch.status {
             relationship.status = status;

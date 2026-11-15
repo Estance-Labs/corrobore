@@ -85,6 +85,66 @@ enum ServerCommand {
     RebuildIndexes(MigrationRootArgs),
     /// Cancel an incomplete derived-index rebuild at its durable boundary.
     CancelRebuild(MigrationRootArgs),
+    /// Prune graph history outside a retention window and compact payloads.
+    Cleanup(CleanupArgs),
+    /// Download a snapshot from an object store URL into a new local snapshot directory.
+    ImportSnapshot(ImportSnapshotArgs),
+    /// Export one commit of an offline graph to Apache Parquet files.
+    ExportParquet(ExportParquetArgs),
+}
+
+#[derive(Args)]
+struct ImportSnapshotArgs {
+    /// Object store URL: `s3://bucket`, `file:///path` or `memory://`.
+    #[arg(long)]
+    source: String,
+    /// Object prefix the snapshot was exported under.
+    #[arg(long)]
+    prefix: String,
+    /// New local snapshot directory.
+    #[arg(long)]
+    destination: PathBuf,
+    /// S3 or MinIO endpoint, for `s3://` sources.
+    #[arg(long)]
+    endpoint: Option<String>,
+    /// AWS signing region, for `s3://` sources.
+    #[arg(long, default_value = "us-east-1")]
+    region: String,
+    /// Expected key-provider identity.
+    #[arg(long)]
+    encryption_key_id: Option<String>,
+}
+
+#[derive(Args)]
+struct ExportParquetArgs {
+    /// Offline persistent data directory.
+    #[arg(long)]
+    storage_dir: PathBuf,
+    /// New export directory.
+    #[arg(long)]
+    destination: PathBuf,
+    /// Export the head of this branch (default `main`).
+    #[arg(long)]
+    branch: Option<String>,
+    /// Export this commit.
+    #[arg(long)]
+    commit: Option<String>,
+}
+
+#[derive(Args)]
+struct CleanupArgs {
+    /// Offline persistent data directory.
+    #[arg(long)]
+    storage_dir: PathBuf,
+    /// Newest first-parent commits kept on every branch.
+    #[arg(long, default_value_t = 100)]
+    keep: usize,
+    /// Also keep commits created less than this many seconds ago.
+    #[arg(long)]
+    keep_seconds: Option<u64>,
+    /// Report what would be pruned without writing.
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Args)]
@@ -218,6 +278,12 @@ struct ConfigArgs {
     /// Override the maximum resident warm adjacency entries.
     #[arg(long)]
     storage_max_warm_adjacency_entries: Option<u64>,
+    /// Override the vector index implementation: auto, exact or hnsw.
+    #[arg(long)]
+    storage_vector_index: Option<String>,
+    /// Override the vector count from which auto switches to HNSW.
+    #[arg(long)]
+    storage_vector_hnsw_min_vectors: Option<u64>,
     /// Override the structured log directory.
     #[arg(long)]
     log_dir: Option<PathBuf>,
@@ -359,6 +425,8 @@ struct FileStorage {
     max_hot_nodes: Option<u64>,
     max_hot_relationships: Option<u64>,
     max_warm_adjacency_entries: Option<u64>,
+    vector_index: Option<String>,
+    vector_hnsw_min_vectors: Option<u64>,
 }
 
 #[derive(Default, Deserialize)]
@@ -547,7 +615,96 @@ async fn main() -> ExitCode {
         Command::Server(ServerArgs {
             command: ServerCommand::CancelRebuild(args),
         }) => run_index_rebuild_cancellation(args),
+        Command::Server(ServerArgs {
+            command: ServerCommand::Cleanup(args),
+        }) => run_history_cleanup(args),
+        Command::Server(ServerArgs {
+            command: ServerCommand::ImportSnapshot(args),
+        }) => run_snapshot_import(args),
+        Command::Server(ServerArgs {
+            command: ServerCommand::ExportParquet(args),
+        }) => run_parquet_export(args),
     }
+}
+
+fn run_snapshot_import(args: ImportSnapshotArgs) -> ExitCode {
+    let started = std::time::Instant::now();
+    let mut options: Vec<(String, String)> = vec![("aws_region".to_owned(), args.region)];
+    if let Some(endpoint) = args.endpoint {
+        if endpoint.starts_with("http://") {
+            options.push(("aws_allow_http".to_owned(), "true".to_owned()));
+        }
+        options.push(("aws_endpoint".to_owned(), endpoint));
+    }
+    for (variable, option) in [
+        ("CORROBORE_S3_ACCESS_KEY", "aws_access_key_id"),
+        ("CORROBORE_S3_SECRET_KEY", "aws_secret_access_key"),
+        ("CORROBORE_S3_SESSION_TOKEN", "aws_session_token"),
+    ] {
+        if let Ok(value) = std::env::var(variable)
+            && !value.trim().is_empty()
+        {
+            options.push((option.to_owned(), value));
+        }
+    }
+    let store = match storage_interchange::UrlObjectStore::open(&args.source, options) {
+        Ok(store) => store,
+        Err(error) => return database_operation_failure("import_snapshot", started, error),
+    };
+    print_database_operation(
+        "import_snapshot",
+        started,
+        graph_storage::import_snapshot_from_store(
+            &store,
+            &args.prefix,
+            &args.destination,
+            args.encryption_key_id.as_deref(),
+        ),
+    )
+}
+
+fn run_parquet_export(args: ExportParquetArgs) -> ExitCode {
+    let started = std::time::Instant::now();
+    let ownership = match DataDirectoryOwnership::acquire(&args.storage_dir) {
+        Ok(ownership) => ownership,
+        Err(error) => return database_operation_failure("export_parquet", started, error),
+    };
+    let result = (|| -> Result<storage_interchange::ParquetExportReport, String> {
+        let commit = args
+            .commit
+            .as_deref()
+            .map(graph_storage::GraphCommitId::new)
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        let root = open_storage_root(&args.storage_dir).map_err(|error| error.to_string())?;
+        let mut store = CanonicalEngineStore::open(root, CanonicalStoreOptions::default())
+            .map_err(|error| error.to_string())?;
+        let commit_id = store
+            .resolve_graph_ref(args.branch.as_deref(), commit.as_ref())
+            .map_err(|error| error.to_string())?;
+        storage_interchange::export_commit_parquet(&mut store, &commit_id, &args.destination)
+            .map_err(|error| error.to_string())
+    })();
+    drop(ownership);
+    print_database_operation("export_parquet", started, result)
+}
+
+fn run_history_cleanup(args: CleanupArgs) -> ExitCode {
+    let started = std::time::Instant::now();
+    let ownership = match DataDirectoryOwnership::acquire(&args.storage_dir) {
+        Ok(ownership) => ownership,
+        Err(error) => return database_operation_failure("cleanup", started, error),
+    };
+    let request = graph_storage::HistoryCleanupRequest {
+        keep_commits: args.keep.max(1),
+        keep_seconds: args.keep_seconds,
+        dry_run: args.dry_run,
+    };
+    let result = open_storage_root(&args.storage_dir)
+        .and_then(|root| CanonicalEngineStore::open(root, CanonicalStoreOptions::default()))
+        .and_then(|mut store| store.cleanup_graph_history(&request));
+    drop(ownership);
+    print_database_operation("cleanup", started, result)
 }
 
 fn run_snapshot(args: SnapshotArgs) -> ExitCode {
@@ -1008,6 +1165,16 @@ fn apply_file(path: &Path, values: &mut HashMap<String, String>) -> Result<(), S
     );
     insert(
         values,
+        "CORROBORE_STORAGE_VECTOR_INDEX",
+        config.storage.vector_index.clone(),
+    );
+    insert_num(
+        values,
+        "CORROBORE_STORAGE_VECTOR_HNSW_MIN_VECTORS",
+        config.storage.vector_hnsw_min_vectors,
+    );
+    insert(
+        values,
         "CORROBORE_HTTP_LOG_DIR",
         config.logging.directory.clone(),
     );
@@ -1201,6 +1368,16 @@ fn apply_cli(args: &ConfigArgs, values: &mut HashMap<String, String>) {
         values,
         "CORROBORE_STORAGE_MAX_WARM_ADJACENCY_ENTRIES",
         args.storage_max_warm_adjacency_entries,
+    );
+    insert(
+        values,
+        "CORROBORE_STORAGE_VECTOR_INDEX",
+        args.storage_vector_index.clone(),
+    );
+    insert_num(
+        values,
+        "CORROBORE_STORAGE_VECTOR_HNSW_MIN_VECTORS",
+        args.storage_vector_hnsw_min_vectors,
     );
     insert_path(values, "CORROBORE_HTTP_LOG_DIR", args.log_dir.as_deref());
     insert(values, "CORROBORE_LOG_LEVEL", args.log_level.clone());
@@ -1621,6 +1798,14 @@ fn print_effective(config: &OperationalConfig) {
     println!(
         "storage.max_warm_adjacency_entries = {}",
         config.server.storage_max_warm_adjacency_entries
+    );
+    println!(
+        "storage.vector_index = {:?}",
+        config.server.storage_vector_index.as_str()
+    );
+    println!(
+        "storage.vector_hnsw_min_vectors = {}",
+        config.server.storage_vector_hnsw_min_vectors
     );
     println!("interfaces.enabled = {:?}", config.interfaces);
     if let Some(directory) = &config.server.web_dir {

@@ -39,9 +39,80 @@
 use cypher_parser::{ClauseKind, QueryKind, parse_query};
 use proptest::prelude::*;
 
-/// Lowercase Cypher identifier (bound variable name).
+/// Words an unescaped identifier must not use: the openCypher reserved words
+/// plus the aggregate and procedure keywords this parser treats as syntax.
+const RESERVED_WORDS: &[&str] = &[
+    "add",
+    "all",
+    "and",
+    "as",
+    "asc",
+    "ascending",
+    "avg",
+    "by",
+    "call",
+    "case",
+    "constraint",
+    "contains",
+    "count",
+    "create",
+    "delete",
+    "desc",
+    "descending",
+    "detach",
+    "distinct",
+    "do",
+    "drop",
+    "else",
+    "end",
+    "ends",
+    "exists",
+    "false",
+    "for",
+    "in",
+    "is",
+    "limit",
+    "mandatory",
+    "match",
+    "max",
+    "merge",
+    "min",
+    "not",
+    "null",
+    "of",
+    "on",
+    "optional",
+    "or",
+    "order",
+    "remove",
+    "require",
+    "return",
+    "scalar",
+    "set",
+    "skip",
+    "starts",
+    "sum",
+    "then",
+    "true",
+    "union",
+    "unique",
+    "unwind",
+    "when",
+    "where",
+    "with",
+    "xor",
+    "yield",
+];
+
+/// Whether `word` is reserved, ignoring case as the grammar does.
+fn is_reserved_word(word: &str) -> bool {
+    RESERVED_WORDS.contains(&word.to_ascii_lowercase().as_str())
+}
+
+/// Lowercase Cypher identifier (bound variable name) the grammar accepts
+/// unescaped.
 fn identifier() -> impl Strategy<Value = String> {
-    "[a-z][a-z0-9]{0,7}".prop_map(|s| s)
+    "[a-z][a-z0-9]{0,7}".prop_filter("reserved words need escaping", |s| !is_reserved_word(s))
 }
 
 /// Capitalized node label.
@@ -143,5 +214,22 @@ proptest! {
 
         prop_assert!(ast.clauses.contains(&ClauseKind::Create));
         prop_assert_eq!(ast.kind, QueryKind::Mutation);
+    }
+}
+
+// Generated identifiers are used unescaped, so they must never be a word the
+// grammar reserves: `MATCH (set:A) WHERE set.score > 0` is not valid Cypher.
+#[test]
+fn identifier_strategy_never_yields_a_reserved_word() {
+    use proptest::strategy::ValueTree;
+    use proptest::test_runner::TestRunner;
+
+    let mut runner = TestRunner::deterministic();
+    for _ in 0..20_000 {
+        let value = identifier().new_tree(&mut runner).unwrap().current();
+        assert!(
+            !is_reserved_word(&value),
+            "identifier() produced the reserved word {value:?}"
+        );
     }
 }

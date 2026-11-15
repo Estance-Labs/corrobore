@@ -1833,3 +1833,123 @@ fn wal_contract_error(error: crate::WalContractError) -> GraphStorageError {
         message: error.to_string(),
     }
 }
+
+/// Canonical records published by one eligible (committed and applied)
+/// transaction, read back from the per-transaction journals.
+#[derive(Clone, Debug)]
+pub(crate) struct AppliedTransactionJournal {
+    /// Durable transaction id.
+    pub transaction_id: DurableTransactionId,
+    /// Mutation sequence assigned by the WAL.
+    pub sequence: WalSequenceNumber,
+    /// Node envelopes with their storage references, labels and active flag.
+    pub nodes: Vec<(
+        PersistedRecordEnvelope,
+        crate::StorageRef,
+        Vec<String>,
+        bool,
+    )>,
+    /// Relationship envelopes with their storage references, type and active flag.
+    pub relationships: Vec<(
+        PersistedRecordEnvelope,
+        crate::StorageRef,
+        RelationshipType,
+        bool,
+    )>,
+    /// Payload-free audit receipts persisted with the transaction.
+    pub audit_events: Vec<String>,
+}
+
+/// Highest sequence of an eligible transaction, or `None` for an empty store.
+pub(crate) fn last_eligible_mutation_sequence(
+    root: &StorageRoot,
+) -> GraphStorageResult<Option<u64>> {
+    let committed = read_committed_mutation_sequences(root)?;
+    let applied = read_applied_mutation_index(root)?;
+    Ok(eligible_sequences(&committed, &applied)
+        .values()
+        .map(|sequence| sequence.0)
+        .max())
+}
+
+/// Journals of eligible transactions with a sequence above `after`, in sequence order.
+///
+/// Compaction may have sealed journals behind the latest checkpoint; callers
+/// must treat a missing sequence as unrecoverable granularity, not as absence
+/// of changes.
+pub(crate) fn read_applied_transaction_journals(
+    root: &StorageRoot,
+    after: Option<u64>,
+) -> GraphStorageResult<Vec<AppliedTransactionJournal>> {
+    let committed = read_committed_mutation_sequences(root)?;
+    let applied = read_applied_mutation_index(root)?;
+    let eligible = eligible_sequences(&committed, &applied);
+    let wanted: HashMap<DurableTransactionId, WalSequenceNumber> = eligible
+        .into_iter()
+        .filter(|(_, sequence)| after.is_none_or(|after| sequence.0 > after))
+        .collect();
+    if wanted.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut journals: HashMap<DurableTransactionId, AppliedTransactionJournal> = wanted
+        .iter()
+        .map(|(transaction_id, sequence)| {
+            (
+                transaction_id.clone(),
+                AppliedTransactionJournal {
+                    transaction_id: transaction_id.clone(),
+                    sequence: *sequence,
+                    nodes: Vec::new(),
+                    relationships: Vec::new(),
+                    audit_events: Vec::new(),
+                },
+            )
+        })
+        .collect();
+    let nodes: Vec<NodeMutationLogRecord> = read_json_lines(
+        &node_mutation_log_path(root),
+        "read_applied_transaction_journals",
+    )?;
+    for record in nodes {
+        if let Some(journal) = journals.get_mut(&record.transaction_id)
+            && journal.sequence == record.mutation_sequence_number
+        {
+            journal.nodes.push((
+                record.envelope,
+                record.storage_ref,
+                record.labels,
+                record.read_index.active,
+            ));
+        }
+    }
+    let relationships: Vec<RelationshipMutationLogRecord> = read_json_lines(
+        &relationship_mutation_log_path(root),
+        "read_applied_transaction_journals",
+    )?;
+    for record in relationships {
+        if let Some(journal) = journals.get_mut(&record.transaction_id)
+            && journal.sequence == record.mutation_sequence_number
+        {
+            journal.relationships.push((
+                record.envelope,
+                record.storage_ref,
+                record.relationship_type,
+                record.active,
+            ));
+        }
+    }
+    let audits: Vec<AuditMutationLogRecord> = read_json_lines(
+        &audit_mutation_log_path(root),
+        "read_applied_transaction_journals",
+    )?;
+    for record in audits {
+        if let Some(journal) = journals.get_mut(&record.transaction_id)
+            && journal.sequence == record.mutation_sequence_number
+        {
+            journal.audit_events.push(record.message);
+        }
+    }
+    let mut journals: Vec<AppliedTransactionJournal> = journals.into_values().collect();
+    journals.sort_by_key(|journal| journal.sequence.0);
+    Ok(journals)
+}

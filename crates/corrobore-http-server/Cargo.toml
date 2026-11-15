@@ -28,8 +28,11 @@ chrono = { workspace = true }
 clap = { workspace = true }
 corrobore-engine = { path = "../corrobore-engine" }
 cypher-parser = { path = "../cypher-parser" }
+cypher-planner = { path = "../cypher-planner" }
+storage-interchange = { path = "../storage-interchange" }
 dotenvy = { workspace = true }
 domain-provider-abi = { path = "../domain-provider-abi" }
+corrobore-nlq = { path = "../corrobore-nlq" }
 graph-core = { path = "../graph-core" }
 graph-storage = { path = "../graph-storage" }
 hmac = { workspace = true }
@@ -49,6 +52,7 @@ tokio = { workspace = true, features = ["net", "io-util", "sync"] }
 tokio-rustls = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true, features = ["fs"] }
+url = { workspace = true }
 tower_governor = { workspace = true }
 tracing = { workspace = true }
 tracing-appender = { workspace = true }

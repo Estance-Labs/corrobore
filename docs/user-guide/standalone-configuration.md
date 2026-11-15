@@ -24,6 +24,9 @@ corrobore server validate-config --config /etc/corrobore/corrobore.toml
 | `corrobore server rollback` | Offline storage | Rolls back the compatible manifest boundary after a completed migration. |
 | `corrobore server rebuild-indexes` | Offline storage | Rebuilds derived indexes from canonical data. |
 | `corrobore server cancel-rebuild` | Offline storage | Cancels an incomplete derived-index rebuild at its durable boundary. |
+| `corrobore server cleanup` | Offline storage | Prunes graph history outside a retention window and compacts branch payloads and the WAL. |
+| `corrobore server import-snapshot` | Object store URL | Downloads and validates a snapshot from `s3://`, `file://` or `memory://` into a new local snapshot directory. |
+| `corrobore server export-parquet` | Offline storage | Exports one commit to Apache Parquet files, one per label and relationship type. |
 
 `validate-config --print-effective` prints only non-secret effective settings.
 `status` exits `8` when the endpoint is unavailable and `9` when the remote
@@ -101,18 +104,24 @@ complete procedures and validation steps.
 
 | Option | Commands | Purpose |
 | --- | --- | --- |
-| `--storage-dir` | `snapshot`, `migrate`, `rollback`, `rebuild-indexes`, `cancel-rebuild` | Select the offline persistent storage root. |
-| `--destination` | `snapshot` | Select the new local snapshot directory. |
-| `--encryption-key-id` | `snapshot`, `validate-snapshot`, `restore` | Record or verify the external key-provider identity without storing key material. |
+| `--storage-dir` | `snapshot`, `migrate`, `rollback`, `rebuild-indexes`, `cancel-rebuild`, `cleanup`, `export-parquet` | Select the offline persistent storage root. |
+| `--destination` | `snapshot`, `import-snapshot`, `export-parquet` | Select the new local snapshot or export directory. |
+| `--source` | `import-snapshot` | Set the object store URL: `s3://bucket`, `file:///path` or `memory://`. |
+| `--branch` | `export-parquet` | Export the head of this branch; the default is `main`. |
+| `--commit` | `export-parquet` | Export this graph commit. |
+| `--encryption-key-id` | `snapshot`, `validate-snapshot`, `restore`, `import-snapshot` | Record or verify the external key-provider identity without storing key material. |
 | `--retention-hook` | `snapshot` | Invoke an optional provider lifecycle or retention hook. |
 | `--snapshot` | `validate-snapshot`, `export-snapshot-s3`, `restore` | Select the local snapshot artifact directory. |
-| `--endpoint` | `export-snapshot-s3` | Set the S3 or MinIO endpoint. |
+| `--endpoint` | `export-snapshot-s3`, `import-snapshot` | Set the S3 or MinIO endpoint. |
 | `--bucket` | `export-snapshot-s3` | Set the destination bucket. |
-| `--prefix` | `export-snapshot-s3` | Set the destination object prefix. |
-| `--region` | `export-snapshot-s3` | Set the AWS signing region; the default is `us-east-1`. |
+| `--prefix` | `export-snapshot-s3`, `import-snapshot` | Set the snapshot object prefix. |
+| `--region` | `export-snapshot-s3`, `import-snapshot` | Set the AWS signing region; the default is `us-east-1`. |
 | `--target` | `restore` | Select the new empty restoration target. |
 | `--from` | `migrate` | Set the source storage version; the current supported value is `V0`. |
 | `--to` | `migrate` | Set the target storage version; the current supported value is `V1`. |
+| `--keep` | `cleanup` | Keep this many newest first-parent commits on every branch; the default is 100. |
+| `--keep-seconds` | `cleanup` | Also keep commits created less than this many seconds ago. |
+| `--dry-run` | `cleanup` | Report what would be pruned without writing. |
 
 ## TOML reference
 
@@ -137,6 +146,8 @@ rejected.
 | `storage.max_hot_nodes` | `CORROBORE_STORAGE_MAX_HOT_NODES` | `--storage-max-hot-nodes` | `16384` |
 | `storage.max_hot_relationships` | `CORROBORE_STORAGE_MAX_HOT_RELATIONSHIPS` | `--storage-max-hot-relationships` | `32768` |
 | `storage.max_warm_adjacency_entries` | `CORROBORE_STORAGE_MAX_WARM_ADJACENCY_ENTRIES` | `--storage-max-warm-adjacency-entries` | `65536` |
+| `storage.vector_index` | `CORROBORE_STORAGE_VECTOR_INDEX` | `--storage-vector-index` | `auto`; `exact` compares every vector, `hnsw` always builds an approximate HNSW graph |
+| `storage.vector_hnsw_min_vectors` | `CORROBORE_STORAGE_VECTOR_HNSW_MIN_VECTORS` | `--storage-vector-hnsw-min-vectors` | `10000`; in `auto` mode, indexes with fewer vectors stay exact |
 | `logging.directory` | `CORROBORE_HTTP_LOG_DIR` | `--log-dir` | `<server.data_directory>/logs` |
 | `logging.level` | `CORROBORE_LOG_LEVEL` | `--log-level` | `info`; `RUST_LOG` is a compatibility alias |
 | `logging.format` | `CORROBORE_LOG_FORMAT` | `--log-format` | `json` |
@@ -198,9 +209,21 @@ remain environment-only:
 | `CORROBORE_OPENCTI_ELASTIC_FREE` | `false` | Require final operation without the reference search provider. |
 | `CORROBORE_OPENCTI_RATE_LIMIT_PER_SECOND` | `200` | Sustained rate reserved for authenticated OpenCTI provider traffic. |
 | `CORROBORE_OPENCTI_RATE_LIMIT_BURST` | `1000` | Burst allowance reserved for authenticated OpenCTI provider traffic. |
-| `CORROBORE_S3_ACCESS_KEY` | unset | Access-key identifier required by `export-snapshot-s3`. |
-| `CORROBORE_S3_SECRET_KEY` | unset | Secret access key required by `export-snapshot-s3`; inject it through the process environment. |
-| `CORROBORE_S3_SESSION_TOKEN` | unset | Optional temporary-credential session token used by `export-snapshot-s3`. |
+| `CORROBORE_HTTP_CORS_ALLOWED_ORIGINS` | unset | Exact browser origins allowed to call the server (CORS), comma-separated, for a viewer served from another origin. `*` is refused; unset sends no CORS headers. |
+| `CORROBORE_HTTP_CONTENT_STORE_URL` | unset | Object store holding offloaded content (`s3://bucket/prefix`, `file:///path` or `memory://`). Unset, persistent servers use `<storage>/content` and ephemeral servers keep content in memory. See [Content plane](http-server.md#content-plane). |
+| `CORROBORE_HTTP_CONTENT_INLINE_MAX_BYTES` | `16384` | Text and JSON content up to this size stays inline in the returned handle; larger or binary content is offloaded. |
+| `CORROBORE_HTTP_CONTENT_MAX_BYTES` | `67108864` | Largest body `POST /v1/content` accepts (64 MiB). |
+| `CORROBORE_EMBEDDING_PROVIDER` | `none` | `hashing` (local feature hashing, no model) or `http` (OpenAI-compatible endpoint) for `POST /v1/embeddings` and embedding-backed seed search. |
+| `CORROBORE_EMBEDDING_DIMENSIONS` | `256` | Vector size of the `hashing` provider. |
+| `CORROBORE_EMBEDDING_ENDPOINT` | unset | Endpoint of the `http` provider, such as `http://127.0.0.1:11434/v1/embeddings`; required by it. |
+| `CORROBORE_EMBEDDING_MODEL` | unset | Model the `http` provider asks for; required by it. |
+| `CORROBORE_EMBEDDING_API_KEY` | unset | Bearer key of the `http` provider; `CORROBORE_EMBEDDING_API_KEY_FILE` reads it from a file. |
+| `CORROBORE_EMBEDDING_TIMEOUT_MS` | `10000` | Timeout of one `http` embedding call. |
+| `CORROBORE_S3_REGION` | unset | Region of an `s3://` content store. |
+| `CORROBORE_S3_ENDPOINT` | unset | S3-compatible endpoint (MinIO) of an `s3://` content store; `http://` endpoints are allowed. |
+| `CORROBORE_S3_ACCESS_KEY` | unset | Access-key identifier required by `export-snapshot-s3`, and used by an `s3://` content store. `CORROBORE_S3_ACCESS_KEY_FILE` reads it from a file. |
+| `CORROBORE_S3_SECRET_KEY` | unset | Secret access key required by `export-snapshot-s3`, and used by an `s3://` content store; inject it through the process environment or `CORROBORE_S3_SECRET_KEY_FILE`. |
+| `CORROBORE_S3_SESSION_TOKEN` | unset | Optional temporary-credential session token used by `export-snapshot-s3` and an `s3://` content store. `CORROBORE_S3_SESSION_TOKEN_FILE` reads it from a file. |
 | `CORROBORE_BUILD_REVISION` | `unknown` at compile time | Build-time source revision embedded by release automation; it is not a runtime override. |
 
 The signed-license variables `CORROBORE_HTTP_LICENSE_PEM`,

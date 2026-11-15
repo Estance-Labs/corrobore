@@ -273,6 +273,9 @@ impl NodeInput {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct NodePatch {
     pub(crate) properties_to_set: PropertyMap,
+    /// Keys removed after the sets are applied (issue #352).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub(crate) properties_to_remove: std::collections::BTreeSet<String>,
     pub(crate) status: Option<RecordStatus>,
     pub(crate) confidence: Option<Confidence>,
     pub(crate) evidence_refs: Option<Vec<EvidenceId>>,
@@ -282,6 +285,12 @@ impl NodePatch {
     /// Sets the property.
     pub fn set_property(mut self, key: impl Into<String>, value: PropertyValue) -> Self {
         self.properties_to_set.insert(key.into(), value);
+        self
+    }
+
+    /// Removes the property; a key both set and removed ends up removed.
+    pub fn remove_property(mut self, key: impl Into<String>) -> Self {
+        self.properties_to_remove.insert(key.into());
         self
     }
 

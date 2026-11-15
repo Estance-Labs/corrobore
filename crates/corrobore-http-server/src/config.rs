@@ -21,6 +21,7 @@
 use std::{collections::HashMap, env, fmt, fs, net::IpAddr};
 
 use corrobore_engine::MemoryPermissions;
+use graph_storage::{HnswParams, VectorIndexMode, VectorIndexPolicy};
 use thiserror::Error;
 
 use crate::security::{AuthenticationMode, OperationalEndpointPolicy, SecretSource};
@@ -112,10 +113,164 @@ pub struct ServerConfig {
     pub storage_max_hot_relationships: u64,
     /// Maximum lightweight adjacency entries resident in a persistent projection.
     pub storage_max_warm_adjacency_entries: u64,
+    /// Vector index implementation: `auto` (by size), `exact` or `hnsw`.
+    pub storage_vector_index: VectorIndexMode,
+    /// Vectors from which `auto` switches from the exact index to HNSW.
+    pub storage_vector_hnsw_min_vectors: u64,
     /// Trusted root containing native domain provider libraries.
     pub domain_provider_dir: Option<String>,
     /// Deployment manifest describing required provider libraries and hashes.
     pub domain_provider_manifest_file: Option<String>,
+    /// Where offloaded content lives and how much content stays inline.
+    pub content: ContentStoreConfig,
+    /// Which embedding provider turns text into vectors, if any.
+    pub embedding: EmbeddingConfig,
+    /// Exact browser origins allowed to call the server (CORS); empty
+    /// disables CORS (issue #359).
+    pub cors_allowed_origins: Vec<String>,
+}
+
+/// Which embedding provider the server uses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EmbeddingProviderKind {
+    /// No provider: vector seed modes fall back to lexical retrieval.
+    None,
+    /// Local, deterministic feature hashing of words and character trigrams.
+    Hashing,
+    /// An OpenAI-compatible `/v1/embeddings` endpoint.
+    Http,
+}
+
+/// Embedding provider for the vector and hybrid seed modes (issue #343).
+#[derive(Clone, PartialEq, Eq)]
+pub struct EmbeddingConfig {
+    pub provider: EmbeddingProviderKind,
+    /// Vector size of the hashing provider.
+    pub dimensions: usize,
+    /// Endpoint of the HTTP provider.
+    pub endpoint: Option<String>,
+    /// Model the HTTP provider is asked for.
+    pub model: Option<String>,
+    /// Bearer key of the HTTP provider.
+    pub api_key: Option<String>,
+    /// Timeout of one HTTP embedding call.
+    pub timeout_ms: u64,
+}
+
+impl Default for EmbeddingConfig {
+    fn default() -> Self {
+        Self {
+            provider: EmbeddingProviderKind::None,
+            dimensions: 256,
+            endpoint: None,
+            model: None,
+            api_key: None,
+            timeout_ms: 10_000,
+        }
+    }
+}
+
+impl fmt::Debug for EmbeddingConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EmbeddingConfig")
+            .field("provider", &self.provider)
+            .field("dimensions", &self.dimensions)
+            .field("endpoint", &self.endpoint)
+            .field("model", &self.model)
+            .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
+            .field("timeout_ms", &self.timeout_ms)
+            .finish()
+    }
+}
+
+/// Default size, in bytes, up to which text and JSON content stays inline.
+pub const DEFAULT_CONTENT_INLINE_MAX_BYTES: u64 = 16 * 1024;
+/// Default upload limit of `POST /v1/content`, in bytes.
+pub const DEFAULT_CONTENT_MAX_BYTES: usize = 64 * 1024 * 1024;
+
+/// The content plane (ADR-0021): which object store holds offloaded content
+/// and where the inline threshold lies.
+///
+/// Without a URL, persistent servers keep content under `<storage>/content`
+/// and ephemeral servers keep it in memory.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ContentStoreConfig {
+    /// `s3://bucket/prefix`, `file:///path` or `memory://`.
+    pub url: Option<String>,
+    /// Text and JSON content up to this many bytes stays inline.
+    pub inline_max_bytes: u64,
+    /// Largest accepted upload, in bytes.
+    pub max_bytes: usize,
+    /// S3 region, for `s3://` URLs.
+    pub s3_region: Option<String>,
+    /// S3-compatible endpoint, for MinIO and similar services.
+    pub s3_endpoint: Option<String>,
+    /// S3 access key id.
+    pub s3_access_key: Option<String>,
+    /// S3 secret access key.
+    pub s3_secret_key: Option<String>,
+    /// S3 session token for temporary credentials.
+    pub s3_session_token: Option<String>,
+}
+
+impl Default for ContentStoreConfig {
+    fn default() -> Self {
+        Self {
+            url: None,
+            inline_max_bytes: DEFAULT_CONTENT_INLINE_MAX_BYTES,
+            max_bytes: DEFAULT_CONTENT_MAX_BYTES,
+            s3_region: None,
+            s3_endpoint: None,
+            s3_access_key: None,
+            s3_secret_key: None,
+            s3_session_token: None,
+        }
+    }
+}
+
+impl ContentStoreConfig {
+    /// Provider options for `object_store`, credentials included.
+    #[must_use]
+    pub fn object_store_options(&self) -> Vec<(String, String)> {
+        let mut options = Vec::new();
+        if let Some(region) = &self.s3_region {
+            options.push(("aws_region".to_owned(), region.clone()));
+        }
+        if let Some(endpoint) = &self.s3_endpoint {
+            if endpoint.starts_with("http://") {
+                options.push(("aws_allow_http".to_owned(), "true".to_owned()));
+            }
+            options.push(("aws_endpoint".to_owned(), endpoint.clone()));
+        }
+        for (option, value) in [
+            ("aws_access_key_id", &self.s3_access_key),
+            ("aws_secret_access_key", &self.s3_secret_key),
+            ("aws_session_token", &self.s3_session_token),
+        ] {
+            if let Some(value) = value {
+                options.push((option.to_owned(), value.clone()));
+            }
+        }
+        options
+    }
+}
+
+impl fmt::Debug for ContentStoreConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let redacted = |value: &Option<String>| value.as_ref().map(|_| "<redacted>");
+        formatter
+            .debug_struct("ContentStoreConfig")
+            .field("url", &self.url)
+            .field("inline_max_bytes", &self.inline_max_bytes)
+            .field("max_bytes", &self.max_bytes)
+            .field("s3_region", &self.s3_region)
+            .field("s3_endpoint", &self.s3_endpoint)
+            .field("s3_access_key", &redacted(&self.s3_access_key))
+            .field("s3_secret_key", &redacted(&self.s3_secret_key))
+            .field("s3_session_token", &redacted(&self.s3_session_token))
+            .finish()
+    }
 }
 
 impl fmt::Debug for ServerConfig {
@@ -189,11 +344,19 @@ impl fmt::Debug for ServerConfig {
                 "storage_max_warm_adjacency_entries",
                 &self.storage_max_warm_adjacency_entries,
             )
+            .field("storage_vector_index", &self.storage_vector_index.as_str())
+            .field(
+                "storage_vector_hnsw_min_vectors",
+                &self.storage_vector_hnsw_min_vectors,
+            )
             .field("domain_provider_dir", &self.domain_provider_dir)
             .field(
                 "domain_provider_manifest_file",
                 &self.domain_provider_manifest_file,
             )
+            .field("content", &self.content)
+            .field("embedding", &self.embedding)
+            .field("cors_allowed_origins", &self.cors_allowed_origins)
             .finish()
     }
 }
@@ -696,6 +859,17 @@ impl ServerConfig {
                 .map(String::as_str)
                 .unwrap_or("65536"),
         )?;
+        let storage_vector_index = Self::parse_vector_index_mode(
+            vars.get("CORROBORE_STORAGE_VECTOR_INDEX")
+                .map(String::as_str)
+                .unwrap_or("auto"),
+        )?;
+        let storage_vector_hnsw_min_vectors = parse_positive_u64(
+            "CORROBORE_STORAGE_VECTOR_HNSW_MIN_VECTORS",
+            vars.get("CORROBORE_STORAGE_VECTOR_HNSW_MIN_VECTORS")
+                .map(String::as_str)
+                .unwrap_or("10000"),
+        )?;
         if opencti_elastic_free && storage_mode != StorageMode::Persistent {
             return Err(ConfigError::InvalidEnv {
                 name: "CORROBORE_OPENCTI_ELASTIC_FREE",
@@ -716,6 +890,10 @@ impl ServerConfig {
         }
         let (domain_provider_dir, domain_provider_manifest_file) =
             Self::parse_domain_provider_config(vars)?;
+
+        let content = Self::parse_content_store(vars)?;
+        let embedding = Self::parse_embedding(vars)?;
+        let cors_allowed_origins = Self::parse_cors_origins(vars)?;
 
         reject_removed_license_variables(vars)?;
 
@@ -760,8 +938,169 @@ impl ServerConfig {
             storage_max_hot_nodes,
             storage_max_hot_relationships,
             storage_max_warm_adjacency_entries,
+            storage_vector_index,
+            storage_vector_hnsw_min_vectors,
             domain_provider_dir,
             domain_provider_manifest_file,
+            content,
+            embedding,
+            cors_allowed_origins,
+        })
+    }
+
+    /// Exact origins (`scheme://host[:port]`); `*`, paths, queries and
+    /// credentials are refused so a bearer-token API never answers any origin.
+    fn parse_cors_origins(vars: &HashMap<String, String>) -> Result<Vec<String>, ConfigError> {
+        let Some(raw) = vars.get("CORROBORE_HTTP_CORS_ALLOWED_ORIGINS") else {
+            return Ok(Vec::new());
+        };
+        let mut origins = Vec::new();
+        for candidate in raw
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let invalid = || ConfigError::InvalidEnv {
+                name: "CORROBORE_HTTP_CORS_ALLOWED_ORIGINS",
+                value: format!("{candidate} is not an exact origin such as https://viewer.example"),
+            };
+            let parsed = url::Url::parse(candidate).map_err(|_| invalid())?;
+            let origin = parsed.origin().ascii_serialization();
+            if !matches!(parsed.scheme(), "http" | "https") || origin != candidate {
+                return Err(invalid());
+            }
+            if !origins.contains(&origin) {
+                origins.push(origin);
+            }
+        }
+        Ok(origins)
+    }
+
+    fn parse_embedding(vars: &HashMap<String, String>) -> Result<EmbeddingConfig, ConfigError> {
+        let optional = |name: &str| {
+            vars.get(name)
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        };
+        let raw = optional("CORROBORE_EMBEDDING_PROVIDER").unwrap_or_else(|| "none".to_owned());
+        let provider = match raw.to_ascii_lowercase().as_str() {
+            "none" => EmbeddingProviderKind::None,
+            "hashing" => EmbeddingProviderKind::Hashing,
+            "http" => EmbeddingProviderKind::Http,
+            _ => {
+                return Err(ConfigError::InvalidEnv {
+                    name: "CORROBORE_EMBEDDING_PROVIDER",
+                    value: raw,
+                });
+            }
+        };
+        let dimensions = parse_positive_usize(
+            "CORROBORE_EMBEDDING_DIMENSIONS",
+            vars.get("CORROBORE_EMBEDDING_DIMENSIONS")
+                .map(String::as_str)
+                .unwrap_or("256"),
+        )?;
+        if dimensions > 8192 {
+            return Err(ConfigError::InvalidEnv {
+                name: "CORROBORE_EMBEDDING_DIMENSIONS",
+                value: dimensions.to_string(),
+            });
+        }
+        let timeout_ms = parse_positive_u64(
+            "CORROBORE_EMBEDDING_TIMEOUT_MS",
+            vars.get("CORROBORE_EMBEDDING_TIMEOUT_MS")
+                .map(String::as_str)
+                .unwrap_or("10000"),
+        )?;
+        let (api_key, _) = resolve_secret(
+            vars,
+            "CORROBORE_EMBEDDING_API_KEY",
+            "CORROBORE_EMBEDDING_API_KEY_FILE",
+            "embedding.api_key",
+            "embedding.api_key_file",
+        )?;
+        let endpoint = optional("CORROBORE_EMBEDDING_ENDPOINT");
+        let model = optional("CORROBORE_EMBEDDING_MODEL");
+        if provider == EmbeddingProviderKind::Http {
+            match &endpoint {
+                Some(endpoint)
+                    if endpoint.starts_with("http://") || endpoint.starts_with("https://") => {}
+                other => {
+                    return Err(ConfigError::InvalidEnv {
+                        name: "CORROBORE_EMBEDDING_ENDPOINT",
+                        value: other.clone().unwrap_or_else(|| {
+                            "an http(s) URL is required by the http provider".to_owned()
+                        }),
+                    });
+                }
+            }
+            if model.is_none() {
+                return Err(ConfigError::InvalidEnv {
+                    name: "CORROBORE_EMBEDDING_MODEL",
+                    value: "a model name is required by the http provider".to_owned(),
+                });
+            }
+        }
+        Ok(EmbeddingConfig {
+            provider,
+            dimensions,
+            endpoint,
+            model,
+            api_key,
+            timeout_ms,
+        })
+    }
+
+    fn parse_content_store(
+        vars: &HashMap<String, String>,
+    ) -> Result<ContentStoreConfig, ConfigError> {
+        let optional = |name: &str| {
+            vars.get(name)
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        };
+        let inline_max_bytes = parse_positive_u64(
+            "CORROBORE_HTTP_CONTENT_INLINE_MAX_BYTES",
+            vars.get("CORROBORE_HTTP_CONTENT_INLINE_MAX_BYTES")
+                .map(String::as_str)
+                .unwrap_or("16384"),
+        )?;
+        let max_bytes = parse_positive_usize(
+            "CORROBORE_HTTP_CONTENT_MAX_BYTES",
+            vars.get("CORROBORE_HTTP_CONTENT_MAX_BYTES")
+                .map(String::as_str)
+                .unwrap_or("67108864"),
+        )?;
+        let (s3_access_key, _) = resolve_secret(
+            vars,
+            "CORROBORE_S3_ACCESS_KEY",
+            "CORROBORE_S3_ACCESS_KEY_FILE",
+            "content.s3_access_key",
+            "content.s3_access_key_file",
+        )?;
+        let (s3_secret_key, _) = resolve_secret(
+            vars,
+            "CORROBORE_S3_SECRET_KEY",
+            "CORROBORE_S3_SECRET_KEY_FILE",
+            "content.s3_secret_key",
+            "content.s3_secret_key_file",
+        )?;
+        let (s3_session_token, _) = resolve_secret(
+            vars,
+            "CORROBORE_S3_SESSION_TOKEN",
+            "CORROBORE_S3_SESSION_TOKEN_FILE",
+            "content.s3_session_token",
+            "content.s3_session_token_file",
+        )?;
+        Ok(ContentStoreConfig {
+            url: optional("CORROBORE_HTTP_CONTENT_STORE_URL"),
+            inline_max_bytes,
+            max_bytes,
+            s3_region: optional("CORROBORE_S3_REGION"),
+            s3_endpoint: optional("CORROBORE_S3_ENDPOINT"),
+            s3_access_key,
+            s3_secret_key,
+            s3_session_token,
         })
     }
 
@@ -794,6 +1133,24 @@ impl ServerConfig {
                     .to_owned(),
             }),
             (None, None) => Ok((None, None)),
+        }
+    }
+
+    fn parse_vector_index_mode(value: &str) -> Result<VectorIndexMode, ConfigError> {
+        VectorIndexMode::parse(value).ok_or_else(|| ConfigError::InvalidEnv {
+            name: "CORROBORE_STORAGE_VECTOR_INDEX",
+            value: value.to_owned(),
+        })
+    }
+
+    /// Vector index policy handed to the persistent canonical store.
+    #[must_use]
+    pub fn vector_index_policy(&self) -> VectorIndexPolicy {
+        VectorIndexPolicy {
+            mode: self.storage_vector_index,
+            hnsw_min_vectors: usize::try_from(self.storage_vector_hnsw_min_vectors)
+                .unwrap_or(usize::MAX),
+            hnsw: HnswParams::default(),
         }
     }
 
