@@ -91,3 +91,36 @@ pub async fn cleanup_history(
     .await?;
     Ok(Json(DatabaseOperationResponse { ok: true, result }))
 }
+
+/// Body of `POST /v1/admin/storage/export/parquet`.
+#[derive(Debug, Deserialize)]
+pub struct ParquetExportBody {
+    /// New local export directory on the server.
+    pub destination: std::path::PathBuf,
+    pub branch: Option<String>,
+    pub commit: Option<String>,
+}
+
+/// Export one commit to Apache Parquet files on the server.
+pub async fn export_parquet(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ParquetExportBody>,
+) -> Result<Json<DatabaseOperationResponse<storage_interchange::ParquetExportReport>>, ApiError> {
+    require_admin_auth(&state, &headers)?;
+    let commit = body
+        .commit
+        .as_deref()
+        .map(crate::handlers::graph_history::parse_commit_id)
+        .transpose()?;
+    let result = crate::handlers::graph_history::with_store(&state, move |store| {
+        let commit_id = store
+            .resolve_graph_ref(body.branch.as_deref(), commit.as_ref())
+            .map_err(crate::handlers::graph_history::map_history_error)?;
+        storage_interchange::export_commit_parquet(store, &commit_id, &body.destination).map_err(
+            |error| ApiError::service_unavailable("DATABASE_OPERATION_FAILED", error.to_string()),
+        )
+    })
+    .await?;
+    Ok(Json(DatabaseOperationResponse { ok: true, result }))
+}

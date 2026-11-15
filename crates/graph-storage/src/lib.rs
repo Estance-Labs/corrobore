@@ -150,8 +150,8 @@ pub use database_operations::{
     MigrationRequest, OperationReadiness, SnapshotArtifactStore, SnapshotExportReport,
     SnapshotReport, SnapshotRequest, SnapshotValidationReport, cancel_derived_index_rebuild,
     create_consistent_snapshot, derived_index_rebuild_status, export_snapshot_to_store,
-    migrate_storage, rebuild_derived_indexes, restore_consistent_snapshot,
-    rollback_storage_migration, validate_consistent_snapshot,
+    import_snapshot_from_store, migrate_storage, rebuild_derived_indexes,
+    restore_consistent_snapshot, rollback_storage_migration, validate_consistent_snapshot,
 };
 pub use engine_snapshot::{load_engine_graph_snapshot, persist_engine_graph_snapshot};
 pub use error::{GraphStorageError, GraphStorageResult};

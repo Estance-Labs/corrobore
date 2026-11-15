@@ -1393,6 +1393,36 @@ paths:
             application/json:
               schema: {type: object}
 
+  /v1/admin/storage/export/parquet:
+    post:
+      operationId: exportGraphParquet
+      summary: Export one commit to Apache Parquet files on the server
+      tags: [Database Operations]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [destination]
+              properties:
+                destination: {type: string}
+                branch: {type: string, default: main}
+                commit: {type: string, pattern: '^gc[0-9a-f]{40}$'}
+      responses:
+        '200':
+          description: Commit, files written with rows and typed columns, total rows
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503':
+          description: DATABASE_OPERATION_FAILED
+          content:
+            application/json:
+              schema: {type: object}
+
   /v1/admin/storage/indexes/rebuild:
     post:
       operationId: rebuildDatabaseIndexes

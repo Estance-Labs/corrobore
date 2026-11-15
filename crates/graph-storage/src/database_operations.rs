@@ -384,6 +384,70 @@ pub fn restore_consistent_snapshot(
     Ok(snapshot_report(snapshot_root, &manifest, &validation))
 }
 
+/// Download a snapshot exported with [`export_snapshot_to_store`] into a new
+/// local snapshot directory, then validate every component checksum.
+///
+/// The manifest is read first and written last, mirroring the export that
+/// publishes it last, so an interrupted download never looks complete.
+pub fn import_snapshot_from_store(
+    store: &dyn SnapshotArtifactStore,
+    source_prefix: &str,
+    snapshot_root: impl AsRef<Path>,
+    expected_encryption_key_id: Option<&str>,
+) -> GraphStorageResult<SnapshotValidationReport> {
+    let snapshot_root = snapshot_root.as_ref();
+    let prefix = source_prefix.trim_matches('/');
+    if prefix.is_empty() {
+        return operation_error(
+            "import_snapshot_from_store",
+            "source prefix must not be empty",
+        );
+    }
+    if snapshot_root.exists() {
+        return Err(GraphStorageError::StorageRootAlreadyExists {
+            path: snapshot_root.to_path_buf(),
+        });
+    }
+    let fetch = |key: String| {
+        store
+            .get(&key)
+            .map_err(|message| GraphStorageError::OperationFailed {
+                operation: "import_snapshot_from_store",
+                message: format!("{key}: {message}"),
+            })
+    };
+    let manifest_bytes = fetch(format!("{prefix}/{SNAPSHOT_MANIFEST}"))?;
+    let manifest: SnapshotManifest = serde_json::from_slice(&manifest_bytes).map_err(|error| {
+        GraphStorageError::OperationFailed {
+            operation: "import_snapshot_from_store",
+            message: format!("snapshot manifest does not decode: {error}"),
+        }
+    })?;
+    fs::create_dir_all(snapshot_root)
+        .map_err(|error| io_error("import_snapshot_from_store", snapshot_root, error))?;
+    let result = (|| {
+        for component in &manifest.components {
+            let relative = safe_relative_path(&component.relative_path)?;
+            let bytes = fetch(format!("{prefix}/{}", component.relative_path))?;
+            let target = snapshot_root.join(relative);
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|error| io_error("import_snapshot_from_store", parent, error))?;
+            }
+            fs::write(&target, bytes)
+                .map_err(|error| io_error("import_snapshot_from_store", &target, error))?;
+        }
+        let manifest_path = snapshot_root.join(SNAPSHOT_MANIFEST);
+        fs::write(&manifest_path, &manifest_bytes)
+            .map_err(|error| io_error("import_snapshot_from_store", &manifest_path, error))?;
+        validate_consistent_snapshot(snapshot_root, expected_encryption_key_id)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(snapshot_root);
+    }
+    result
+}
+
 /// Upload checksummed components and publish the snapshot manifest last.
 pub fn export_snapshot_to_store(
     snapshot_root: impl AsRef<Path>,

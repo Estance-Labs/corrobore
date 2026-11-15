@@ -25,6 +25,8 @@ corrobore server validate-config --config /etc/corrobore/corrobore.toml
 | `corrobore server rebuild-indexes` | Offline storage | Rebuilds derived indexes from canonical data. |
 | `corrobore server cancel-rebuild` | Offline storage | Cancels an incomplete derived-index rebuild at its durable boundary. |
 | `corrobore server cleanup` | Offline storage | Prunes graph history outside a retention window and compacts branch payloads and the WAL. |
+| `corrobore server import-snapshot` | Object store URL | Downloads and validates a snapshot from `s3://`, `file://` or `memory://` into a new local snapshot directory. |
+| `corrobore server export-parquet` | Offline storage | Exports one commit to Apache Parquet files, one per label and relationship type. |
 
 `validate-config --print-effective` prints only non-secret effective settings.
 `status` exits `8` when the endpoint is unavailable and `9` when the remote
@@ -102,15 +104,18 @@ complete procedures and validation steps.
 
 | Option | Commands | Purpose |
 | --- | --- | --- |
-| `--storage-dir` | `snapshot`, `migrate`, `rollback`, `rebuild-indexes`, `cancel-rebuild`, `cleanup` | Select the offline persistent storage root. |
-| `--destination` | `snapshot` | Select the new local snapshot directory. |
-| `--encryption-key-id` | `snapshot`, `validate-snapshot`, `restore` | Record or verify the external key-provider identity without storing key material. |
+| `--storage-dir` | `snapshot`, `migrate`, `rollback`, `rebuild-indexes`, `cancel-rebuild`, `cleanup`, `export-parquet` | Select the offline persistent storage root. |
+| `--destination` | `snapshot`, `import-snapshot`, `export-parquet` | Select the new local snapshot or export directory. |
+| `--source` | `import-snapshot` | Set the object store URL: `s3://bucket`, `file:///path` or `memory://`. |
+| `--branch` | `export-parquet` | Export the head of this branch; the default is `main`. |
+| `--commit` | `export-parquet` | Export this graph commit. |
+| `--encryption-key-id` | `snapshot`, `validate-snapshot`, `restore`, `import-snapshot` | Record or verify the external key-provider identity without storing key material. |
 | `--retention-hook` | `snapshot` | Invoke an optional provider lifecycle or retention hook. |
 | `--snapshot` | `validate-snapshot`, `export-snapshot-s3`, `restore` | Select the local snapshot artifact directory. |
-| `--endpoint` | `export-snapshot-s3` | Set the S3 or MinIO endpoint. |
+| `--endpoint` | `export-snapshot-s3`, `import-snapshot` | Set the S3 or MinIO endpoint. |
 | `--bucket` | `export-snapshot-s3` | Set the destination bucket. |
-| `--prefix` | `export-snapshot-s3` | Set the destination object prefix. |
-| `--region` | `export-snapshot-s3` | Set the AWS signing region; the default is `us-east-1`. |
+| `--prefix` | `export-snapshot-s3`, `import-snapshot` | Set the snapshot object prefix. |
+| `--region` | `export-snapshot-s3`, `import-snapshot` | Set the AWS signing region; the default is `us-east-1`. |
 | `--target` | `restore` | Select the new empty restoration target. |
 | `--from` | `migrate` | Set the source storage version; the current supported value is `V0`. |
 | `--to` | `migrate` | Set the target storage version; the current supported value is `V1`. |

@@ -28,6 +28,7 @@ chrono = { workspace = true }
 clap = { workspace = true }
 corrobore-engine = { path = "../corrobore-engine" }
 cypher-parser = { path = "../cypher-parser" }
+storage-interchange = { path = "../storage-interchange" }
 dotenvy = { workspace = true }
 domain-provider-abi = { path = "../domain-provider-abi" }
 graph-core = { path = "../graph-core" }
