@@ -41,6 +41,7 @@ pub mod health;
 pub mod import;
 pub mod memory;
 pub mod metrics;
+pub mod nlq;
 pub mod opencti_files;
 pub mod opencti_reconciliation;
 pub mod opencti_routing;

@@ -775,6 +775,7 @@ dependencies = [
  "chrono",
  "clap",
  "corrobore-engine",
+ "corrobore-nlq",
  "cypher-parser",
  "domain-provider-abi",
  "dotenvy",

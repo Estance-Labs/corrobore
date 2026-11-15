@@ -411,6 +411,41 @@ Errors: `400 INVALID_EMBEDDING_REQUEST` (no texts, more than 256, or text
 without words for `hashing`), `503 EMBEDDING_PROVIDER_NOT_CONFIGURED`,
 `502 EMBEDDING_PROVIDER_FAILED`.
 
+## `POST /v1/nlq/compile`
+
+Compiles a French or English request into one validated `nlq/v1` action and
+**executes nothing** (see [Natural-Language Queries](nlq.md)). The caller reads
+the canonical action, applies its own authorization, and runs it through the
+route it already uses: `cypher_read` through `POST /v1/cypher/read`, a
+`cypher_write_proposal` through `POST /v1/cypher/write`, preferably on a
+branch.
+
+```json
+{ "text": "Quels acteurs de menace utilisent le malware \"X-Agent\" ?", "language": "fr", "evidence_refs": [], "allow_writes": false }
+```
+
+```json
+{
+  "ok": true,
+  "result": {
+    "kind": "cypher_read",
+    "language": "fr",
+    "canonical": "MATCH (a:ThreatActor)-[r:USES]->(m:Malware) WHERE m.name = 'X-Agent' RETURN a.name LIMIT 50",
+    "writes": false,
+    "compiler": "template",
+    "envelope": { "schema_version": "nlq/v1", "…": "…" }
+  }
+}
+```
+
+`language` is optional (`fr` or `en`; detected otherwise), `evidence_refs`
+lists the references the action may cite, and `allow_writes` (default
+`false`) lets the compiler propose writes. `clarification_required`, `abstain`
+and `unsupported` are answers, not errors. Errors: `400 INVALID_NLQ_REQUEST`
+(blank text, more than 4,000 characters, another language, blank or more than
+100 evidence references) and `422 NLQ_REJECTED` with the stable rejection code
+when validation refuses the envelope.
+
 ## `POST /v1/memory/operations`
 
 Executes the versioned, domain-neutral `remember`, `relate`, `recall`, `update`,

@@ -1077,6 +1077,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/domains/{domain}/validate", post(validate_domain))
         .route("/v1/stix/validate", post(validate_stix))
         .route("/v1/seed/search", post(seed_search))
+        .route("/v1/nlq/compile", post(crate::handlers::nlq::compile))
         .route("/v1/embeddings", post(crate::handlers::embeddings::embed))
         .route("/v1/memory/operations", post(execute_memory_operation))
         .route("/v1/sessions/start", post(start_session))

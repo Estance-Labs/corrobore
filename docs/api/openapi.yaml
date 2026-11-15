@@ -3267,6 +3267,49 @@ paths:
             application/json:
               schema: {type: object}
 
+  /v1/nlq/compile:
+    post:
+      operationId: compileNlq
+      summary: Compile a natural-language request into a validated nlq/v1 action without executing it
+      tags: [Seeds]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: {type: string, maxLength: 4000}
+                language: {type: string, enum: [fr, en]}
+                evidence_refs: {type: array, items: {type: string}, maxItems: 100}
+                allow_writes: {type: boolean, default: false}
+      responses:
+        '200':
+          description: The validated action
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean, const: true}
+                  result:
+                    type: object
+                    properties:
+                      kind: {type: string, enum: [cypher_read, cypher_write_proposal, investigation, memory_operation, clarification_required, abstain, unsupported]}
+                      language: {type: string}
+                      canonical: {type: string}
+                      writes: {type: boolean}
+                      compiler: {type: string}
+                      envelope: {type: object}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '422':
+          description: NLQ_REJECTED
+          content:
+            application/json:
+              schema: {type: object}
+
   /v1/embeddings:
     post:
       operationId: embedTexts
