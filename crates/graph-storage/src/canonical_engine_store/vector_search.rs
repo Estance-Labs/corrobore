@@ -21,14 +21,17 @@
 
 //! Vector index and hybrid retrieval (issue #326).
 //!
-//! Nodes carry embeddings as numeric list properties. The index is exact
-//! (every vector is compared), kept per commit and moved forward with the
-//! changes of the commits in between, behind the [`VectorIndex`] trait so an
-//! approximate index can replace it without changing callers. Hybrid search
-//! fuses BM25 full text, vector similarity and graph proximity with
+//! Nodes carry embeddings as numeric list properties. The index is kept per
+//! commit and moved forward with the changes of the commits in between,
+//! behind the [`VectorIndex`] trait. A [`VectorIndexPolicy`] picks the
+//! implementation: the exact index (every vector is compared) below a size
+//! threshold, an HNSW graph (issue #342, [`HnswVectorIndex`]) above it. Hybrid
+//! search fuses BM25 full text, vector similarity and graph proximity with
 //! Reciprocal Rank Fusion.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+mod hnsw;
+
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use graph_core::{Node, PropertyValue};
 use opencti_search::{FullTextMatchMode, FullTextQuery};
@@ -36,6 +39,8 @@ use opencti_search::{FullTextMatchMode, FullTextQuery};
 use super::CanonicalEngineStore;
 use crate::graph_history::{CommitView, GraphCommitId, HistoryRecordKind, MAIN_BRANCH};
 use crate::{CanonicalAccessContext, GraphStorageError, GraphStorageResult};
+
+pub use hnsw::{HnswParams, HnswVectorIndex};
 
 /// Reciprocal Rank Fusion constant from Cormack et al. (2009).
 pub const RRF_K: f64 = 60.0;
@@ -50,6 +55,97 @@ pub enum VectorMetric {
     Cosine,
     /// Negative Euclidean distance; higher is closer.
     L2,
+}
+
+/// Implementation family of a [`VectorIndex`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VectorIndexKind {
+    /// Every vector is compared; answers every metric exactly.
+    Exact,
+    /// Approximate HNSW graph built for one metric.
+    Hnsw,
+}
+
+/// How the store chooses the vector index implementation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VectorIndexMode {
+    /// Exact below [`VectorIndexPolicy::hnsw_min_vectors`] vectors, HNSW from it.
+    #[default]
+    Auto,
+    /// Always exact.
+    Exact,
+    /// Always HNSW.
+    Hnsw,
+}
+
+impl VectorIndexMode {
+    /// Configuration spelling: `auto`, `exact` or `hnsw`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Exact => "exact",
+            Self::Hnsw => "hnsw",
+        }
+    }
+
+    /// Parse a configuration spelling, ignoring case and surrounding space.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
+            "exact" => Some(Self::Exact),
+            "hnsw" => Some(Self::Hnsw),
+            _ => None,
+        }
+    }
+}
+
+/// Vectors from which [`VectorIndexMode::Auto`] switches to HNSW. Below it an
+/// exact scan is fast enough and costs no graph construction.
+pub const DEFAULT_HNSW_MIN_VECTORS: usize = 10_000;
+
+/// Vector index selection policy of a store.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VectorIndexPolicy {
+    /// Implementation choice.
+    pub mode: VectorIndexMode,
+    /// Threshold of [`VectorIndexMode::Auto`].
+    pub hnsw_min_vectors: usize,
+    /// Parameters of HNSW graphs.
+    pub hnsw: HnswParams,
+}
+
+impl Default for VectorIndexPolicy {
+    fn default() -> Self {
+        Self {
+            mode: VectorIndexMode::Auto,
+            hnsw_min_vectors: DEFAULT_HNSW_MIN_VECTORS,
+            hnsw: HnswParams::default(),
+        }
+    }
+}
+
+impl VectorIndexPolicy {
+    /// Implementation for an index holding `vectors` vectors.
+    #[must_use]
+    pub fn kind_for(&self, vectors: usize) -> VectorIndexKind {
+        match self.mode {
+            VectorIndexMode::Exact => VectorIndexKind::Exact,
+            VectorIndexMode::Hnsw => VectorIndexKind::Hnsw,
+            VectorIndexMode::Auto if vectors >= self.hnsw_min_vectors => VectorIndexKind::Hnsw,
+            VectorIndexMode::Auto => VectorIndexKind::Exact,
+        }
+    }
+
+    /// Empty index of `kind`; an HNSW graph is built for `metric`.
+    #[must_use]
+    pub fn build(&self, kind: VectorIndexKind, metric: VectorMetric) -> Box<dyn VectorIndex> {
+        match kind {
+            VectorIndexKind::Exact => Box::new(ExactVectorIndex::default()),
+            VectorIndexKind::Hnsw => Box::new(HnswVectorIndex::new(metric, self.hnsw)),
+        }
+    }
 }
 
 /// Index of node embeddings.
@@ -68,6 +164,15 @@ pub trait VectorIndex: Send + std::fmt::Debug {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    /// Implementation family.
+    fn kind(&self) -> VectorIndexKind {
+        VectorIndexKind::Exact
+    }
+    /// Metric whose queries use the index structure; `None` when every metric
+    /// does. Other metrics are still answered, by an exact scan.
+    fn built_for(&self) -> Option<VectorMetric> {
+        None
+    }
     /// Copy of the index behind a new box.
     fn boxed_clone(&self) -> Box<dyn VectorIndex>;
 }
@@ -77,6 +182,18 @@ pub trait VectorIndex: Send + std::fmt::Debug {
 pub struct ExactVectorIndex {
     vectors: BTreeMap<String, Vec<f32>>,
     dimensions: Option<usize>,
+}
+
+/// Best `k` of scored ids: similarity descending, then id ascending.
+fn ranked(mut scored: Vec<(String, f64)>, k: usize) -> Vec<(String, f64)> {
+    scored.sort_by(|left, right| {
+        right
+            .1
+            .total_cmp(&left.1)
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    scored.truncate(k);
+    scored
 }
 
 fn similarity(left: &[f32], right: &[f32], metric: VectorMetric) -> f64 {
@@ -116,20 +233,14 @@ impl VectorIndex for ExactVectorIndex {
     }
 
     fn search(&self, query: &[f32], k: usize, metric: VectorMetric) -> Vec<(String, f64)> {
-        let mut scored: Vec<(String, f64)> = self
-            .vectors
-            .iter()
-            .filter(|(_, vector)| vector.len() == query.len())
-            .map(|(id, vector)| (id.clone(), similarity(query, vector, metric)))
-            .collect();
-        scored.sort_by(|left, right| {
-            right
-                .1
-                .total_cmp(&left.1)
-                .then_with(|| left.0.cmp(&right.0))
-        });
-        scored.truncate(k);
-        scored
+        ranked(
+            self.vectors
+                .iter()
+                .filter(|(_, vector)| vector.len() == query.len())
+                .map(|(id, vector)| (id.clone(), similarity(query, vector, metric)))
+                .collect(),
+            k,
+        )
     }
 
     fn dimensions(&self) -> Option<usize> {
@@ -189,12 +300,19 @@ fn embedding(node: &Node, property: &str) -> Option<Vec<f32>> {
     .filter(|vector| !vector.is_empty())
 }
 
-/// Vector index kept for one property at one commit.
+/// Vector index kept for one property at one commit. The store keeps either
+/// one exact index or one HNSW graph per metric, all for the same property.
 #[derive(Debug)]
 pub(crate) struct VectorIndexCache {
     property: String,
     commit: GraphCommitId,
     index: Box<dyn VectorIndex>,
+}
+
+impl VectorIndexCache {
+    fn serves(&self, property: &str, metric: VectorMetric) -> bool {
+        self.property == property && self.index.built_for().is_none_or(|built| built == metric)
+    }
 }
 
 impl Clone for VectorIndexCache {
@@ -255,10 +373,10 @@ impl CanonicalEngineStore {
             return Err(invalid_vector("the query vector must hold finite numbers"));
         }
         let view = self.commit_view(commit_id)?;
-        self.ensure_vector_index(commit_id, property, &view)?;
+        let position = self.ensure_vector_index(commit_id, property, metric, &view)?;
         let cache = self
             .vector_cache
-            .as_ref()
+            .get(position)
             .ok_or_else(|| invalid_vector("vector index unavailable"))?;
         if let Some(dimensions) = cache.index.dimensions()
             && dimensions != query.len()
@@ -422,78 +540,138 @@ impl CanonicalEngineStore {
             .find(|id| view.nodes.contains_key(id))
     }
 
+    /// Implementation of the index cached for `property` that answers
+    /// `metric`, or `None` before a search built one.
+    #[must_use]
+    pub fn vector_index_kind(
+        &self,
+        property: &str,
+        metric: VectorMetric,
+    ) -> Option<VectorIndexKind> {
+        self.vector_cache
+            .iter()
+            .find(|cache| cache.serves(property, metric))
+            .map(|cache| cache.index.kind())
+    }
+
+    /// Position in the cache of an index of `property` at `commit_id` that
+    /// answers `metric`.
+    ///
+    /// A cached index at a first-parent ancestor moves forward with the
+    /// changed nodes; any other cache is rebuilt from the commit view. Either
+    /// way the index is rebuilt when the policy now picks another
+    /// implementation for its size. An exact index answers every metric and
+    /// replaces the other entries of the property; HNSW graphs are kept one
+    /// per metric.
     fn ensure_vector_index(
         &mut self,
         commit_id: &GraphCommitId,
         property: &str,
+        metric: VectorMetric,
         view: &CommitView,
-    ) -> GraphStorageResult<()> {
-        if let Some(cache) = &self.vector_cache
-            && cache.property == property
-        {
-            if &cache.commit == commit_id {
-                return Ok(());
+    ) -> GraphStorageResult<usize> {
+        let policy = self.options.vector_index;
+        self.vector_cache.retain(|cache| cache.property == property);
+        let serving = self
+            .vector_cache
+            .iter()
+            .position(|cache| cache.serves(property, metric) && &cache.commit == commit_id)
+            .or_else(|| {
+                self.vector_cache
+                    .iter()
+                    .position(|cache| cache.serves(property, metric))
+            });
+        if let Some(position) = serving {
+            if &self.vector_cache[position].commit == commit_id {
+                return Ok(position);
             }
-            // Move forward along the first-parent chain when the cached commit
-            // is a recent ancestor; otherwise rebuild.
-            let mut chain = Vec::new();
-            let mut current = Some(self.history.commit(commit_id)?);
-            let mut reached = false;
-            while let Some(commit) = current.take() {
-                if commit.commit_id == cache.commit {
-                    reached = true;
-                    break;
+            if self.move_vector_index_forward(position, commit_id, property, view)? {
+                let index = &self.vector_cache[position].index;
+                if policy.kind_for(index.len()) == index.kind() {
+                    return Ok(position);
                 }
-                if chain.len() > MAX_FORWARD_COMMITS {
-                    break;
-                }
-                current = commit
-                    .parents
-                    .first()
-                    .and_then(|parent| self.history.commit(parent).ok());
-                chain.push(commit);
             }
-            if reached {
-                let mut changed: HashSet<String> = HashSet::new();
-                for commit in &chain {
-                    for change in &commit.changes {
-                        if change.kind == HistoryRecordKind::Node {
-                            changed.insert(change.record_id.clone());
-                        }
-                    }
-                }
-                let mut updates = Vec::with_capacity(changed.len());
-                for id in changed {
-                    let vector = match view.nodes.get(&id).filter(|entry| !entry.deleted) {
-                        Some(entry) => embedding(&self.decode_node(entry)?, property),
-                        None => None,
-                    };
-                    updates.push((id, vector));
-                }
-                if let Some(cache) = self.vector_cache.as_mut() {
-                    for (id, vector) in updates {
-                        match vector {
-                            Some(vector) => cache.index.upsert(id, vector),
-                            None => cache.index.remove(&id),
-                        }
-                    }
-                    cache.commit = commit_id.clone();
-                }
-                return Ok(());
-            }
+            self.vector_cache.remove(position);
         }
-        let mut index: Box<dyn VectorIndex> = Box::new(ExactVectorIndex::default());
+        let mut vectors = Vec::new();
         for (id, entry) in view.nodes.iter().filter(|(_, entry)| !entry.deleted) {
             if let Some(vector) = embedding(&self.decode_node(entry)?, property) {
-                index.upsert(id.clone(), vector);
+                vectors.push((id.clone(), vector));
             }
         }
-        self.vector_cache = Some(VectorIndexCache {
+        let kind = policy.kind_for(vectors.len());
+        let mut index = policy.build(kind, metric);
+        // `view.nodes` is ordered by id, so the build order is deterministic.
+        for (id, vector) in vectors {
+            index.upsert(id, vector);
+        }
+        if index.built_for().is_none() {
+            self.vector_cache.clear();
+        }
+        self.vector_cache.push(VectorIndexCache {
             property: property.to_owned(),
             commit: commit_id.clone(),
             index,
         });
-        Ok(())
+        Ok(self.vector_cache.len() - 1)
+    }
+
+    /// Move the cached index at `position` forward to `commit_id` along the
+    /// first-parent chain; `false` when its commit is not a recent ancestor.
+    fn move_vector_index_forward(
+        &mut self,
+        position: usize,
+        commit_id: &GraphCommitId,
+        property: &str,
+        view: &CommitView,
+    ) -> GraphStorageResult<bool> {
+        let cached = self.vector_cache[position].commit.clone();
+        let mut chain = Vec::new();
+        let mut current = Some(self.history.commit(commit_id)?);
+        let mut reached = false;
+        while let Some(commit) = current.take() {
+            if commit.commit_id == cached {
+                reached = true;
+                break;
+            }
+            if chain.len() > MAX_FORWARD_COMMITS {
+                break;
+            }
+            current = commit
+                .parents
+                .first()
+                .and_then(|parent| self.history.commit(parent).ok());
+            chain.push(commit);
+        }
+        if !reached {
+            return Ok(false);
+        }
+        // Ordered so an HNSW graph receives the same operations every time.
+        let mut changed: BTreeSet<String> = BTreeSet::new();
+        for commit in &chain {
+            for change in &commit.changes {
+                if change.kind == HistoryRecordKind::Node {
+                    changed.insert(change.record_id.clone());
+                }
+            }
+        }
+        let mut updates = Vec::with_capacity(changed.len());
+        for id in changed {
+            let vector = match view.nodes.get(&id).filter(|entry| !entry.deleted) {
+                Some(entry) => embedding(&self.decode_node(entry)?, property),
+                None => None,
+            };
+            updates.push((id, vector));
+        }
+        let cache = &mut self.vector_cache[position];
+        for (id, vector) in updates {
+            match vector {
+                Some(vector) => cache.index.upsert(id, vector),
+                None => cache.index.remove(&id),
+            }
+        }
+        cache.commit = commit_id.clone();
+        Ok(true)
     }
 }
 

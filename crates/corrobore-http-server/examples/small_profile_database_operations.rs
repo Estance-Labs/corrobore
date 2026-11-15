@@ -49,6 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             max_hot_nodes: RECORDS as u64,
             max_hot_relationships: 1,
             max_warm_adjacency_entries: 1,
+            ..CanonicalStoreOptions::default()
         },
     )?;
     let mut graph = Graph::new();
@@ -102,6 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             max_hot_nodes: RECORDS as u64,
             max_hot_relationships: 1,
             max_warm_adjacency_entries: 1,
+            ..CanonicalStoreOptions::default()
         },
     )?;
     let started = Instant::now();

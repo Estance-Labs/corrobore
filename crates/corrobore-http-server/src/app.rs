@@ -644,6 +644,7 @@ fn initialize_runtime_store(
                     max_hot_nodes: config.storage_max_hot_nodes,
                     max_hot_relationships: config.storage_max_hot_relationships,
                     max_warm_adjacency_entries: config.storage_max_warm_adjacency_entries,
+                    vector_index: config.vector_index_policy(),
                 },
             )
             .map(|store| RuntimeStoreProvider::Persistent(Box::new(store)))

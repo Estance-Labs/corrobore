@@ -620,6 +620,92 @@ enabled = false
     assert!(!stdout.contains("admin-secret"));
 }
 
+/// Issue #342: the vector index policy follows CLI > environment > TOML.
+#[test]
+fn vector_index_settings_follow_cli_environment_file_precedence() {
+    let directory = temp_dir("vector-index");
+    let config = write_config(
+        &directory,
+        r#"
+[server]
+auth_token = "file-secret"
+
+[storage]
+vector_index = "exact"
+vector_hnsw_min_vectors = 2500
+"#,
+    );
+    let validate = |extra: &[&str], env: &[(&str, &str)]| {
+        let mut command = corrobore();
+        command
+            .args([
+                "server",
+                "validate-config",
+                "--config",
+                config.to_str().expect("UTF-8 path"),
+                "--print-effective",
+            ])
+            .args(extra)
+            .env_clear();
+        for (name, value) in env {
+            command.env(name, value);
+        }
+        let output = command.output().expect("corrobore command should execute");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+
+    let file = validate(&[], &[]);
+    assert!(file.contains("storage.vector_index = \"exact\""), "{file}");
+    assert!(
+        file.contains("storage.vector_hnsw_min_vectors = 2500"),
+        "{file}"
+    );
+
+    let environment = validate(
+        &[],
+        &[
+            ("CORROBORE_STORAGE_VECTOR_INDEX", "auto"),
+            ("CORROBORE_STORAGE_VECTOR_HNSW_MIN_VECTORS", "5000"),
+        ],
+    );
+    assert!(environment.contains("storage.vector_index = \"auto\""));
+    assert!(environment.contains("storage.vector_hnsw_min_vectors = 5000"));
+
+    let cli = validate(
+        &[
+            "--storage-vector-index",
+            "hnsw",
+            "--storage-vector-hnsw-min-vectors",
+            "100",
+        ],
+        &[("CORROBORE_STORAGE_VECTOR_INDEX", "auto")],
+    );
+    assert!(cli.contains("storage.vector_index = \"hnsw\""));
+    assert!(cli.contains("storage.vector_hnsw_min_vectors = 100"));
+
+    let invalid = write_config(
+        &directory,
+        "[server]\nauth_token = \"file-secret\"\n\n[storage]\nvector_index = \"ivf\"\n",
+    );
+    let output = run(corrobore().args([
+        "server",
+        "validate-config",
+        "--config",
+        invalid.to_str().expect("UTF-8 path"),
+    ]));
+    assert_eq!(output.status.code(), Some(CONFIG_EXIT_CODE));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("CORROBORE_STORAGE_VECTOR_INDEX"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn conflicting_tls_configuration_has_a_field_level_error() {
     let directory = temp_dir("tls-conflict");

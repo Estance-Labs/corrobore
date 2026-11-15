@@ -156,6 +156,21 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   head, and `GET /v1/graph/reviews` lists them, marking those on the current
   head; reviews live in the append-only, checksummed `history/reviews.log`.
 
+- **Approximate vector search with HNSW (#342).** `HnswVectorIndex` implements
+  `VectorIndex` with a deterministic Hierarchical Navigable Small World graph:
+  layers are seeded from the record id, removals are tombstoned and the graph
+  is rebuilt once tombstones outnumber live vectors. `VectorIndexPolicy` on
+  `CanonicalStoreOptions::vector_index` keeps the exact index below 10,000
+  vectors and switches to HNSW from there. The server sets the policy with
+  `CORROBORE_STORAGE_VECTOR_INDEX` (`auto`, `exact`, `hnsw`) and
+  `CORROBORE_STORAGE_VECTOR_HNSW_MIN_VECTORS`, also available as
+  `storage.vector_index`, `storage.vector_hnsw_min_vectors`,
+  `--storage-vector-index` and `--storage-vector-hnsw-min-vectors`. Recall@10
+  against the exact index is at least 0.95 for cosine and L2 on 5,000 seeded
+  64-dimension vectors. The `vector_search` criterion bench compares the query
+  latency of both implementations. `CanonicalStoreOptions` gains a field, so
+  struct literals need `..CanonicalStoreOptions::default()`.
+
 ### Removed
 
 - **Breaking:** the enterprise edition and its license gate leave Corrobore,

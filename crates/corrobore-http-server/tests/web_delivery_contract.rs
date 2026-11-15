@@ -78,6 +78,8 @@ fn config(web_dir: Option<String>) -> ServerConfig {
         storage_max_hot_nodes: 16_384,
         storage_max_hot_relationships: 32_768,
         storage_max_warm_adjacency_entries: 65_536,
+        storage_vector_index: graph_storage::VectorIndexMode::Auto,
+        storage_vector_hnsw_min_vectors: 10_000,
         domain_provider_dir: None,
         domain_provider_manifest_file: None,
         content: corrobore_http_server::config::ContentStoreConfig::default(),

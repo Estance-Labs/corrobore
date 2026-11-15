@@ -226,6 +226,7 @@ fn projection_rejects_working_sets_that_exceed_the_configured_hot_budget() {
             max_hot_nodes: 1,
             max_hot_relationships: 1,
             max_warm_adjacency_entries: 1,
+            ..CanonicalStoreOptions::default()
         },
     )
     .unwrap();
@@ -259,6 +260,7 @@ fn projection_rejects_relationship_frontier_over_the_warm_adjacency_budget() {
             max_hot_nodes: 10,
             max_hot_relationships: 10,
             max_warm_adjacency_entries: 1,
+            ..CanonicalStoreOptions::default()
         },
     )
     .unwrap();

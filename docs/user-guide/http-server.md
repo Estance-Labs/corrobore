@@ -97,6 +97,8 @@ Application errors use the JSON envelope above. Transport middleware can reject 
 | `CORROBORE_STORAGE_MAX_HOT_NODES` | `16384` | Maximum node payloads admitted into one persistent request projection. |
 | `CORROBORE_STORAGE_MAX_HOT_RELATIONSHIPS` | `32768` | Maximum relationship payloads admitted into one persistent request projection. |
 | `CORROBORE_STORAGE_MAX_WARM_ADJACENCY_ENTRIES` | `65536` | Maximum lightweight adjacency entries retained for one persistent request projection. |
+| `CORROBORE_STORAGE_VECTOR_INDEX` | `auto` | Vector search index: `exact`, `hnsw`, or `auto` (exact below `CORROBORE_STORAGE_VECTOR_HNSW_MIN_VECTORS` vectors, HNSW from there). |
+| `CORROBORE_STORAGE_VECTOR_HNSW_MIN_VECTORS` | `10000` | Vectors from which `auto` switches from the exact index to HNSW. |
 | `CORROBORE_OPERATIONAL_ENDPOINT_POLICY` | `public` | `public` or `authenticated`; non-loopback binds require `authenticated`. |
 | `CORROBORE_TLS_ENABLED` | `false` | Enables HTTPS. Non-loopback binds require TLS. |
 | `CORROBORE_TLS_CERTIFICATE_FILE` | unset | PEM certificate chain loaded and validated at startup. |
@@ -1394,8 +1396,13 @@ properties: `property` defaults to `embedding`, and Cypher can write one as
 - `metric` is `cosine` (the default) or `l2`.
 - `label` restricts the candidates to one label.
 
-The index is exact. It is kept for the last commit searched and moves forward
-with the node changes of later commits; an older commit rebuilds it.
+The index is kept for the last commit searched and moves forward with the
+node changes of later commits; an older commit rebuilds it. Below
+`CORROBORE_STORAGE_VECTOR_HNSW_MIN_VECTORS` embeddings (10,000 by default) it
+is exact. From there it is an approximate HNSW graph built for the requested
+metric, which keeps recall@10 at or above 0.95 against the exact index in the
+test suite; `CORROBORE_STORAGE_VECTOR_INDEX` forces `exact` or `hnsw`. With a
+`label`, every candidate is scored, so the result is exact.
 
 A query whose dimensions differ from the indexed embeddings, a non-finite
 value, or an unknown metric answers `400 INVALID_SEARCH`.
