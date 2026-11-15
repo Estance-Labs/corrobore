@@ -3544,6 +3544,9 @@ paths:
         - {name: cursor, in: query, description: Last record id of the previous page, schema: {type: string}}
         - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 1000, default: 100}}
         - {name: include_deleted, in: query, schema: {type: boolean, default: false}}
+        - {name: related_type, in: query, description: Keep nodes with a live relationship of this type, schema: {type: string}}
+        - {name: related_direction, in: query, description: Which end the listed node is, schema: {type: string, enum: [out, in, any], default: any}}
+        - {name: related_label, in: query, description: Label of the live node at the other end, schema: {type: string}}
       responses:
         '200':
           description: One keyset page in record-id order with the commit and total

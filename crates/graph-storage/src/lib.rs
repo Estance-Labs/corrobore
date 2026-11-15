@@ -110,9 +110,10 @@ pub use canonical_engine_store::{
     GraphReviewDecision, GraphReviewStatus, GraphSchema, GraphSearchHit, HistoryCleanupReport,
     HistoryCleanupRequest, HnswParams, HnswVectorIndex, HybridSearchRequest, MAX_GRAPH_EDITS,
     MergeConflict, MergeConflictKind, MergeOutcomeKind, NeighbourDirection, NeighbourGroup,
-    NodeNeighbourhood, RRF_K, RecordChangeKind, SchemaEndpoint, SchemaLabel, SchemaProperty,
-    SchemaRelationshipType, TransitionCommitContext, VectorIndex, VectorIndexKind, VectorIndexMode,
-    VectorIndexPolicy, VectorMetric, property_value_type, reciprocal_rank_fusion,
+    NodeNeighbourhood, RRF_K, RecordChangeKind, RelatedDirection, RelatedRecordFilter,
+    SchemaEndpoint, SchemaLabel, SchemaProperty, SchemaRelationshipType, TransitionCommitContext,
+    VectorIndex, VectorIndexKind, VectorIndexMode, VectorIndexPolicy, VectorMetric,
+    property_value_type, reciprocal_rank_fusion,
 };
 pub use catalog::{
     GraphCatalog, HistoricalRecordCatalogEntry, LatestRecordCatalogEntry,

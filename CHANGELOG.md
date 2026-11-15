@@ -184,6 +184,12 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   order, the query kind, and the pattern bindings with their element and
   whether they are projected. Validation stays side-effect free.
 
+- **Filter records across relationships (#361).** `GET /v1/graph/records`
+  accepts `related_type`, `related_direction` (`out`, `in`, `any`) and
+  `related_label` to keep nodes with a matching live relationship to a live
+  neighbour at the commit read; totals and keyset paging count only matching
+  nodes.
+
 - **Approximate vector search with HNSW (#342).** `HnswVectorIndex` implements
   `VectorIndex` with a deterministic Hierarchical Navigable Small World graph:
   layers are seeded from the record id, removals are tombstoned and the graph
