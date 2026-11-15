@@ -548,6 +548,31 @@ async fn bearer_scheme_is_accepted_and_bad_credentials_close_the_connection() {
 }
 
 #[tokio::test]
+async fn a_named_token_logs_on_like_the_shared_token() {
+    // Issue #382: Bolt accepts every credential HTTP accepts.
+    let (port, server) = start(state(&[(
+        "CORROBORE_HTTP_BEARER_TOKENS_JSON",
+        r#"{"act-analyst":"analyst-secret-token"}"#,
+    )]))
+    .await;
+    let (mut client, _) = Client::connect(port, [version(5, 4, 4), 0, 0, 0]).await;
+    client
+        .call(HELLO, vec![dict([("user_agent", str("c"))])])
+        .await;
+    let (tag, fields) = client
+        .call(
+            LOGON,
+            vec![dict([
+                ("scheme", str("bearer")),
+                ("credentials", str("analyst-secret-token")),
+            ])],
+        )
+        .await;
+    assert_eq!(tag, SUCCESS, "{fields:?}");
+    server.abort();
+}
+
+#[tokio::test]
 async fn bolt_5_7_failures_carry_the_gql_fields_beside_the_classic_code() {
     let (port, server) = start(state(&[])).await;
     let (mut client, negotiated) = Client::connect(port, [version(5, 8, 0), 0, 0, 0]).await;

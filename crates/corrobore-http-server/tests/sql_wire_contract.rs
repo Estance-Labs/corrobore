@@ -330,6 +330,19 @@ async fn startup_authenticates_with_the_bearer_token_as_a_cleartext_password() {
 }
 
 #[tokio::test]
+async fn a_named_token_is_accepted_as_the_password() {
+    // Issue #382: SQL accepts every credential HTTP accepts.
+    let (port, server) = start(state(&[(
+        "CORROBORE_HTTP_BEARER_TOKENS_JSON",
+        r#"{"act-analyst":"analyst-secret-token"}"#,
+    )]))
+    .await;
+    let (_client, parameters) = Client::login(port, "analyst-secret-token").await;
+    assert!(parameters["server_version"].contains("Corrobore"));
+    server.abort();
+}
+
+#[tokio::test]
 async fn ssl_and_gss_requests_are_declined_without_tls_and_startup_continues() {
     let (port, server) = start(state(&[])).await;
     let mut client = Client::connect(port).await;
