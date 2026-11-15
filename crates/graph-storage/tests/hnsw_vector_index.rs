@@ -298,14 +298,19 @@ fn index_policy_picks_the_implementation_by_mode_and_size() {
     );
 }
 
+/// Tests in one process may start within the clock's resolution (about a
+/// microsecond on macOS), so a counter keeps their directories apart.
+static ROOTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 fn root() -> graph_storage::StorageRoot {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
     let path = std::env::temp_dir().join(format!(
-        "corrobore-issue-342-{}-{unique}",
-        std::process::id()
+        "corrobore-issue-342-{}-{unique}-{}",
+        std::process::id(),
+        ROOTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     create_storage_root(
         path,

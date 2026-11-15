@@ -130,3 +130,37 @@ async fn vector_and_hybrid_routes_use_the_configured_hnsw_index() {
 
     let _ = std::fs::remove_dir_all(storage);
 }
+
+/// Issue #369: a text-only search on a branch (the viewer's node search)
+/// answers instead of failing with "needs text, a vector, or both".
+#[tokio::test]
+async fn text_search_works_on_a_branch() {
+    let storage = unique_path("search-branch");
+    let app = persistent_app(&storage);
+    create(&app, "x-agent implant", [1.0, 0.0]).await;
+    create(&app, "unrelated note", [0.0, 1.0]).await;
+    let (status, body) = post(&app, "/v1/graph/branches", json!({"name": "review/e2e"})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = post(
+        &app,
+        "/v1/cypher/write",
+        json!({"query": "CREATE (n:Doc {name: 'x-agent loader'})", "branch": "review/e2e"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let (status, body) = post(
+        &app,
+        "/v1/graph/search/hybrid",
+        json!({"text": "X-Agent", "branch": "review/e2e", "k": 10}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let hits = body["result"]["hits"].as_array().unwrap();
+    assert_eq!(
+        hits.len(),
+        2,
+        "both x-agent documents, not the note: {body}"
+    );
+    assert!(hits.iter().all(|hit| hit["ranks"]["full_text"].is_number()));
+}
