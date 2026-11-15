@@ -27,6 +27,7 @@ pub mod correlation;
 pub mod database_operations;
 mod domain_providers;
 mod durability;
+pub mod embedding;
 pub mod error;
 pub mod explorer_timeline;
 pub mod handlers;

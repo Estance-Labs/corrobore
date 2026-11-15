@@ -179,6 +179,8 @@ pub struct AppState {
     pub verifier_registry: Arc<graph_core::VerifierRegistry>,
     /// Content plane (ADR-0021): offloaded evidence content, by content id.
     pub content: Arc<std::sync::RwLock<crate::content_plane::ContentPlane>>,
+    /// Embedding provider of the vector and hybrid seed modes, if configured.
+    pub embedding: Option<Arc<dyn crate::embedding::EmbeddingProvider>>,
     pub started_at: Instant,
 }
 
@@ -337,6 +339,7 @@ impl AppState {
         let content =
             crate::content_plane::ContentPlane::open(&config.content, content_root.as_deref())
                 .map_err(|reason| AppStateInitError::ContentStoreFailed { reason })?;
+        let config_embedding = config.embedding.clone();
         let timeline = ExplorerTimelineStore::new(&config.session_store_dir);
         let lifecycle = Arc::new(ServerLifecycle::initializing());
         let opencti_write_semaphore = Arc::new(tokio::sync::Semaphore::new(
@@ -363,6 +366,7 @@ impl AppState {
             domain_providers,
             verifier_registry,
             content: Arc::new(std::sync::RwLock::new(content)),
+            embedding: crate::embedding::provider_from_config(&config_embedding).map(Arc::from),
             started_at: Instant::now(),
         };
         lifecycle.mark_ready();
@@ -1072,6 +1076,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/domains/{domain}/validate", post(validate_domain))
         .route("/v1/stix/validate", post(validate_stix))
         .route("/v1/seed/search", post(seed_search))
+        .route("/v1/embeddings", post(crate::handlers::embeddings::embed))
         .route("/v1/memory/operations", post(execute_memory_operation))
         .route("/v1/sessions/start", post(start_session))
         .route("/v1/sessions/{session_id}/stop", post(stop_session))

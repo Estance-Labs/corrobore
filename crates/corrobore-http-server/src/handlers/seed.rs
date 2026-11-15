@@ -18,7 +18,7 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use axum::{Json, extract::State};
 use corrobore_engine::EngineError;
@@ -26,9 +26,20 @@ use graph_core::{
     GraphError, SemanticDomainProfile, SemanticSeedQueryRequest, SemanticSeedResolutionErrorCode,
     SemanticSeedRetrievalMode, WorkspaceId,
 };
+use graph_storage::{
+    CanonicalAccessContext, DEFAULT_EMBEDDING_PROPERTY, HybridSearchRequest, VectorMetric,
+};
 use serde::{Deserialize, Serialize};
 
-use crate::{app::AppState, error::ApiError};
+use crate::{
+    app::{AppState, RuntimeStoreProvider},
+    embedding::EmbeddingProvider,
+    error::ApiError,
+    handlers::{
+        embeddings::embed_texts,
+        graph_history::{canonical_store, map_history_error},
+    },
+};
 
 const DEFAULT_TOP_K: usize = 10;
 const DEFAULT_SCORE_THRESHOLD: f64 = 0.0;
@@ -51,6 +62,10 @@ pub struct SeedSearchResponse {
 
 #[derive(Debug, Serialize)]
 pub struct SeedSearchResult {
+    /// `vector`, `hybrid` (embedding-backed, issue #343) or `lexical`.
+    pub retrieval: &'static str,
+    /// Commit the embedding-backed retrieval read; `null` for lexical.
+    pub commit_id: Option<String>,
     pub candidates: Vec<SeedCandidateView>,
 }
 
@@ -85,11 +100,52 @@ pub async fn seed_search(
     let top_k = payload.top_k.unwrap_or(DEFAULT_TOP_K);
     let score_threshold = payload.score_threshold.unwrap_or(DEFAULT_SCORE_THRESHOLD);
 
+    // Issue #343: with an embedding provider and persistent storage, the
+    // vector, semantic and hybrid modes go through the canonical vector and
+    // hybrid retrieval at the head of main.
+    let embedded_mode = matches!(
+        mode,
+        SemanticSeedRetrievalMode::Vector
+            | SemanticSeedRetrievalMode::Semantic
+            | SemanticSeedRetrievalMode::Hybrid
+    );
+    let mut fallback_note = None;
+    let mut lexical_mode = mode;
+    if embedded_mode && let Some(provider) = state.embedding.clone() {
+        // The lexical resolver would otherwise claim vector retrieval is not
+        // configured; say instead why it was not used.
+        lexical_mode = SemanticSeedRetrievalMode::Hybrid;
+        if matches!(state.runtime_store, RuntimeStoreProvider::Persistent(_)) {
+            let outcome = embedded_seed_search(
+                &state,
+                provider,
+                &payload.objective,
+                mode,
+                top_k,
+                score_threshold,
+            )
+            .await?;
+            match outcome {
+                EmbeddedOutcome::Resolved(result) => {
+                    return Ok(Json(SeedSearchResponse { ok: true, result }));
+                }
+                EmbeddedOutcome::NoEmbeddings => {
+                    fallback_note = Some(
+                        "no node carries an `embedding` vector at main; lexical fallback applied",
+                    );
+                }
+            }
+        } else {
+            fallback_note =
+                Some("vector retrieval needs persistent storage; lexical fallback applied");
+        }
+    }
+
     let request = SemanticSeedQueryRequest::new(
         payload.objective,
         workspace_id,
         domain_profile,
-        mode,
+        lexical_mode,
         top_k,
         score_threshold,
     )
@@ -112,14 +168,20 @@ pub async fn seed_search(
             let views = response
                 .seed_candidates()
                 .iter()
-                .map(|candidate| SeedCandidateView {
-                    node_id: candidate.node_id().as_str().to_owned(),
-                    score: candidate.score(),
-                    explanation: SeedExplanationView {
-                        rationale: candidate.explanation().rationale().to_owned(),
-                        source_refs: candidate.explanation().source_refs().to_vec(),
-                        boundary_notes: candidate.explanation().boundary_notes().to_vec(),
-                    },
+                .map(|candidate| {
+                    let mut boundary_notes = candidate.explanation().boundary_notes().to_vec();
+                    if let Some(note) = fallback_note {
+                        boundary_notes.push(note.to_owned());
+                    }
+                    SeedCandidateView {
+                        node_id: candidate.node_id().as_str().to_owned(),
+                        score: candidate.score(),
+                        explanation: SeedExplanationView {
+                            rationale: candidate.explanation().rationale().to_owned(),
+                            source_refs: candidate.explanation().source_refs().to_vec(),
+                            boundary_notes,
+                        },
+                    }
                 })
                 .collect::<Vec<_>>();
 
@@ -132,8 +194,137 @@ pub async fn seed_search(
 
     Ok(Json(SeedSearchResponse {
         ok: true,
-        result: SeedSearchResult { candidates },
+        result: SeedSearchResult {
+            retrieval: "lexical",
+            commit_id: None,
+            candidates,
+        },
     }))
+}
+
+enum EmbeddedOutcome {
+    Resolved(SeedSearchResult),
+    /// No node at main carries an embedding to compare with.
+    NoEmbeddings,
+}
+
+/// Embed the objective and rank nodes by vector or hybrid retrieval at main.
+async fn embedded_seed_search(
+    state: &AppState,
+    provider: Arc<dyn EmbeddingProvider>,
+    objective: &str,
+    mode: SemanticSeedRetrievalMode,
+    top_k: usize,
+    score_threshold: f64,
+) -> Result<EmbeddedOutcome, ApiError> {
+    let provider_name = provider.name();
+    let vector = embed_texts(provider, vec![objective.to_owned()])
+        .await?
+        .pop()
+        .ok_or_else(|| {
+            ApiError::bad_gateway("EMBEDDING_PROVIDER_FAILED", "no embedding returned")
+        })?;
+    let store = canonical_store(state)?;
+    let objective = objective.to_owned();
+    let hybrid = mode == SemanticSeedRetrievalMode::Hybrid;
+    let timeout = Duration::from_millis(state.config.request_timeout_ms);
+    tokio::time::timeout(
+        timeout,
+        tokio::task::spawn_blocking(move || {
+            let mut store = store.lock().map_err(|_| {
+                ApiError::internal("STATE_LOCK_FAILED", "canonical store lock poisoned")
+            })?;
+            let commit_id = store
+                .resolve_graph_ref(None, None)
+                .map_err(map_history_error)?;
+            let hits = if hybrid {
+                store.hybrid_search(
+                    &commit_id,
+                    &HybridSearchRequest {
+                        text: Some(objective),
+                        vector: Some(vector),
+                        property: None,
+                        k: top_k,
+                        graph_expansion: false,
+                        access: CanonicalAccessContext::default(),
+                    },
+                )
+            } else {
+                store.vector_search(
+                    &commit_id,
+                    DEFAULT_EMBEDDING_PROPERTY,
+                    &vector,
+                    top_k,
+                    VectorMetric::Cosine,
+                    None,
+                )
+            }
+            .map_err(embedded_search_error)?;
+            if !hits.iter().any(|hit| hit.ranks.contains_key("vector")) {
+                return Ok(EmbeddedOutcome::NoEmbeddings);
+            }
+            let note = format!("resolved at main commit {commit_id}");
+            let candidates: Vec<SeedCandidateView> = hits
+                .into_iter()
+                .filter(|hit| hit.score >= score_threshold)
+                .map(|hit| {
+                    let rationale = if hybrid {
+                        let ranks = hit
+                            .ranks
+                            .iter()
+                            .map(|(ranking, rank)| format!("{ranking} #{rank}"))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        format!(
+                            "reciprocal rank fusion {:.4} of {ranks}; objective embedded with {provider_name}",
+                            hit.score
+                        )
+                    } else {
+                        format!(
+                            "vector cosine {:.4} on `{DEFAULT_EMBEDDING_PROPERTY}`; objective embedded with {provider_name}",
+                            hit.score
+                        )
+                    };
+                    SeedCandidateView {
+                        node_id: hit.node_id,
+                        score: hit.score,
+                        explanation: SeedExplanationView {
+                            rationale,
+                            source_refs: Vec::new(),
+                            boundary_notes: vec![note.clone()],
+                        },
+                    }
+                })
+                .collect();
+            if candidates.is_empty() {
+                return Err(ApiError::unprocessable(
+                    "NO_SEED",
+                    "No seed candidate scored above the threshold. (fix: Broaden objective wording or lower the score threshold.)",
+                ));
+            }
+            Ok(EmbeddedOutcome::Resolved(SeedSearchResult {
+                retrieval: if hybrid { "hybrid" } else { "vector" },
+                commit_id: Some(commit_id.to_string()),
+                candidates,
+            }))
+        }),
+    )
+    .await
+    .map_err(|_| ApiError::timeout("REQUEST_TIMEOUT", "seed search timeout"))?
+    .map_err(|error| ApiError::internal("TASK_JOIN_FAILED", error.to_string()))?
+}
+
+fn embedded_search_error(error: graph_storage::GraphStorageError) -> ApiError {
+    match error {
+        graph_storage::GraphStorageError::OperationFailed {
+            operation: "graph_search",
+            message,
+        } => ApiError::unprocessable(
+            "EMBEDDING_MISMATCH",
+            format!("{message}; node embeddings must come from the configured provider"),
+        ),
+        other => map_history_error(other),
+    }
 }
 
 fn map_seed_engine_error(error: EngineError) -> ApiError {

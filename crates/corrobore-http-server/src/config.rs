@@ -118,6 +118,62 @@ pub struct ServerConfig {
     pub domain_provider_manifest_file: Option<String>,
     /// Where offloaded content lives and how much content stays inline.
     pub content: ContentStoreConfig,
+    /// Which embedding provider turns text into vectors, if any.
+    pub embedding: EmbeddingConfig,
+}
+
+/// Which embedding provider the server uses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EmbeddingProviderKind {
+    /// No provider: vector seed modes fall back to lexical retrieval.
+    None,
+    /// Local, deterministic feature hashing of words and character trigrams.
+    Hashing,
+    /// An OpenAI-compatible `/v1/embeddings` endpoint.
+    Http,
+}
+
+/// Embedding provider for the vector and hybrid seed modes (issue #343).
+#[derive(Clone, PartialEq, Eq)]
+pub struct EmbeddingConfig {
+    pub provider: EmbeddingProviderKind,
+    /// Vector size of the hashing provider.
+    pub dimensions: usize,
+    /// Endpoint of the HTTP provider.
+    pub endpoint: Option<String>,
+    /// Model the HTTP provider is asked for.
+    pub model: Option<String>,
+    /// Bearer key of the HTTP provider.
+    pub api_key: Option<String>,
+    /// Timeout of one HTTP embedding call.
+    pub timeout_ms: u64,
+}
+
+impl Default for EmbeddingConfig {
+    fn default() -> Self {
+        Self {
+            provider: EmbeddingProviderKind::None,
+            dimensions: 256,
+            endpoint: None,
+            model: None,
+            api_key: None,
+            timeout_ms: 10_000,
+        }
+    }
+}
+
+impl fmt::Debug for EmbeddingConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EmbeddingConfig")
+            .field("provider", &self.provider)
+            .field("dimensions", &self.dimensions)
+            .field("endpoint", &self.endpoint)
+            .field("model", &self.model)
+            .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
+            .field("timeout_ms", &self.timeout_ms)
+            .finish()
+    }
 }
 
 /// Default size, in bytes, up to which text and JSON content stays inline.
@@ -286,6 +342,7 @@ impl fmt::Debug for ServerConfig {
                 &self.domain_provider_manifest_file,
             )
             .field("content", &self.content)
+            .field("embedding", &self.embedding)
             .finish()
     }
 }
@@ -810,6 +867,7 @@ impl ServerConfig {
             Self::parse_domain_provider_config(vars)?;
 
         let content = Self::parse_content_store(vars)?;
+        let embedding = Self::parse_embedding(vars)?;
 
         reject_removed_license_variables(vars)?;
 
@@ -857,6 +915,82 @@ impl ServerConfig {
             domain_provider_dir,
             domain_provider_manifest_file,
             content,
+            embedding,
+        })
+    }
+
+    fn parse_embedding(vars: &HashMap<String, String>) -> Result<EmbeddingConfig, ConfigError> {
+        let optional = |name: &str| {
+            vars.get(name)
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        };
+        let raw = optional("CORROBORE_EMBEDDING_PROVIDER").unwrap_or_else(|| "none".to_owned());
+        let provider = match raw.to_ascii_lowercase().as_str() {
+            "none" => EmbeddingProviderKind::None,
+            "hashing" => EmbeddingProviderKind::Hashing,
+            "http" => EmbeddingProviderKind::Http,
+            _ => {
+                return Err(ConfigError::InvalidEnv {
+                    name: "CORROBORE_EMBEDDING_PROVIDER",
+                    value: raw,
+                });
+            }
+        };
+        let dimensions = parse_positive_usize(
+            "CORROBORE_EMBEDDING_DIMENSIONS",
+            vars.get("CORROBORE_EMBEDDING_DIMENSIONS")
+                .map(String::as_str)
+                .unwrap_or("256"),
+        )?;
+        if dimensions > 8192 {
+            return Err(ConfigError::InvalidEnv {
+                name: "CORROBORE_EMBEDDING_DIMENSIONS",
+                value: dimensions.to_string(),
+            });
+        }
+        let timeout_ms = parse_positive_u64(
+            "CORROBORE_EMBEDDING_TIMEOUT_MS",
+            vars.get("CORROBORE_EMBEDDING_TIMEOUT_MS")
+                .map(String::as_str)
+                .unwrap_or("10000"),
+        )?;
+        let (api_key, _) = resolve_secret(
+            vars,
+            "CORROBORE_EMBEDDING_API_KEY",
+            "CORROBORE_EMBEDDING_API_KEY_FILE",
+            "embedding.api_key",
+            "embedding.api_key_file",
+        )?;
+        let endpoint = optional("CORROBORE_EMBEDDING_ENDPOINT");
+        let model = optional("CORROBORE_EMBEDDING_MODEL");
+        if provider == EmbeddingProviderKind::Http {
+            match &endpoint {
+                Some(endpoint)
+                    if endpoint.starts_with("http://") || endpoint.starts_with("https://") => {}
+                other => {
+                    return Err(ConfigError::InvalidEnv {
+                        name: "CORROBORE_EMBEDDING_ENDPOINT",
+                        value: other.clone().unwrap_or_else(|| {
+                            "an http(s) URL is required by the http provider".to_owned()
+                        }),
+                    });
+                }
+            }
+            if model.is_none() {
+                return Err(ConfigError::InvalidEnv {
+                    name: "CORROBORE_EMBEDDING_MODEL",
+                    value: "a model name is required by the http provider".to_owned(),
+                });
+            }
+        }
+        Ok(EmbeddingConfig {
+            provider,
+            dimensions,
+            endpoint,
+            model,
+            api_key,
+            timeout_ms,
         })
     }
 
