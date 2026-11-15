@@ -33,14 +33,19 @@ use graph_storage::FilesystemObjectStore;
 
 const TEXT: &[u8] = b"Aster operates the North Relay.";
 
+/// Tests in one process may start within the clock's resolution (about a
+/// microsecond on macOS), so a counter keeps their directories apart (#370).
+static ROOTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 fn root() -> std::path::PathBuf {
     let root = std::env::temp_dir().join(format!(
-        "corrobore-object-store-{}-{:?}",
+        "corrobore-object-store-{}-{:?}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock")
-            .as_nanos()
+            .as_nanos(),
+        ROOTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     fs::create_dir_all(&root).expect("root");
     root

@@ -98,14 +98,20 @@ struct Universe {
     outcomes: Vec<String>,
 }
 
+/// Two tests may build the universe of the same seed within the clock's
+/// resolution (about a microsecond on macOS); a counter keeps their storage
+/// roots apart (#370).
+static ROOTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 fn temp_root(seed: u64) -> StorageRoot {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
     let path: PathBuf = std::env::temp_dir().join(format!(
-        "corrobore-dst-{seed}-{}-{unique}",
-        std::process::id()
+        "corrobore-dst-{seed}-{}-{unique}-{}",
+        std::process::id(),
+        ROOTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     create_storage_root(
         path,
