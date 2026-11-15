@@ -234,6 +234,14 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
 ### Fixed
 
+- Text search through `POST /v1/graph/search/hybrid` failed on branches and
+  older commits with "hybrid search needs text, a vector, or both", because the
+  full-text index covers the `main` head only, and on the `main` head it missed
+  nodes outside the OpenCTI fields. The text ranking now scans the commit's
+  nodes where the index does not reach, with the same access rules. The route
+  also searched with an empty access context that the access policy rejects as
+  soon as a hit had to be filtered; it now uses the graph API's read scope
+  (#369, found by running the viewer against a real server).
 - History cleanup kept the commits each live branch can reach but could prune
   the commit where that branch split from `main`, so its next merge found no
   merge base. Cleanup now keeps the whole merge-base closure of every live

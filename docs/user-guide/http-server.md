@@ -1499,9 +1499,15 @@ value, or an unknown metric answers `400 INVALID_SEARCH`.
 Fuses up to three rankings with Reciprocal Rank Fusion (k = 60). Each hit
 reports its fused `score` and the 1-based rank each signal gave it in `ranks`.
 
-- **`full_text`.** BM25 over `text`. It joins only when the read target is the
-  `main` head, because the index follows `main`. It is access-aware; this route
-  has no caller identity, so it uses an empty access context.
+- **`full_text`.** Text matching over `text`, at any read target. At the
+  `main` head it uses the BM25 index of OpenCTI fields, completed by a scan of
+  the commit's nodes (labels and text properties, ranked by matched terms)
+  when the index returns fewer hits than needed. At other commits, such as
+  branch heads and older commits, it is that scan alone, whose cost grows
+  with the number of nodes. Records whose `opencti.access` the access policy
+  denies are skipped. The graph API searches with the same scope as its
+  other reads (`/v1/graph/records`, Cypher), which apply no marking filter
+  to token holders; marking-aware reads stay on the `/v1/opencti/*` routes.
 - **`vector`.** Cosine similarity of `vector` over `property`.
 - **`graph`.** Neighbours of the best text and vector hits, ranked by how many
   of those hits they connect to. Set `graph_expansion: false` to leave it out.

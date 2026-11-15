@@ -26,9 +26,7 @@ use graph_core::{
     GraphError, SemanticDomainProfile, SemanticSeedQueryRequest, SemanticSeedResolutionErrorCode,
     SemanticSeedRetrievalMode, WorkspaceId,
 };
-use graph_storage::{
-    CanonicalAccessContext, DEFAULT_EMBEDDING_PROPERTY, HybridSearchRequest, VectorMetric,
-};
+use graph_storage::{DEFAULT_EMBEDDING_PROPERTY, HybridSearchRequest, VectorMetric};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -246,7 +244,7 @@ async fn embedded_seed_search(
                         property: None,
                         k: top_k,
                         graph_expansion: false,
-                        access: CanonicalAccessContext::default(),
+                        access: crate::handlers::graph_search::graph_api_access(),
                     },
                 )
             } else {

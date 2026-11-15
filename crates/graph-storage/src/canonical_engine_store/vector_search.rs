@@ -429,12 +429,18 @@ impl CanonicalEngineStore {
         let depth = (k * 3).max(30);
         let view = self.commit_view(commit_id)?;
         let mut rankings: Vec<(&'static str, Vec<String>)> = Vec::new();
-        if let Some(text) = request
+        let text = request
             .text
             .as_deref()
-            .filter(|text| !text.trim().is_empty())
-            && &self.graph_head(MAIN_BRANCH)? == commit_id
+            .filter(|text| !text.trim().is_empty());
+        // The full-text index covers the head of main only; elsewhere the
+        // commit's nodes are scanned (issue #369).
+        if let Some(text) = text
+            && &self.graph_head(MAIN_BRANCH)? != commit_id
         {
+            let ids = self.scan_text_ranking(&view, text, &request.access, depth)?;
+            rankings.push(("full_text", ids));
+        } else if let Some(text) = text {
             let page = self
                 .search_full_text(
                     &FullTextQuery {
@@ -449,11 +455,23 @@ impl CanonicalEngineStore {
                     &request.access,
                 )
                 .map_err(|error| invalid_vector(&error.to_string()))?;
-            let ids = page
+            let mut ids: Vec<String> = page
                 .hits
                 .iter()
                 .filter_map(|hit| self.node_id_for_document(&view, &hit.id))
                 .collect();
+            // The index covers OpenCTI fields only; when it does not fill
+            // the ranking, the scan adds nodes matched by other properties.
+            if ids.len() < depth {
+                let indexed: HashSet<String> = ids.iter().cloned().collect();
+                let extra = self.scan_text_ranking(&view, text, &request.access, depth)?;
+                ids.extend(
+                    extra
+                        .into_iter()
+                        .filter(|id| !indexed.contains(id))
+                        .take(depth - indexed.len()),
+                );
+            }
             rankings.push(("full_text", ids));
         }
         if let Some(vector) = &request.vector {
@@ -527,6 +545,67 @@ impl CanonicalEngineStore {
                 })
             })
             .take(k)
+            .collect())
+    }
+
+    /// Rank the live nodes of `view` by how many terms of `text` appear in
+    /// their labels and text properties, then by id. Linear in the size of
+    /// the commit; records the access context may not read are skipped, as the
+    /// full-text index skips them on the main head.
+    fn scan_text_ranking(
+        &self,
+        view: &CommitView,
+        text: &str,
+        access: &CanonicalAccessContext,
+        depth: usize,
+    ) -> GraphStorageResult<Vec<String>> {
+        let terms: BTreeSet<String> = text_terms(text).collect();
+        if terms.is_empty() {
+            return Ok(Vec::new());
+        }
+        let policy = opencti_access::OpenCtiAccessPolicy::compile(access)
+            .map_err(|error| invalid_vector(&error.to_string()))?;
+        let mut scored: Vec<(usize, &String)> = Vec::new();
+        for (id, entry) in view.nodes.iter().filter(|(_, entry)| !entry.deleted) {
+            let node = self.decode_node(entry)?;
+            let access_value = match node.properties().get("opencti.access") {
+                None => None,
+                Some(PropertyValue::Json(value)) => Some(value),
+                // Access metadata the index could not read is never shown.
+                Some(_) => continue,
+            };
+            if !policy.evaluate_value(access_value).allowed() {
+                continue;
+            }
+            let mut words: BTreeSet<String> = node
+                .labels()
+                .iter()
+                .flat_map(|label| text_terms(label).collect::<Vec<_>>())
+                .collect();
+            for (key, value) in node.properties() {
+                if key == "opencti.access" || key == "opencti.raw" {
+                    continue;
+                }
+                match value {
+                    PropertyValue::String(value) => words.extend(text_terms(value)),
+                    PropertyValue::StringList(values) => {
+                        for value in values {
+                            words.extend(text_terms(value));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let matched = terms.iter().filter(|term| words.contains(*term)).count();
+            if matched > 0 {
+                scored.push((matched, id));
+            }
+        }
+        scored.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(right.1)));
+        Ok(scored
+            .into_iter()
+            .take(depth)
+            .map(|(_, id)| id.clone())
             .collect())
     }
 
@@ -700,4 +779,11 @@ fn invalid_vector(message: &str) -> GraphStorageError {
         operation: "graph_search",
         message: message.to_owned(),
     }
+}
+
+/// Lower-cased alphanumeric terms of a text.
+fn text_terms(text: &str) -> impl Iterator<Item = String> + '_ {
+    text.split(|character: char| !character.is_alphanumeric())
+        .filter(|term| !term.is_empty())
+        .map(str::to_lowercase)
 }
