@@ -172,6 +172,13 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   form. Nothing is executed; the caller runs the action through the routes it
   already uses.
 
+- **Opt-in CORS (#359).** `CORROBORE_HTTP_CORS_ALLOWED_ORIGINS` lists the
+  exact origins a browser client may call the server from, such as a viewer
+  holding several connections. Preflights are answered before
+  authentication, responses expose `Content-Range`, `ETag` and
+  `Accept-Ranges`, and credentials are never allowed. `*` and origins with a
+  path are refused; unset keeps sending no CORS headers.
+
 - **Approximate vector search with HNSW (#342).** `HnswVectorIndex` implements
   `VectorIndex` with a deterministic Hierarchical Navigable Small World graph:
   layers are seeded from the record id, removals are tombstoned and the graph

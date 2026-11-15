@@ -1327,13 +1327,58 @@ pub fn build_router(state: AppState) -> Router {
         .merge(operational)
         .with_state(state.clone());
 
-    attach_web_delivery(router, web_dir.as_deref())
+    let cors = cors_layer(&state.config.cors_allowed_origins);
+    let router = attach_web_delivery(router, web_dir.as_deref())
         .layer(middleware::from_fn_with_state(
             state,
             lifecycle_request_gate,
         ))
         .layer(http_trace)
-        .layer(middleware::from_fn(correlate_request))
+        .layer(middleware::from_fn(correlate_request));
+    // Outermost, so preflights are answered before authentication (#359).
+    match cors {
+        Some(cors) => router.layer(cors),
+        None => router,
+    }
+}
+
+/// CORS for the configured exact origins, or none when the list is empty.
+/// Bearer tokens travel in `Authorization`, so credentials are never allowed.
+fn cors_layer(origins: &[String]) -> Option<tower_http::cors::CorsLayer> {
+    use axum::http::{HeaderName, HeaderValue, Method, header};
+    use tower_http::cors::{AllowOrigin, CorsLayer};
+
+    let origins: Vec<HeaderValue> = origins
+        .iter()
+        .filter_map(|origin| HeaderValue::from_str(origin).ok())
+        .collect();
+    if origins.is_empty() {
+        return None;
+    }
+    Some(
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(origins))
+            .allow_methods([
+                Method::GET,
+                Method::HEAD,
+                Method::POST,
+                Method::DELETE,
+                Method::OPTIONS,
+            ])
+            .allow_headers([
+                header::AUTHORIZATION,
+                header::CONTENT_TYPE,
+                header::RANGE,
+                HeaderName::from_static("if-graph-commit"),
+            ])
+            .expose_headers([
+                header::CONTENT_RANGE,
+                header::ETAG,
+                header::ACCEPT_RANGES,
+                header::CONTENT_LENGTH,
+            ])
+            .max_age(Duration::from_secs(600)),
+    )
 }
 
 fn rate_limit_period(requests_per_second: u64) -> Duration {

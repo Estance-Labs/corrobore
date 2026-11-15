@@ -61,6 +61,7 @@ Application errors use the JSON envelope above. Transport middleware can reject 
 | `CORROBORE_HTTP_SESSION_IDLE_TTL_MS` | `0` | Idle auto-stop TTL; `0` disables expiration. |
 | `CORROBORE_HTTP_MAX_BODY_BYTES` | `2097152` | Standard protected-route body limit (2 MiB). |
 | `CORROBORE_HTTP_IMPORT_MAX_BODY_BYTES` | `33554432` | STIX import and OpenCTI transactional-write body limit (32 MiB). |
+| `CORROBORE_HTTP_CORS_ALLOWED_ORIGINS` | unset | Comma-separated exact origins (`https://viewer.example`, `http://localhost:5173`) allowed to call the server from a browser. Preflights are answered before authentication; responses expose `Content-Range`, `ETag` and `Accept-Ranges`. `*`, paths and credentials are refused; unset sends no CORS headers. |
 | `CORROBORE_HTTP_CONTENT_MAX_BYTES` | `67108864` | `POST /v1/content` body limit (64 MiB). |
 | `CORROBORE_HTTP_CONTENT_INLINE_MAX_BYTES` | `16384` | Largest text or JSON content kept inline instead of offloaded. |
 | `CORROBORE_HTTP_CONTENT_STORE_URL` | unset | Object store for offloaded content; see [Content plane](#content-plane). |
