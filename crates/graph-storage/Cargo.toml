@@ -13,6 +13,7 @@ name = "graph_storage"
 path = "src/lib.rs"
 
 [dependencies]
+chrono = { workspace = true }
 getrandom = { workspace = true }
 graph-core = { path = "../graph-core" }
 opencti-access = { path = "../opencti-access" }

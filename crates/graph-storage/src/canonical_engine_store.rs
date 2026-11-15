@@ -34,6 +34,13 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+use crate::atomic_mutation::{
+    AppliedTransactionJournal, last_eligible_mutation_sequence, read_applied_transaction_journals,
+};
+use crate::graph_history::{
+    CommitPayloadRef, CommitRecordChange, GraphCommit, GraphCommitDraft, GraphCommitId,
+    GraphCommitPage, GraphHistory, HistoryRecordKind, MAIN_BRANCH,
+};
 use crate::{
     AtomicPersistentMutationAdjacencyRecord, AtomicPersistentMutationBatch,
     AtomicPersistentMutationNodeRecord, AtomicPersistentMutationOutcome,
@@ -348,6 +355,19 @@ pub struct CanonicalEngineStore {
     file_content_index: Option<FileContentIndex>,
     evidence: EvidenceRecordStore,
     epistemic: EpistemicStores,
+    history: GraphHistory,
+    history_needs_reconcile: bool,
+}
+
+/// Caller context recorded on the graph commit of a transition.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TransitionCommitContext {
+    /// Payload-free audit receipts persisted in the same WAL transaction.
+    pub audit_events: Vec<String>,
+    /// Requesting actor, recorded on the commit.
+    pub actor: Option<String>,
+    /// Commit message.
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -396,6 +416,7 @@ impl CanonicalEngineStore {
         let evidence = load_evidence_sidecar(&root)?;
         recover_epistemic_sidecar(&root)?;
         let epistemic = load_epistemic_sidecar(&root)?;
+        let history = GraphHistory::open(&root)?;
         let mut store = Self {
             root,
             state: recovered.state,
@@ -417,9 +438,12 @@ impl CanonicalEngineStore {
             file_content_index: None,
             evidence,
             epistemic,
+            history,
+            history_needs_reconcile: true,
         };
         store.migrate_legacy_snapshot_if_needed()?;
         store.refresh_index_stats();
+        store.reconcile_history()?;
         Ok(store)
     }
 
@@ -620,7 +644,40 @@ impl CanonicalEngineStore {
         audit_events: Vec<String>,
         crash_stage: Option<MutationCrashStage>,
     ) -> GraphStorageResult<AtomicPersistentMutationOutcome> {
-        let batch = self.build_mutation_batch(previous, current, transaction_id)?;
+        self.commit_transition_with_context(
+            previous,
+            current,
+            transaction_id,
+            TransitionCommitContext {
+                audit_events,
+                actor: None,
+                message: None,
+            },
+            crash_stage,
+        )
+    }
+
+    /// Persist a graph transition on `main` and publish it as a graph commit
+    /// carrying the caller's actor and message.
+    ///
+    /// The WAL apply is the durability point. The history append that follows
+    /// is the visibility point of the commit; if it fails after the WAL apply,
+    /// the next history read reconciles the commit from the transaction
+    /// journals instead of reporting a failed write that is in fact durable.
+    pub fn commit_transition_with_context(
+        &mut self,
+        previous: &Graph,
+        current: &Graph,
+        transaction_id: DurableTransactionId,
+        context: TransitionCommitContext,
+        crash_stage: Option<MutationCrashStage>,
+    ) -> GraphStorageResult<AtomicPersistentMutationOutcome> {
+        let TransitionCommitContext {
+            audit_events,
+            actor,
+            message,
+        } = context;
+        let batch = self.build_mutation_batch(previous, current, transaction_id.clone())?;
         let evidence_changed = previous.evidence_store() != current.evidence_store();
         let epistemic_changed = previous.epistemic_stores() != current.epistemic_stores();
         if batch.node_records.is_empty()
@@ -651,6 +708,27 @@ impl CanonicalEngineStore {
         if epistemic_changed {
             stage_epistemic_sidecar(&self.root, current.epistemic_stores())?;
         }
+        let changed_nodes: Vec<Node> = current
+            .current_node_records()
+            .map_err(graph_error)?
+            .into_iter()
+            .filter(|node| {
+                batch.node_records.iter().any(|record| {
+                    record.envelope.record_id == crate::PersistedRecordId::Node(node.id().clone())
+                })
+            })
+            .collect();
+        let changed_relationships: Vec<Relationship> = current
+            .current_relationship_records()
+            .map_err(graph_error)?
+            .into_iter()
+            .filter(|relationship| {
+                batch.relationship_records.iter().any(|record| {
+                    record.envelope.record_id
+                        == crate::PersistedRecordId::Relationship(relationship.id().clone())
+                })
+            })
+            .collect();
         let mut batch = batch;
         batch.audit_events = audit_events;
         let outcome =
@@ -680,10 +758,323 @@ impl CanonicalEngineStore {
         self.stats.resident_hot_relationships = 0;
         self.stats.resident_warm_adjacency_entries = 0;
         self.refresh_index_stats();
+        if outcome.applied
+            && let Some(sequence) = outcome.mutation_sequence_number
+        {
+            self.publish_main_commit(
+                &changed_nodes,
+                &changed_relationships,
+                &transaction_id,
+                sequence.0,
+                actor,
+                message,
+            );
+        }
         // Full-text search is a rebuildable projection. The durable invalidation
         // marker above prevents stale reads; `search_full_text` rebuilds the
         // complete canonical generation before serving the next query.
         Ok(outcome)
+    }
+
+    fn publish_main_commit(
+        &mut self,
+        nodes: &[Node],
+        relationships: &[Relationship],
+        transaction_id: &DurableTransactionId,
+        sequence: u64,
+        actor: Option<String>,
+        message: Option<String>,
+    ) {
+        if self.history_needs_reconcile || !self.history.is_initialized() {
+            // Earlier transactions are still missing from history; the next
+            // reconciliation publishes this one in sequence order as well.
+            self.history_needs_reconcile = true;
+            return;
+        }
+        let changes = nodes
+            .iter()
+            .filter_map(|node| {
+                self.state
+                    .catalog
+                    .latest_node_records
+                    .get(node.id())
+                    .map(|entry| node_commit_change(node, entry.storage_ref.clone()))
+            })
+            .chain(relationships.iter().filter_map(|relationship| {
+                self.state
+                    .catalog
+                    .latest_relationship_records
+                    .get(relationship.id())
+                    .map(|entry| {
+                        relationship_commit_change(relationship, entry.storage_ref.clone())
+                    })
+            }))
+            .collect::<Vec<_>>();
+        let draft = GraphCommitDraft {
+            branch: MAIN_BRANCH.to_owned(),
+            extra_parents: Vec::new(),
+            transaction_id: Some(transaction_id.value.clone()),
+            mutation_sequence_number: Some(sequence),
+            actor,
+            message,
+            created_at: None,
+            changes,
+        };
+        if let Err(error) = self.history.record_commit(draft) {
+            tracing::error!(
+                transaction_id = %transaction_id.value,
+                error = %error,
+                "graph commit append failed after a durable WAL apply; history will be reconciled"
+            );
+            self.history_needs_reconcile = true;
+        }
+    }
+
+    /// Bring the history in line with the canonical WAL: create the genesis
+    /// commit for a store that predates history, then publish one commit per
+    /// eligible transaction the history has not recorded yet.
+    ///
+    /// When journals no longer hold a transaction (compacted segments), a
+    /// single reconciliation commit captures the remaining difference between
+    /// the `main` head view and the canonical catalog.
+    pub fn reconcile_history(&mut self) -> GraphStorageResult<()> {
+        if !self.history_needs_reconcile && self.history.is_initialized() {
+            return Ok(());
+        }
+        let last_eligible = last_eligible_mutation_sequence(&self.root)?;
+        if !self.history.is_initialized() {
+            let changes = self.catalog_commit_changes()?;
+            self.history
+                .initialize_genesis(changes, last_eligible, None)?;
+        } else if last_eligible > self.history.last_main_sequence() {
+            let journals =
+                read_applied_transaction_journals(&self.root, self.history.last_main_sequence())?;
+            for journal in journals {
+                self.publish_journal_commit(journal)?;
+            }
+        }
+        self.publish_catalog_drift()?;
+        self.history_needs_reconcile = false;
+        Ok(())
+    }
+
+    fn publish_journal_commit(
+        &mut self,
+        journal: AppliedTransactionJournal,
+    ) -> GraphStorageResult<()> {
+        let mut changes = Vec::new();
+        for (envelope, storage_ref, labels, active) in journal.nodes {
+            let (
+                crate::PersistedRecordId::Node(node_id),
+                Some(crate::GraphRecordVersion::Node { version_id, .. }),
+            ) = (&envelope.record_id, &envelope.graph_record_version)
+            else {
+                continue;
+            };
+            changes.push(CommitRecordChange {
+                kind: HistoryRecordKind::Node,
+                record_id: node_id.as_str().to_owned(),
+                version_id: version_id.as_str().to_owned(),
+                deleted: !active,
+                labels,
+                source: None,
+                target: None,
+                payload: CommitPayloadRef::Canonical { storage_ref },
+            });
+        }
+        for (envelope, storage_ref, relationship_type, active) in journal.relationships {
+            let crate::PersistedRecordId::Relationship(relationship_id) = &envelope.record_id
+            else {
+                continue;
+            };
+            let relationship = self.decode_canonical_relationship(&storage_ref)?;
+            if relationship.id() != relationship_id {
+                return Err(GraphStorageError::OperationFailed {
+                    operation: "reconcile_graph_history",
+                    message: format!(
+                        "journal relationship {} decodes as {}",
+                        relationship_id.as_str(),
+                        relationship.id().as_str()
+                    ),
+                });
+            }
+            let mut change = relationship_commit_change(&relationship, storage_ref);
+            change.deleted = !active;
+            change.labels = vec![relationship_type.as_str().to_owned()];
+            changes.push(change);
+        }
+        if changes.is_empty() {
+            return Ok(());
+        }
+        self.history.record_commit(GraphCommitDraft {
+            branch: MAIN_BRANCH.to_owned(),
+            extra_parents: Vec::new(),
+            transaction_id: Some(journal.transaction_id.value),
+            mutation_sequence_number: Some(journal.sequence.0),
+            actor: None,
+            message: Some("reconciled from the transaction journal".to_owned()),
+            created_at: None,
+            changes,
+        })?;
+        Ok(())
+    }
+
+    fn publish_catalog_drift(&mut self) -> GraphStorageResult<()> {
+        let head = self.history.head(MAIN_BRANCH)?.clone();
+        let view = self.history.view(&head)?;
+        let mut drift = Vec::new();
+        for (node_id, entry) in &self.state.catalog.latest_node_records {
+            let version = match &entry.graph_record_version {
+                Some(crate::GraphRecordVersion::Node { version_id, .. }) => version_id.as_str(),
+                _ => continue,
+            };
+            if view
+                .nodes
+                .get(node_id.as_str())
+                .is_none_or(|visible| visible.version_id != version)
+            {
+                drift.push(self.canonical_node_change(node_id, entry.storage_ref.clone())?);
+            }
+        }
+        for (relationship_id, entry) in &self.state.catalog.latest_relationship_records {
+            let version = match &entry.graph_record_version {
+                Some(crate::GraphRecordVersion::Relationship { version_id, .. }) => {
+                    version_id.as_str()
+                }
+                _ => continue,
+            };
+            if view
+                .relationships
+                .get(relationship_id.as_str())
+                .is_none_or(|visible| visible.version_id != version)
+            {
+                let relationship = self.decode_canonical_relationship(&entry.storage_ref)?;
+                drift.push(relationship_commit_change(
+                    &relationship,
+                    entry.storage_ref.clone(),
+                ));
+            }
+        }
+        if drift.is_empty() {
+            return Ok(());
+        }
+        drift.sort_by(|left, right| {
+            (left.kind, &left.record_id).cmp(&(right.kind, &right.record_id))
+        });
+        tracing::warn!(
+            records = drift.len(),
+            "graph history lagged the canonical catalog; publishing a reconciliation commit"
+        );
+        self.history.record_commit(GraphCommitDraft {
+            branch: MAIN_BRANCH.to_owned(),
+            extra_parents: Vec::new(),
+            transaction_id: None,
+            mutation_sequence_number: last_eligible_mutation_sequence(&self.root)?,
+            actor: None,
+            message: Some("reconciled from the canonical catalog".to_owned()),
+            created_at: None,
+            changes: drift,
+        })?;
+        Ok(())
+    }
+
+    fn catalog_commit_changes(&self) -> GraphStorageResult<Vec<CommitRecordChange>> {
+        let mut node_ids: Vec<&NodeId> = self.state.catalog.latest_node_records.keys().collect();
+        node_ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        let mut changes = Vec::with_capacity(node_ids.len());
+        for node_id in node_ids {
+            let entry = &self.state.catalog.latest_node_records[node_id];
+            changes.push(self.canonical_node_change(node_id, entry.storage_ref.clone())?);
+        }
+        let mut relationship_ids: Vec<&RelationshipId> = self
+            .state
+            .catalog
+            .latest_relationship_records
+            .keys()
+            .collect();
+        relationship_ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        for relationship_id in relationship_ids {
+            let entry = &self.state.catalog.latest_relationship_records[relationship_id];
+            let relationship = self.decode_canonical_relationship(&entry.storage_ref)?;
+            changes.push(relationship_commit_change(
+                &relationship,
+                entry.storage_ref.clone(),
+            ));
+        }
+        Ok(changes)
+    }
+
+    fn canonical_node_change(
+        &self,
+        node_id: &NodeId,
+        storage_ref: StorageRef,
+    ) -> GraphStorageResult<CommitRecordChange> {
+        let bytes = GraphHistory::read_payload(
+            &self.root,
+            HistoryRecordKind::Node,
+            &CommitPayloadRef::Canonical {
+                storage_ref: storage_ref.clone(),
+            },
+        )?;
+        let node: Node = serde_json::from_slice(&bytes).map_err(graph_error)?;
+        if node.id() != node_id {
+            return Err(GraphStorageError::OperationFailed {
+                operation: "graph_history_node_change",
+                message: format!(
+                    "catalog node {} decodes as {}",
+                    node_id.as_str(),
+                    node.id().as_str()
+                ),
+            });
+        }
+        Ok(node_commit_change(&node, storage_ref))
+    }
+
+    fn decode_canonical_relationship(
+        &self,
+        storage_ref: &StorageRef,
+    ) -> GraphStorageResult<Relationship> {
+        let bytes = GraphHistory::read_payload(
+            &self.root,
+            HistoryRecordKind::Relationship,
+            &CommitPayloadRef::Canonical {
+                storage_ref: storage_ref.clone(),
+            },
+        )?;
+        serde_json::from_slice(&bytes).map_err(graph_error)
+    }
+
+    /// Head commit of a branch, reconciling history first.
+    pub fn graph_head(&mut self, branch: &str) -> GraphStorageResult<GraphCommitId> {
+        self.reconcile_history()?;
+        self.history.head(branch).cloned()
+    }
+
+    /// One retained graph commit.
+    pub fn graph_commit(
+        &mut self,
+        commit_id: &GraphCommitId,
+    ) -> GraphStorageResult<std::sync::Arc<GraphCommit>> {
+        self.reconcile_history()?;
+        self.history.commit(commit_id)
+    }
+
+    /// First-parent commit listing of a branch, newest first.
+    pub fn list_graph_commits(
+        &mut self,
+        branch: &str,
+        cursor: Option<&GraphCommitId>,
+        limit: usize,
+    ) -> GraphStorageResult<GraphCommitPage> {
+        self.reconcile_history()?;
+        let head = self.history.head(branch)?.clone();
+        self.history.first_parent_page(&head, cursor, limit)
+    }
+
+    /// Read-only access to the graph history.
+    pub fn graph_history(&mut self) -> GraphStorageResult<&mut GraphHistory> {
+        self.reconcile_history()?;
+        Ok(&mut self.history)
     }
 
     /// Search the complete canonical graph through the durable access-aware
@@ -1742,6 +2133,11 @@ impl CanonicalEngineStore {
                     .max(sequence_suffix(version_id.as_str()));
             }
         }
+        let history = self.history.id_floor();
+        floor.node = floor.node.max(history.node);
+        floor.node_version = floor.node_version.max(history.node_version);
+        floor.relationship = floor.relationship.max(history.relationship);
+        floor.relationship_version = floor.relationship_version.max(history.relationship_version);
         floor
     }
 
@@ -2084,6 +2480,35 @@ fn load_legacy_engine_graph_snapshot(path: &Path) -> GraphStorageResult<Graph> {
             reason: error.to_string(),
         }
     })
+}
+
+fn node_commit_change(node: &Node, storage_ref: StorageRef) -> CommitRecordChange {
+    CommitRecordChange {
+        kind: HistoryRecordKind::Node,
+        record_id: node.id().as_str().to_owned(),
+        version_id: node.version_id().as_str().to_owned(),
+        deleted: node.status() == RecordStatus::Tombstoned,
+        labels: node.labels().to_vec(),
+        source: None,
+        target: None,
+        payload: CommitPayloadRef::Canonical { storage_ref },
+    }
+}
+
+fn relationship_commit_change(
+    relationship: &Relationship,
+    storage_ref: StorageRef,
+) -> CommitRecordChange {
+    CommitRecordChange {
+        kind: HistoryRecordKind::Relationship,
+        record_id: relationship.id().as_str().to_owned(),
+        version_id: relationship.version_id().as_str().to_owned(),
+        deleted: relationship.status() == RecordStatus::Tombstoned,
+        labels: vec![relationship.rel_type().as_str().to_owned()],
+        source: Some(relationship.source().as_str().to_owned()),
+        target: Some(relationship.target().as_str().to_owned()),
+        payload: CommitPayloadRef::Canonical { storage_ref },
+    }
 }
 
 fn encode_node_mutation(node: &Node) -> GraphStorageResult<AtomicPersistentMutationNodeRecord> {

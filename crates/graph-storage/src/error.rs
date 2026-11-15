@@ -339,4 +339,46 @@ pub enum GraphStorageError {
     /// before they are implemented.
     #[error("not implemented yet: {0}")]
     NotImplemented(&'static str),
+
+    /// A complete line of the graph history log failed its checksum or could
+    /// not be decoded. Only a torn final line is repaired automatically.
+    #[error("graph history log is corrupted at line {line}: {reason}")]
+    GraphHistoryCorrupted {
+        /// One-based line number in the history log.
+        line: usize,
+        /// Decoder or checksum diagnostic.
+        reason: String,
+    },
+
+    /// The requested graph commit is not retained in the history.
+    #[error("unknown graph commit {commit_id}")]
+    UnknownGraphCommit {
+        /// Requested commit id.
+        commit_id: String,
+    },
+
+    /// The requested branch does not exist.
+    #[error("unknown graph branch {branch}")]
+    UnknownGraphBranch {
+        /// Requested branch name.
+        branch: String,
+    },
+
+    /// A branch operation conflicts with the current branch set.
+    #[error("graph branch {branch} cannot be changed: {reason}")]
+    GraphBranchConflict {
+        /// Branch name.
+        branch: String,
+        /// Why the operation was refused.
+        reason: String,
+    },
+
+    /// A branch name does not follow the naming rules.
+    #[error("invalid graph branch name {branch:?}: {reason}")]
+    InvalidGraphBranchName {
+        /// Rejected branch name.
+        branch: String,
+        /// Naming rule that failed.
+        reason: String,
+    },
 }
