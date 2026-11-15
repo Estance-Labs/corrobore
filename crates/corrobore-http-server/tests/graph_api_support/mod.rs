@@ -39,13 +39,20 @@ use tower::ServiceExt;
 pub const TOKEN: &str = "graph-token";
 pub const ADMIN_TOKEN: &str = "graph-admin-token";
 
+/// Calls of `unique_path` in this process (issue #395).
+static PATHS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// A temporary path no other call returns: tests run in parallel threads and
+/// the clock repeats values within its resolution, so a counter is part of
+/// the name.
 pub fn unique_path(name: &str) -> PathBuf {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
+    let sequence = PATHS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     std::env::temp_dir().join(format!(
-        "corrobore-graph-api-{name}-{}-{unique}",
+        "corrobore-graph-api-{name}-{}-{unique}-{sequence}",
         std::process::id()
     ))
 }
