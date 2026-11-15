@@ -47,7 +47,7 @@ documentation = "https://docs.corrobore.org/"
 [workspace.dependencies]
 axum = { version = "0.8", features = ["multipart"] }
 axum-server = { version = "0.8", features = ["tls-rustls"] }
-calamine = "0.36"
+calamine = "0.38"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 # Open interchange: object storage and columnar export (issue #327). Pinned
 # exactly; the Arrow family moves in lockstep.
