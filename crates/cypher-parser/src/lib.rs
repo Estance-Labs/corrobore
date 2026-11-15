@@ -300,6 +300,11 @@ pub enum LiteralValue {
 /// Maximum number of values accepted by the bounded list subset.
 pub const MAX_LIST_ITEMS: usize = 256;
 
+/// Maximum number of values in a typed parameter list (issue #378). Parameters
+/// never go through the text parser, and embeddings commonly hold 384 to 1,536
+/// values; the bound matches the largest vector the vector index accepts.
+pub const MAX_PARAMETER_LIST_ITEMS: usize = 8_192;
+
 impl QueryAst {
     /// Build the shared AST from an already structured query.
     ///

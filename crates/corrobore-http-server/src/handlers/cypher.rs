@@ -691,7 +691,7 @@ fn typed_params(params: HashMap<String, Value>) -> Result<HashMap<String, Cypher
 }
 
 fn json_array_to_cypher_list(key: &str, values: Vec<Value>) -> Result<CypherValue, ApiError> {
-    if values.is_empty() || values.len() > cypher_parser::MAX_LIST_ITEMS {
+    if values.is_empty() || values.len() > cypher_parser::MAX_PARAMETER_LIST_ITEMS {
         return Err(unsupported_array(key));
     }
     let converted = values
@@ -721,7 +721,7 @@ fn unsupported_array(key: &str) -> ApiError {
         "UNSUPPORTED_PARAMETER_TYPE",
         format!(
             "parameter {key:?} arrays must contain 1..={} strings, integers, decimals, or booleans of one type",
-            cypher_parser::MAX_LIST_ITEMS
+            cypher_parser::MAX_PARAMETER_LIST_ITEMS
         ),
     )
 }
