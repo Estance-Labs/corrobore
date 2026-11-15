@@ -87,6 +87,14 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   user types; unbound parameters and partially structured queries are
   warnings.
 
+- **Incremental full-text maintenance (#325).** A canonical write now
+  updates the published tantivy generation in place with the documents it
+  changed. Before, it invalidated the index and the next search rebuilt every
+  document. The index stays marked invalid during the transaction and is
+  cleared only once the delta is published, so a crash, an index already
+  being rebuilt, or a property field the index schema does not know yet still
+  fall back to the full rebuild.
+
 ### Removed
 
 - **Breaking:** the enterprise edition and its license gate leave Corrobore,
