@@ -2165,10 +2165,13 @@ fn literal_to_property_value_checked(
         ));
     }
     if let LiteralValue::List(values) = literal {
-        if values.is_empty() || values.len() > cypher_parser::MAX_LIST_ITEMS {
-            return Err(ExecutionError::InvalidQuery(
-                "list values must contain 1..=256 items".to_owned(),
-            ));
+        // Text literals are already held to MAX_LIST_ITEMS by the parser;
+        // typed parameters may be as long as an embedding (issue #378).
+        if values.is_empty() || values.len() > cypher_parser::MAX_PARAMETER_LIST_ITEMS {
+            return Err(ExecutionError::InvalidQuery(format!(
+                "list values must contain 1..={} items",
+                cypher_parser::MAX_PARAMETER_LIST_ITEMS
+            )));
         }
         let expected = literal_scalar_kind(&values[0]).ok_or_else(|| {
             ExecutionError::InvalidQuery(

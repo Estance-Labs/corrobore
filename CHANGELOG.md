@@ -234,6 +234,11 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
 ### Fixed
 
+- Cypher parameter arrays were limited to 256 items, so a real model's
+  embedding (768 values for `nomic-embed-text`) could not be written through
+  Cypher. Typed parameter lists now take up to 8,192 items, the vector index
+  bound; list literals in query text and `evidence_refs` keep their 256 limit
+  (#378, found with a real embedding model).
 - `corrobore server import-snapshot` and `export-snapshot-s3` panicked before
   doing any work ("Cannot start a runtime from within a runtime", "Cannot drop
   a runtime …") because they ran inside the binary's async runtime. Offline
