@@ -32,6 +32,7 @@ pub mod graph_history;
 pub mod graph_merge;
 pub mod graph_records;
 pub mod graph_schema;
+pub mod graph_search;
 pub mod health;
 pub mod import;
 pub mod memory;

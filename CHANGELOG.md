@@ -95,6 +95,15 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   being rebuilt, or a property field the index schema does not know yet still
   fall back to the full rebuild.
 
+- **Vector index and hybrid retrieval (#326).** `POST /v1/graph/search/vector`
+  ranks nodes by cosine or L2 similarity of an embedding property at a commit,
+  through an exact index kept per commit and moved forward with later node
+  changes, behind a `VectorIndex` trait. `POST /v1/graph/search/hybrid` fuses
+  BM25 full text, vector similarity and graph proximity with Reciprocal Rank
+  Fusion, reporting each signal's rank. The `vector` and `hybrid` modes of
+  `/v1/seed/search` still need an embedding provider for their text
+  objective and are unchanged.
+
 ### Removed
 
 - **Breaking:** the enterprise edition and its license gate leave Corrobore,

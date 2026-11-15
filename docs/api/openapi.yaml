@@ -3053,6 +3053,65 @@ paths:
             application/json:
               schema: {type: object}
 
+  /v1/graph/search/vector:
+    post:
+      operationId: vectorSearchGraph
+      summary: Nodes whose embedding property is closest to a vector at a commit
+      tags: [GraphHistory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vector]
+              properties:
+                vector: {type: array, items: {type: number}, minItems: 1, maxItems: 8192}
+                property: {type: string, default: embedding}
+                k: {type: integer, minimum: 1, maximum: 1000, default: 10}
+                metric: {type: string, enum: [cosine, l2], default: cosine}
+                label: {type: string}
+                branch: {type: string}
+                commit: {type: string, pattern: '^gc[0-9a-f]{40}$'}
+      responses:
+        '200':
+          description: Hits with node id, similarity, labels and vector rank
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/graph/search/hybrid:
+    post:
+      operationId: hybridSearchGraph
+      summary: Full text, vector and graph-proximity rankings fused with Reciprocal Rank Fusion
+      tags: [GraphHistory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text: {type: string}
+                vector: {type: array, items: {type: number}, maxItems: 8192}
+                property: {type: string, default: embedding}
+                k: {type: integer, minimum: 1, maximum: 1000, default: 10}
+                graph_expansion: {type: boolean, default: true}
+                branch: {type: string}
+                commit: {type: string, pattern: '^gc[0-9a-f]{40}$'}
+      responses:
+        '200':
+          description: Hits with fused score and the rank each signal gave them
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
   /v1/graph/schema:
     get:
       operationId: getGraphSchema

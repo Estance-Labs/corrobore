@@ -1221,6 +1221,36 @@ processing a page. A cursor the history no longer retains returns
 commit. A retained commit that is not on the branch returns
 `409 GRAPH_BRANCH_CONFLICT`.
 
+### `POST /v1/graph/search/vector`
+
+Returns the `k` nodes (default 10, at most 1,000) whose embedding is closest to
+`vector`, read at a commit or branch head. Embeddings are numeric list
+properties: `property` defaults to `embedding`, and Cypher can write one as
+`{embedding: $vector}`.
+
+- `metric` is `cosine` (the default) or `l2`.
+- `label` restricts the candidates to one label.
+
+The index is exact. It is kept for the last commit searched and moves forward
+with the node changes of later commits; an older commit rebuilds it.
+
+A query whose dimensions differ from the indexed embeddings, a non-finite
+value, or an unknown metric answers `400 INVALID_SEARCH`.
+
+### `POST /v1/graph/search/hybrid`
+
+Fuses up to three rankings with Reciprocal Rank Fusion (k = 60). Each hit
+reports its fused `score` and the 1-based rank each signal gave it in `ranks`.
+
+- **`full_text`.** BM25 over `text`. It joins only when the read target is the
+  `main` head, because the index follows `main`. It is access-aware; this route
+  has no caller identity, so it uses an empty access context.
+- **`vector`.** Cosine similarity of `vector` over `property`.
+- **`graph`.** Neighbours of the best text and vector hits, ranked by how many
+  of those hits they connect to. Set `graph_expansion: false` to leave it out.
+
+At least `text` or `vector` is required.
+
 ### `GET /v1/graph/schema`
 
 Describes the records visible at a commit (`commit`, else the head of
