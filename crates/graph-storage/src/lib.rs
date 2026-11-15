@@ -102,7 +102,8 @@ pub use backup_restore::{
 pub use canonical_engine_store::{
     CanonicalAdjacencyProjection, CanonicalEngineStore, CanonicalProjectionRequest,
     CanonicalProjectionStats, CanonicalPropertyFilter, CanonicalPropertyOperator,
-    CanonicalStartupReport, CanonicalStoreOptions, CanonicalStoreStats, TransitionCommitContext,
+    CanonicalStartupReport, CanonicalStoreOptions, CanonicalStoreStats, CommitRecordPage,
+    CommitWindow, NeighbourDirection, NeighbourGroup, NodeNeighbourhood, TransitionCommitContext,
 };
 pub use catalog::{
     GraphCatalog, HistoricalRecordCatalogEntry, LatestRecordCatalogEntry,

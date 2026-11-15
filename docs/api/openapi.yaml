@@ -253,11 +253,25 @@ components:
         workspace_id: {type: string}
         session_id: {type: string}
         budget_ref: {type: string}
+        branch:
+          type: string
+          description: Read the head of this branch instead of main. Persistent mode only.
+        commit:
+          type: string
+          pattern: '^gc[0-9a-f]{40}$'
+          description: >-
+            Read at this graph commit. Persistent mode only. Pinned reads are
+            read-only and a write answers 409 GRAPH_COMMIT_READ_ONLY.
     CypherEnvelope:
       type: object
       required: [ok, result]
       properties:
         ok: {type: boolean, const: true}
+        graph_commit_id:
+          type: string
+          description: >-
+            Commit a pinned read used, or the main head right after the request.
+            Present in persistent mode only.
         result:
           type: object
           required: [status]
@@ -2734,6 +2748,7 @@ paths:
         - {name: max_properties_per_record, in: query, schema: {type: integer, minimum: 1, maximum: 256, default: 32}}
         - {name: max_payload_bytes, in: query, schema: {type: integer, minimum: 1024, maximum: 16777216, default: 2097152}}
         - {name: max_computation_units, in: query, schema: {type: integer, minimum: 1, maximum: 1000000, default: 100000}}
+        - {name: commit, in: query, description: Project this graph commit (persistent mode), schema: {type: string, pattern: '^gc[0-9a-f]{40}$'}}
       responses:
         '200':
           description: Bounded deterministic graph projection with exact boundary identity
@@ -2787,6 +2802,48 @@ paths:
           content:
             application/json:
               schema: {type: object}
+
+  /v1/graph/records:
+    get:
+      operationId: listGraphRecords
+      summary: Page the nodes or relationships visible at a commit
+      tags: [GraphHistory]
+      parameters:
+        - {name: branch, in: query, schema: {type: string, default: main}}
+        - {name: commit, in: query, schema: {type: string, pattern: '^gc[0-9a-f]{40}$'}}
+        - {name: kind, in: query, schema: {type: string, enum: [node, relationship], default: node}}
+        - {name: label, in: query, description: Node label, or relationship type, schema: {type: string}}
+        - {name: cursor, in: query, description: Last record id of the previous page, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 1000, default: 100}}
+        - {name: include_deleted, in: query, schema: {type: boolean, default: false}}
+      responses:
+        '200':
+          description: One keyset page in record-id order with the commit and total
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/graph/nodes/{node_id}:
+    get:
+      operationId: getGraphNode
+      summary: Read a node and its relationship groups at a commit
+      tags: [GraphHistory]
+      parameters:
+        - {name: node_id, in: path, required: true, schema: {type: string}}
+        - {name: branch, in: query, schema: {type: string, default: main}}
+        - {name: commit, in: query, schema: {type: string, pattern: '^gc[0-9a-f]{40}$'}}
+        - {name: group_limit, in: query, schema: {type: integer, minimum: 0, maximum: 200, default: 8}}
+      responses:
+        '200':
+          description: Node with relationship groups by type and direction
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
 
   /v1/sessions/{session_id}/health:
     get:

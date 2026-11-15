@@ -61,6 +61,12 @@ use crate::{
     resolve_relationship_ids_by_type,
 };
 
+mod commit_reads;
+
+pub use commit_reads::{
+    CommitRecordPage, CommitWindow, NeighbourDirection, NeighbourGroup, NodeNeighbourhood,
+};
+
 const LEGACY_SNAPSHOT: &str = "engine-graph.json";
 const LEGACY_ROLLBACK_SNAPSHOT: &str = "engine-graph.rollback.json";
 const MIGRATION_RECORD: &str = "engine-graph-migration.json";

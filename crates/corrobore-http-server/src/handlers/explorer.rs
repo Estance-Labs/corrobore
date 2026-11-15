@@ -78,6 +78,9 @@ pub struct ExplorerGraphResponse {
     pub ok: bool,
     /// Bounded visualization projection.
     pub result: VisualizationProjectionResponse,
+    /// Graph commit the projection was read at (persistent mode).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph_commit_id: Option<String>,
 }
 
 /// Query selecting a temporal boundary and projection budgets.
@@ -97,6 +100,8 @@ pub struct ExplorerGraphQuery {
     pub max_payload_bytes: Option<usize>,
     /// Optional computation budget.
     pub max_computation_units: Option<usize>,
+    /// Read this graph commit instead of the boundary's commit (persistent mode).
+    pub commit: Option<String>,
 }
 
 /// List current or all persisted sessions for the explorer rail.
@@ -160,13 +165,100 @@ pub async fn explorer_graph(
     )
     .map_err(map_projection_error)?;
     let request = VisualizationProjectionRequest::new(boundary, budget);
+    if crate::handlers::graph_history::canonical_store(&state).is_ok() {
+        let commit = query
+            .commit
+            .as_deref()
+            .map(crate::handlers::graph_history::parse_commit_id)
+            .transpose()?;
+        return project_commit(&state, request, commit).await;
+    }
+    if query.commit.is_some() {
+        return Err(ApiError::bad_request(
+            "INVALID_TEMPORAL_BOUNDARY",
+            "commit reads need CORROBORE_STORAGE_MODE=persistent",
+        ));
+    }
     let engine = state
         .engine
         .lock()
         .map_err(|_| ApiError::internal("STATE_LOCK_FAILED", "engine lock poisoned"))?;
     let result = project_resolved_graph(engine.graph(), &request, &BTreeMap::new())
         .map_err(map_projection_error)?;
-    Ok(Json(ExplorerGraphResponse { ok: true, result }))
+    Ok(Json(ExplorerGraphResponse {
+        ok: true,
+        result,
+        graph_commit_id: None,
+    }))
+}
+
+/// Project the persistent graph at the commit a boundary names.
+///
+/// An explicit `commit` wins. Otherwise a snapshot or timeshot anchored to a
+/// transaction reads the commit that recorded it, a timeshot without one reads
+/// the newest `main` commit at its time, and `current` reads the `main` head.
+async fn project_commit(
+    state: &AppState,
+    request: VisualizationProjectionRequest,
+    commit: Option<graph_storage::GraphCommitId>,
+) -> Result<Json<ExplorerGraphResponse>, ApiError> {
+    crate::handlers::graph_history::with_store(state, move |store| {
+        use crate::handlers::graph_history::map_history_error;
+        let commit_id = match commit {
+            Some(commit) => store
+                .resolve_graph_ref(None, Some(&commit))
+                .map_err(map_history_error)?,
+            None => {
+                let by_transaction = match request.boundary.transaction_id() {
+                    Some(transaction_id) => store
+                        .commit_for_transaction(transaction_id)
+                        .map_err(map_history_error)?,
+                    None => None,
+                };
+                let by_time = match (
+                    &by_transaction,
+                    request.boundary.kind(),
+                    request.boundary.at(),
+                ) {
+                    (None, "current", _) | (Some(_), _, _) | (None, _, None) => None,
+                    (None, _, Some(at)) => store
+                        .commit_at(graph_storage::MAIN_BRANCH, at)
+                        .map_err(map_history_error)?,
+                };
+                match by_transaction.or(by_time) {
+                    Some(commit) => commit,
+                    None => store
+                        .graph_head(graph_storage::MAIN_BRANCH)
+                        .map_err(map_history_error)?,
+                }
+            }
+        };
+        let window = store
+            .load_commit_window(
+                &commit_id,
+                request.budget.max_nodes,
+                request.budget.max_relationships,
+            )
+            .map_err(|error| {
+                ApiError::bad_request("COMMIT_PROJECTION_FAILED", error.to_string())
+            })?;
+        let mut result = project_resolved_graph(&window.graph, &request, &BTreeMap::new())
+            .map_err(map_projection_error)?;
+        let metadata = &mut result.metadata;
+        metadata.omitted_nodes = window.total_nodes.saturating_sub(metadata.returned_nodes);
+        metadata.omitted_relationships = window
+            .total_relationships
+            .saturating_sub(metadata.returned_relationships);
+        metadata.partial = metadata.omitted_nodes > 0
+            || metadata.omitted_relationships > 0
+            || metadata.omitted_properties > 0;
+        Ok(Json(ExplorerGraphResponse {
+            ok: true,
+            result,
+            graph_commit_id: Some(commit_id.to_string()),
+        }))
+    })
+    .await
 }
 
 fn resolve_session(state: &AppState, session_id: &str) -> Result<SessionHealthView, ApiError> {

@@ -714,7 +714,7 @@ fn initialize_persistent_runtime_store(
     })
 }
 
-fn canonical_projection_for_query(query: &str) -> CanonicalProjectionRequest {
+pub(crate) fn canonical_projection_for_query(query: &str) -> CanonicalProjectionRequest {
     let Ok(ast) = cypher_parser::parse_query(query) else {
         return CanonicalProjectionRequest::all();
     };
@@ -1078,6 +1078,14 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/v1/graph/commits/{commit_id}",
             get(crate::handlers::graph_history::get_commit),
+        )
+        .route(
+            "/v1/graph/records",
+            get(crate::handlers::graph_records::list_records),
+        )
+        .route(
+            "/v1/graph/nodes/{node_id}",
+            get(crate::handlers::graph_records::get_node),
         )
         // 2.3: standard JSON routes get a tight body limit.
         .layer(DefaultBodyLimit::max(state.config.max_body_bytes));
