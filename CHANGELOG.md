@@ -81,6 +81,12 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   segment compaction was previously never called. Pruned commits answer
   `404`, and feed cursors on them `410 CHANGE_FEED_GAP`.
 
+- **Parse-only Cypher validation (#336).** `POST /v1/cypher/validate` parses
+  a query and returns its kind (`read`, `mutation`, `mixed`), clauses and
+  diagnostics without executing anything, so editors can validate while the
+  user types; unbound parameters and partially structured queries are
+  warnings.
+
 ### Removed
 
 - **Breaking:** the enterprise edition and its license gate leave Corrobore,

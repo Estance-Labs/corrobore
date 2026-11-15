@@ -1654,6 +1654,31 @@ paths:
               schema: {$ref: '#/components/schemas/CypherEnvelope'}
         '401': {$ref: '#/components/responses/Unauthorized'}
 
+  /v1/cypher/validate:
+    post:
+      operationId: validateCypher
+      summary: Parse a Cypher query and report diagnostics without executing it
+      tags: [Cypher]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query: {type: string, maxLength: 65536}
+      responses:
+        '200':
+          description: >-
+            valid, kind (read, mutation, mixed or null), clauses and diagnostics
+            with severity (error or warning), code, message and suggestion
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
   /v1/cypher/write:
     post:
       operationId: executeCypherWrite

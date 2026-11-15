@@ -1053,6 +1053,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/cypher/execute", post(execute_cypher))
         .route("/v1/cypher/read", post(execute_read_cypher))
         .route("/v1/cypher/write", post(execute_write_cypher))
+        .route(
+            "/v1/cypher/validate",
+            post(crate::handlers::cypher_validate::validate_cypher),
+        )
         .route("/v1/domains/{domain}/validate", post(validate_domain))
         .route("/v1/stix/validate", post(validate_stix))
         .route("/v1/seed/search", post(seed_search))
