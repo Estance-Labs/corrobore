@@ -77,10 +77,12 @@ pub enum PolicyAction {
     Admin,
     /// Deploying a bundle and reading the deployment status.
     ConfigManage,
+    /// Spending tokens of the server's chat model.
+    ModelCall,
 }
 
 impl PolicyAction {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Read,
         Self::Export,
         Self::Change,
@@ -93,6 +95,7 @@ impl PolicyAction {
         Self::InvokeQuery,
         Self::Admin,
         Self::ConfigManage,
+        Self::ModelCall,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -109,6 +112,7 @@ impl PolicyAction {
             Self::InvokeQuery => "invoke_query",
             Self::Admin => "admin",
             Self::ConfigManage => "config_manage",
+            Self::ModelCall => "model_call",
         }
     }
 
@@ -637,7 +641,7 @@ namespace Corrobore {
     entity Actor in [Group];
     entity Graph;
     action "read", "export", "change", "review", "branch_create", "branch_delete",
-        "branch_merge", "maintain", "reclaim", "invoke_query", "admin", "config_manage"
+        "branch_merge", "maintain", "reclaim", "invoke_query", "admin", "config_manage", "model_call"
         appliesTo { principal: Actor, resource: Graph, context: RequestContext };
 }
 "#;

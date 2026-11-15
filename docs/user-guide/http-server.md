@@ -95,6 +95,7 @@ rules:
 | `invoke_query` | Stored queries |
 | `admin` | Operation status, domain-provider status, OpenCTI authority and routing rollback |
 | `config_manage` | `POST /v1/cluster/deployments`, `GET /v1/cluster/status` |
+| `model_call` | `POST /v1/model/complete` |
 
 A read with only `commit` (no `branch`), the branch list, and routes that touch no branch (content, NLQ, embeddings) are graph-wide: only a rule without a scope, or with scope `any`, allows them. Admin routes keep accepting `CORROBORE_HTTP_ADMIN_AUTH_TOKEN`; under a policy they also accept any credential whose actor the policy allows the action. A denial answers 403 `POLICY_DENIED` naming the actor, the action and the branch, never the rules.
 
@@ -652,6 +653,31 @@ Lists the applied stored queries: `name`, `description`, `writes` and `parameter
 ### `POST /v1/queries/{name}`
 
 Runs a stored query with `{"params": {...}, "branch": "...", "commit": "...", "expect_mutation": false}`. It needs `invoke_query`, plus `read` (or `change` for a writing query) on the branch, records the caller's actor like any write, and answers like `POST /v1/cypher/execute`. `expect_mutation`, when sent, must match the query (409 `QUERY_MODE_MISMATCH` otherwise), so a client never runs a write it took for a read. An unknown name answers 404 `QUERY_NOT_FOUND`.
+
+## Chat model
+
+The viewer's model features (filter a table from a sentence, fill a column, summarize a branch) call a chat model through the server, so the provider key never reaches a browser and a [graph policy](#graph-policy) decides who may spend tokens (`model_call`). Any OpenAI-compatible `chat/completions` endpoint works: OpenAI, OpenRouter, a vLLM or Ollama server.
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `CORROBORE_MODEL_ENDPOINT` | unset | Full URL of the `chat/completions` endpoint, such as `http://localhost:11434/v1/chat/completions`. Unset disables the model routes. |
+| `CORROBORE_MODEL_NAME` | required with an endpoint | Model name sent to the endpoint. |
+| `CORROBORE_MODEL_API_KEY` | unset | Bearer key sent to the endpoint only. |
+| `CORROBORE_MODEL_API_KEY_FILE` | unset | Protected file holding that key; mutually exclusive with `CORROBORE_MODEL_API_KEY`. |
+| `CORROBORE_MODEL_MAX_TOKENS` | `1024` | Most tokens one answer may use; a request asking for more is capped. |
+| `CORROBORE_MODEL_TIMEOUT_MS` | `60000` | Time allowed for one answer. |
+
+### `GET /v1/model`
+
+Reports `configured`, `model` and `max_tokens`, so a client shows its model features only when a model is there. It needs `read`.
+
+### `POST /v1/model/complete`
+
+```json
+{"messages": [{"role": "system", "content": "…"}, {"role": "user", "content": "…"}], "max_tokens": 400, "temperature": 0.2, "json": true}
+```
+
+`messages` holds 1 to 64 messages (`system`, `user`, `assistant`, the last from the user) and at most 200,000 characters. `json: true` asks for a JSON object and refuses any other answer. The answer is `{text, model, prompt_tokens, completion_tokens, finish_reason}`. Without a model the route answers 404 `MODEL_NOT_CONFIGURED`; a provider error answers 502 `MODEL_PROVIDER_FAILED` with the provider's message, and a slow provider 504 `MODEL_TIMEOUT`. The request and the answer are not logged.
 
 ## Content plane
 

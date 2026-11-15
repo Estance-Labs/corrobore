@@ -134,6 +134,8 @@ pub struct ServerConfig {
     pub policy_file: Option<String>,
     /// Actor the shared unnamed token stands for under a policy.
     pub policy_shared_token_actor: Option<String>,
+    /// Chat model behind `/v1/model/complete` (issue #390), if any.
+    pub model: Option<crate::model::ModelConfig>,
 }
 
 /// Who may call the server besides the single trusted token (issue #382).
@@ -448,6 +450,7 @@ impl fmt::Debug for ServerConfig {
             .field("identity", &self.identity)
             .field("policy_file", &self.policy_file)
             .field("policy_shared_token_actor", &self.policy_shared_token_actor)
+            .field("model", &self.model)
             .finish()
     }
 }
@@ -1034,6 +1037,7 @@ impl ServerConfig {
         let content = Self::parse_content_store(vars)?;
         let embedding = Self::parse_embedding(vars)?;
         let cors_allowed_origins = Self::parse_cors_origins(vars)?;
+        let model = Self::parse_model(vars)?;
         let policy_file = vars
             .get("CORROBORE_HTTP_POLICY_FILE")
             .map(|value| value.trim().to_owned())
@@ -1112,7 +1116,74 @@ impl ServerConfig {
             identity,
             policy_file,
             policy_shared_token_actor,
+            model,
         })
+    }
+
+    /// `CORROBORE_MODEL_*`: an OpenAI-compatible chat completions endpoint.
+    fn parse_model(
+        vars: &HashMap<String, String>,
+    ) -> Result<Option<crate::model::ModelConfig>, ConfigError> {
+        let optional = |name: &str| {
+            vars.get(name)
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        };
+        let (api_key, _) = resolve_secret(
+            vars,
+            "CORROBORE_MODEL_API_KEY",
+            "CORROBORE_MODEL_API_KEY_FILE",
+            "model.api_key",
+            "model.api_key_file",
+        )?;
+        let Some(endpoint) = optional("CORROBORE_MODEL_ENDPOINT") else {
+            for name in [
+                "CORROBORE_MODEL_NAME",
+                "CORROBORE_MODEL_MAX_TOKENS",
+                "CORROBORE_MODEL_TIMEOUT_MS",
+            ] {
+                if optional(name).is_some() {
+                    return Err(ConfigError::InvalidEnv {
+                        name,
+                        value: "requires CORROBORE_MODEL_ENDPOINT".to_owned(),
+                    });
+                }
+            }
+            if api_key.is_some() {
+                return Err(ConfigError::InvalidEnv {
+                    name: "CORROBORE_MODEL_API_KEY",
+                    value: "requires CORROBORE_MODEL_ENDPOINT".to_owned(),
+                });
+            }
+            return Ok(None);
+        };
+        if !(endpoint.starts_with("http://") || endpoint.starts_with("https://")) {
+            return Err(ConfigError::InvalidEnv {
+                name: "CORROBORE_MODEL_ENDPOINT",
+                value: format!("{endpoint} is not an http(s) URL"),
+            });
+        }
+        let model = optional("CORROBORE_MODEL_NAME")
+            .ok_or(ConfigError::MissingEnv("CORROBORE_MODEL_NAME"))?;
+        let max_tokens = parse_positive_u32(
+            "CORROBORE_MODEL_MAX_TOKENS",
+            vars.get("CORROBORE_MODEL_MAX_TOKENS")
+                .map(String::as_str)
+                .unwrap_or("1024"),
+        )?;
+        let timeout_ms = parse_positive_u64(
+            "CORROBORE_MODEL_TIMEOUT_MS",
+            vars.get("CORROBORE_MODEL_TIMEOUT_MS")
+                .map(String::as_str)
+                .unwrap_or("60000"),
+        )?;
+        Ok(Some(crate::model::ModelConfig {
+            endpoint,
+            model,
+            api_key,
+            max_tokens,
+            timeout_ms,
+        }))
     }
 
     /// Named tokens (`CORROBORE_HTTP_BEARER_TOKENS_JSON` or `_FILE`, a JSON

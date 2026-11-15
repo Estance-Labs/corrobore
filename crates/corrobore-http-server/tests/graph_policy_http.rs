@@ -317,7 +317,7 @@ async fn the_access_route_lists_what_the_caller_may_do() {
     // Without a policy every action is open.
     let app = persistent_app_with(&unique_path("policy-none"), &[]);
     let (_, body) = call(&app, TOKEN, Method::GET, "/v1/graph/access", None).await;
-    assert_eq!(body["result"]["graph_wide"].as_array().unwrap().len(), 12);
+    assert_eq!(body["result"]["graph_wide"].as_array().unwrap().len(), 13);
 }
 
 #[tokio::test]

@@ -257,6 +257,14 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   plus `read` or `change`. A server installs its root's applied revision at
   startup; `CORROBORE_HTTP_POLICY_FILE` still wins over the bundle policy.
 
+- **Chat model provider (#390).** `CORROBORE_MODEL_ENDPOINT`, `_NAME`,
+  `_API_KEY` (or `_FILE`), `_MAX_TOKENS` and `_TIMEOUT_MS` configure an
+  OpenAI-compatible `chat/completions` endpoint. `POST /v1/model/complete`
+  relays validated messages (with an optional JSON-object mode and the
+  server's token cap) and `GET /v1/model` reports whether a model is there.
+  The key stays on the server; the new `model_call` policy action decides
+  who may spend tokens. Provider errors answer 502, timeouts 504.
+
 ### Removed
 
 - **Breaking:** the enterprise edition and its license gate leave Corrobore,

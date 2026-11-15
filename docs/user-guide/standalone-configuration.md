@@ -235,6 +235,12 @@ remain environment-only:
 | `CORROBORE_HTTP_OAUTH_JWKS_MIN_REFRESH_SECONDS` | `30` | Shortest pause between two key-set fetches caused by an unknown key id. |
 | `CORROBORE_HTTP_POLICY_FILE` | unset | Graph policy (YAML, compiled to Cedar) deciding what each actor may do. See [Graph policy](http-server.md#graph-policy). |
 | `CORROBORE_HTTP_POLICY_SHARED_TOKEN_ACTOR` | unset | Actor the shared token stands for under a policy. |
+| `CORROBORE_MODEL_ENDPOINT` | unset | OpenAI-compatible `chat/completions` URL behind the viewer's model features. See [Chat model](http-server.md#chat-model). |
+| `CORROBORE_MODEL_NAME` | required with an endpoint | Model name sent to the endpoint. |
+| `CORROBORE_MODEL_API_KEY` | unset | Key sent to the endpoint only. |
+| `CORROBORE_MODEL_API_KEY_FILE` | unset | Protected file holding that key. |
+| `CORROBORE_MODEL_MAX_TOKENS` | `1024` | Most tokens one answer may use. |
+| `CORROBORE_MODEL_TIMEOUT_MS` | `60000` | Time allowed for one answer. |
 | `CORROBORE_HTTP_CORS_ALLOWED_ORIGINS` | unset | Exact browser origins allowed to call the server (CORS), comma-separated, for a viewer served from another origin. `*` is refused; unset sends no CORS headers. |
 | `CORROBORE_HTTP_CONTENT_STORE_URL` | unset | Object store holding offloaded content (`s3://bucket/prefix`, `file:///path` or `memory://`). Unset, persistent servers use `<storage>/content` and ephemeral servers keep content in memory. See [Content plane](http-server.md#content-plane). |
 | `CORROBORE_HTTP_CONTENT_INLINE_MAX_BYTES` | `16384` | Text and JSON content up to this size stays inline in the returned handle; larger or binary content is offloaded. |
