@@ -190,6 +190,13 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   neighbour at the commit read; totals and keyset paging count only matching
   nodes.
 
+- **Relationship edits (#366).** `POST /v1/graph/edits` also creates
+  relationships (between live nodes or nodes created earlier in the batch,
+  named `$n`), edits and removes their properties, and deletes them, in the
+  same single commit; the result lists `created_relationships`. A node can be
+  deleted together with its last relationships in one batch.
+  `RelationshipPatch` gains `remove_property`.
+
 - **Approximate vector search with HNSW (#342).** `HnswVectorIndex` implements
   `VectorIndex` with a deterministic Hierarchical Navigable Small World graph:
   layers are seeded from the record id, removals are tombstoned and the graph

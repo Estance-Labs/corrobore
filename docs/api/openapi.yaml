@@ -3108,8 +3108,12 @@ paths:
                     type: object
                     required: [op]
                     properties:
-                      op: {type: string, enum: [set_properties, create_node, delete_node]}
+                      op: {type: string, enum: [set_properties, create_node, delete_node, create_relationship, set_relationship_properties, delete_relationship]}
                       node_id: {type: string}
+                      relationship_id: {type: string}
+                      source_id: {type: string, description: 'A live node id, or $n for the n-th create_node of the batch'}
+                      target_id: {type: string, description: 'A live node id, or $n for the n-th create_node of the batch'}
+                      type: {type: string}
                       set: {type: object}
                       remove: {type: array, items: {type: string}}
                       labels: {type: array, items: {type: string}}
@@ -3129,6 +3133,7 @@ paths:
                       commit_id: {type: string}
                       branch: {type: string}
                       created: {type: array, items: {type: string}}
+                      created_relationships: {type: array, items: {type: string}}
                       changed: {type: integer}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}

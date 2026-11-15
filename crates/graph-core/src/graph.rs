@@ -1327,6 +1327,9 @@ impl Graph {
         for (key, value) in patch.properties_to_set {
             relationship.properties.insert(key, value);
         }
+        for key in &patch.properties_to_remove {
+            relationship.properties.remove(key);
+        }
         if let Some(status) = patch.status {
             relationship.status = status;
         }

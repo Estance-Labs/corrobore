@@ -19,8 +19,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-//! `POST /v1/graph/edits` (issue #352): a batch of record edits published as
-//! one commit on a branch, `main` included.
+//! `POST /v1/graph/edits` (issues #352 and #366): a batch of node and
+//! relationship edits published as one commit on a branch, `main` included.
 
 use std::collections::BTreeMap;
 
@@ -54,6 +54,24 @@ pub enum EditBody {
     DeleteNode {
         node_id: String,
     },
+    CreateRelationship {
+        source_id: String,
+        target_id: String,
+        #[serde(rename = "type")]
+        rel_type: String,
+        #[serde(default)]
+        properties: BTreeMap<String, Value>,
+    },
+    SetRelationshipProperties {
+        relationship_id: String,
+        #[serde(default)]
+        set: BTreeMap<String, Value>,
+        #[serde(default)]
+        remove: Vec<String>,
+    },
+    DeleteRelationship {
+        relationship_id: String,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -71,6 +89,7 @@ pub struct EditsResult {
     pub commit_id: String,
     pub branch: String,
     pub created: Vec<String>,
+    pub created_relationships: Vec<String>,
     pub changed: usize,
 }
 
@@ -128,6 +147,13 @@ fn edit_error(error: GraphStorageError) -> ApiError {
             "GRAPH_NODE_NOT_FOUND",
             format!("node {node_id} is not on branch {branch}"),
         ),
+        GraphStorageError::GraphEditRelationshipNotFound {
+            branch,
+            relationship_id,
+        } => ApiError::not_found(
+            "GRAPH_RELATIONSHIP_NOT_FOUND",
+            format!("relationship {relationship_id} is not on branch {branch}"),
+        ),
         GraphStorageError::GraphEditBlocked {
             branch,
             node_id,
@@ -173,6 +199,29 @@ pub async fn apply(
                 properties: properties(values)?,
             },
             EditBody::DeleteNode { node_id } => GraphEdit::DeleteNode { node_id },
+            EditBody::CreateRelationship {
+                source_id,
+                target_id,
+                rel_type,
+                properties: values,
+            } => GraphEdit::CreateRelationship {
+                source_id,
+                target_id,
+                rel_type,
+                properties: properties(values)?,
+            },
+            EditBody::SetRelationshipProperties {
+                relationship_id,
+                set,
+                remove,
+            } => GraphEdit::SetRelationshipProperties {
+                relationship_id,
+                set: properties(set)?,
+                remove,
+            },
+            EditBody::DeleteRelationship { relationship_id } => {
+                GraphEdit::DeleteRelationship { relationship_id }
+            }
         });
     }
     let expected_head = body
@@ -202,6 +251,7 @@ pub async fn apply(
             commit_id: report.commit_id.to_string(),
             branch: report.branch,
             created: report.created,
+            created_relationships: report.created_relationships,
             changed: report.changed,
         }))
     })

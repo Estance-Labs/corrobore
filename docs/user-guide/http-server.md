@@ -1385,23 +1385,30 @@ write), through branch payloads elsewhere.
   "edits": [
     { "op": "set_properties", "node_id": "node--…", "set": { "name": "x", "score": 0.5 }, "remove": ["alias"] },
     { "op": "create_node", "labels": ["Indicator"], "properties": { "name": "y" } },
-    { "op": "delete_node", "node_id": "node--…" }
+    { "op": "delete_node", "node_id": "node--…" },
+    { "op": "create_relationship", "source_id": "node--…", "target_id": "$0", "type": "INDICATES", "properties": { "weight": 2 } },
+    { "op": "set_relationship_properties", "relationship_id": "relationship--…", "set": { "weight": 3 }, "remove": ["note"] },
+    { "op": "delete_relationship", "relationship_id": "relationship--…" }
   ]
 }
 ```
 
 ```json
-{ "ok": true, "result": { "commit_id": "gc…", "branch": "main", "created": ["node--…"], "changed": 3 } }
+{ "ok": true, "result": { "commit_id": "gc…", "branch": "main", "created": ["node--…"], "created_relationships": ["relationship--…"], "changed": 5 } }
 ```
 
+A relationship's endpoints are live nodes or nodes created earlier in the same
+batch, named `$n` for the n-th `create_node` (from 0). A `delete_node` is
+accepted when the batch also deletes every live relationship of that node.
 `branch` defaults to `main` and `actor` to `CORROBORE_MEMORY_ACTOR_ID`. A batch
 holds 1 to 500 edits; several `set_properties` of one node merge into one new
 version. Values are scalars or lists of one scalar type (integers and floats
 mix into a float list); objects are refused. The whole batch is validated
 before anything is written: `400 INVALID_EDIT` (unknown op, blank key, invalid
 labels, unsupported value, a node both edited and deleted),
-`404 GRAPH_NODE_NOT_FOUND`, `409 GRAPH_EDIT_BLOCKED` (deleting a node with live
-relationships), and `409 GRAPH_COMMIT_PRECONDITION_FAILED` when
+`404 GRAPH_NODE_NOT_FOUND`, `404 GRAPH_RELATIONSHIP_NOT_FOUND`,
+`409 GRAPH_EDIT_BLOCKED` (deleting a node whose live relationships the batch
+keeps), and `409 GRAPH_COMMIT_PRECONDITION_FAILED` when
 `expected_head` is stale.
 
 ### `POST /v1/graph/revert`
