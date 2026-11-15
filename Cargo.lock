@@ -410,7 +410,7 @@ dependencies = [
  "log",
  "quick-xml",
  "serde",
- "zip",
+ "zip 8.6.0",
 ]
 
 [[package]]
@@ -2143,6 +2143,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2195bf6aa996a481483b29d62a7663eed3fe39600c460e323f8ff41e90bdd89b"
 
 [[package]]
+name = "nix"
+version = "0.31.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+dependencies = [
+ "bitflags 2.13.0",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
+]
+
+[[package]]
 name = "nom"
 version = "7.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2287,7 +2299,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror 2.0.20",
- "zip",
+ "zip 9.0.5",
 ]
 
 [[package]]
@@ -4374,6 +4386,21 @@ dependencies = [
  "flate2",
  "indexmap",
  "memchr",
+ "typed-path",
+ "zopfli",
+]
+
+[[package]]
+name = "zip"
+version = "9.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e04976da629d3b04204ba8105b396a193af8ad2583b2c79bfb3ab8af580a11e"
+dependencies = [
+ "crc32fast",
+ "flate2",
+ "indexmap",
+ "memchr",
+ "nix",
  "typed-path",
  "zopfli",
 ]
