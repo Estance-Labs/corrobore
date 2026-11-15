@@ -1080,6 +1080,15 @@ pub fn build_router(state: AppState) -> Router {
             get(crate::handlers::graph_history::get_commit),
         )
         .route(
+            "/v1/graph/branches",
+            get(crate::handlers::graph_branches::list_branches)
+                .post(crate::handlers::graph_branches::create_branch),
+        )
+        .route(
+            "/v1/graph/branches/{*name}",
+            axum::routing::delete(crate::handlers::graph_branches::delete_branch),
+        )
+        .route(
             "/v1/graph/records",
             get(crate::handlers::graph_records::list_records),
         )

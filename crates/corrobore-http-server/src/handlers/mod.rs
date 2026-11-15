@@ -25,6 +25,7 @@ pub mod domain_provider_status;
 pub mod domain_validate;
 pub mod explorer;
 pub mod export;
+pub mod graph_branches;
 pub mod graph_history;
 pub mod graph_records;
 pub mod health;

@@ -255,7 +255,10 @@ components:
         budget_ref: {type: string}
         branch:
           type: string
-          description: Read the head of this branch instead of main. Persistent mode only.
+          description: >-
+            Read or write the head of this branch instead of main. Persistent
+            mode only. A branch write publishes a branch commit and answers
+            409 GRAPH_COMMIT_PRECONDITION_FAILED if the head moved meanwhile.
         commit:
           type: string
           pattern: '^gc[0-9a-f]{40}$'
@@ -2799,6 +2802,71 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '409':
           description: PERSISTENT_STORAGE_REQUIRED in ephemeral mode
+          content:
+            application/json:
+              schema: {type: object}
+
+  /v1/graph/branches:
+    get:
+      operationId: listGraphBranches
+      summary: List branches with their head, origin and merge state, main first
+      tags: [GraphHistory]
+      responses:
+        '200':
+          description: Branches with head, created_from, merged and commits_ahead
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+    post:
+      operationId: createGraphBranch
+      summary: Create a branch at a branch head or a retained commit
+      tags: [GraphHistory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string, pattern: '^[A-Za-z0-9._/-]{1,128}$'}
+                from_branch: {type: string, default: main}
+                from_commit: {type: string, pattern: '^gc[0-9a-f]{40}$'}
+                actor: {type: string}
+      responses:
+        '200':
+          description: The created branch
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: GRAPH_BRANCH_CONFLICT when the name exists
+          content:
+            application/json:
+              schema: {type: object}
+
+  /v1/graph/branches/{*name}:
+    delete:
+      operationId: deleteGraphBranch
+      summary: Delete a merged branch, or any branch other than main with force
+      tags: [GraphHistory]
+      parameters:
+        - {name: name, in: path, required: true, description: Branch name, slashes included, schema: {type: string}}
+        - {name: force, in: query, schema: {type: boolean, default: false}}
+      responses:
+        '200':
+          description: The deleted branch name
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: GRAPH_BRANCH_CONFLICT for main or an unmerged branch without force
           content:
             application/json:
               schema: {type: object}

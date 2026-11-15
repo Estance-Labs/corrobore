@@ -33,6 +33,15 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   keyset pages pinned to a commit) and `GET /v1/graph/nodes/{node_id}`
   (relationship groups with neighbours).
 
+- **Persisted branches (#319).** `GET/POST /v1/graph/branches` and
+  `DELETE /v1/graph/branches/{*name}` create branches at any branch head or
+  retained commit and delete merged ones (or any with `force`). Cypher writes
+  with `branch` publish branch commits whose record versions live in
+  `history/branch_payloads.log`, which the canonical catalog never indexes;
+  `main` is unchanged until a merge. A branch write from a head that moved
+  meanwhile answers `409 GRAPH_COMMIT_PRECONDITION_FAILED`. Every writer
+  allocates graph ids above the highest id published on any branch.
+
 ### Removed
 
 - **Breaking:** the enterprise edition and its license gate leave Corrobore,
