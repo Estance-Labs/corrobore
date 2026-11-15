@@ -1365,6 +1365,34 @@ paths:
                   ok: {type: boolean, const: true}
                   result: {$ref: '#/components/schemas/SnapshotReport'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+  /v1/admin/storage/cleanup:
+    post:
+      operationId: cleanupGraphHistory
+      summary: Prune graph history outside a retention window and compact payloads
+      tags: [Database Operations]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                keep_commits: {type: integer, minimum: 1, default: 100}
+                keep_seconds: {type: integer, minimum: 0}
+                dry_run: {type: boolean, default: false}
+      responses:
+        '200':
+          description: Pruned and retained commits, baselines and reclaimed bytes
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '503':
+          description: DATABASE_OPERATION_FAILED
+          content:
+            application/json:
+              schema: {type: object}
+
   /v1/admin/storage/indexes/rebuild:
     post:
       operationId: rebuildDatabaseIndexes

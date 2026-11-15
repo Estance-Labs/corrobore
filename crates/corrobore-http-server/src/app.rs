@@ -1241,6 +1241,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/admin/storage/snapshots", post(create_snapshot))
         .route("/v1/admin/storage/indexes/rebuild", post(rebuild_indexes))
         .route(
+            "/v1/admin/storage/cleanup",
+            post(crate::handlers::database_operations::cleanup_history),
+        )
+        .route(
             "/v1/admin/storage/operations",
             get(database_operation_status),
         )

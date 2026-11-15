@@ -72,6 +72,15 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   counts, property keys with their value types, and the label pairs each
   relationship type connects.
 
+- **History retention (#324).** `corrobore server cleanup` and
+  `POST /v1/admin/storage/cleanup` keep, on every branch, the newest commits,
+  commits younger than `keep_seconds`, and recent merged work. The first commit
+  past the window becomes a baseline that keeps its id and full view. The pass
+  rewrites branch payloads into a new generation holding only referenced
+  payloads, and compacts the WAL and journals behind the latest checkpoint;
+  segment compaction was previously never called. Pruned commits answer
+  `404`, and feed cursors on them `410 CHANGE_FEED_GAP`.
+
 ### Removed
 
 - **Breaking:** the enterprise edition and its license gate leave Corrobore,

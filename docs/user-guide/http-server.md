@@ -7,8 +7,8 @@ point and deployment runbooks, start with
 [Deployment Modes](deployment-modes.md).
 
 Administrative database operations are available at
-`POST /v1/admin/storage/snapshots`, `POST /v1/admin/storage/indexes/rebuild`, and
-`GET /v1/admin/storage/operations`. They require the administrative bearer token;
+`POST /v1/admin/storage/snapshots`, `POST /v1/admin/storage/indexes/rebuild`,
+`POST /v1/admin/storage/cleanup`, and `GET /v1/admin/storage/operations`. They require the administrative bearer token;
 see [Database operations](database-operations.md) for restore, migration, S3/MinIO,
 rollback, cancellation and recovery procedures.
 
@@ -375,6 +375,13 @@ Error behavior:
 Creates a consistent online canonical snapshot through the administrative
 Bearer boundary. See [Database operations](database-operations.md) for request,
 restore, retention, and object-store rules.
+
+## `POST /v1/admin/storage/cleanup`
+
+Admin token required. Prunes graph history outside a retention window from
+`{keep_commits?, keep_seconds?, dry_run?}` (default `keep_commits` 100) and
+compacts branch payloads and the WAL behind the latest checkpoint. See
+[Database operations](database-operations.md#history-retention).
 
 ## `POST /v1/admin/storage/indexes/rebuild`
 

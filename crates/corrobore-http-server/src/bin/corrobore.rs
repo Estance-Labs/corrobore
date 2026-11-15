@@ -85,6 +85,24 @@ enum ServerCommand {
     RebuildIndexes(MigrationRootArgs),
     /// Cancel an incomplete derived-index rebuild at its durable boundary.
     CancelRebuild(MigrationRootArgs),
+    /// Prune graph history outside a retention window and compact payloads.
+    Cleanup(CleanupArgs),
+}
+
+#[derive(Args)]
+struct CleanupArgs {
+    /// Offline persistent data directory.
+    #[arg(long)]
+    storage_dir: PathBuf,
+    /// Newest first-parent commits kept on every branch.
+    #[arg(long, default_value_t = 100)]
+    keep: usize,
+    /// Also keep commits created less than this many seconds ago.
+    #[arg(long)]
+    keep_seconds: Option<u64>,
+    /// Report what would be pruned without writing.
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Args)]
@@ -547,7 +565,28 @@ async fn main() -> ExitCode {
         Command::Server(ServerArgs {
             command: ServerCommand::CancelRebuild(args),
         }) => run_index_rebuild_cancellation(args),
+        Command::Server(ServerArgs {
+            command: ServerCommand::Cleanup(args),
+        }) => run_history_cleanup(args),
     }
+}
+
+fn run_history_cleanup(args: CleanupArgs) -> ExitCode {
+    let started = std::time::Instant::now();
+    let ownership = match DataDirectoryOwnership::acquire(&args.storage_dir) {
+        Ok(ownership) => ownership,
+        Err(error) => return database_operation_failure("cleanup", started, error),
+    };
+    let request = graph_storage::HistoryCleanupRequest {
+        keep_commits: args.keep.max(1),
+        keep_seconds: args.keep_seconds,
+        dry_run: args.dry_run,
+    };
+    let result = open_storage_root(&args.storage_dir)
+        .and_then(|root| CanonicalEngineStore::open(root, CanonicalStoreOptions::default()))
+        .and_then(|mut store| store.cleanup_graph_history(&request));
+    drop(ownership);
+    print_database_operation("cleanup", started, result)
 }
 
 fn run_snapshot(args: SnapshotArgs) -> ExitCode {
