@@ -122,6 +122,18 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   head view against the canonical catalog, and atomicity after a crash. A
   failing seed replays exactly.
 
+- **Content plane served over HTTP (#341).** `POST /v1/content` places
+  content by the ADR-0021 storage policy: text and JSON up to
+  `CORROBORE_HTTP_CONTENT_INLINE_MAX_BYTES` (16 KiB) come back inline in the
+  handle, while anything else is stored once, content-addressed, and gets a
+  `content--<sha256>` id. `GET /v1/content/{content_id}` serves it with its
+  media type, a digest `ETag` and single `Range` requests (`206`/`416`),
+  verifying the digest on every read. The store is
+  `CORROBORE_HTTP_CONTENT_STORE_URL` (`s3://` with the `CORROBORE_S3_*`
+  variables, `file://`, `memory://`), else `<storage>/content`, else memory.
+  `UrlObjectStore` now shuts its runtime down in the background when dropped,
+  so async hosts can own one.
+
 ### Removed
 
 - **Breaking:** the enterprise edition and its license gate leave Corrobore,

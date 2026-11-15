@@ -42,8 +42,19 @@ use crate::InterchangeError;
 pub struct UrlObjectStore {
     store: Arc<dyn ObjectStore>,
     prefix: Path,
-    runtime: tokio::runtime::Runtime,
+    runtime: Option<tokio::runtime::Runtime>,
     description: String,
+}
+
+impl Drop for UrlObjectStore {
+    /// A runtime dropped inside an async context panics, and hosts such as the
+    /// HTTP server drop their stores there; shutting it down in the background
+    /// is always allowed.
+    fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown_background();
+        }
+    }
 }
 
 impl UrlObjectStore {
@@ -83,9 +94,16 @@ impl UrlObjectStore {
         Ok(Self {
             store,
             prefix,
-            runtime,
+            runtime: Some(runtime),
             description: description.to_owned(),
         })
+    }
+
+    fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
+        self.runtime
+            .as_ref()
+            .expect("the runtime lives until the store is dropped")
+            .block_on(future)
     }
 
     /// Where the store points.
@@ -113,14 +131,13 @@ impl UrlObjectStore {
 
     fn put_bytes(&self, key: &str, bytes: &[u8]) -> Result<(), object_store::Error> {
         let path = self.path(key);
-        self.runtime
-            .block_on(self.store.put(&path, bytes.to_vec().into()))
+        self.block_on(self.store.put(&path, bytes.to_vec().into()))
             .map(|_| ())
     }
 
     fn get_bytes(&self, key: &str) -> Result<Vec<u8>, object_store::Error> {
         let path = self.path(key);
-        self.runtime.block_on(async {
+        self.block_on(async {
             let result = self.store.get(&path).await?;
             Ok(result.bytes().await?.to_vec())
         })
@@ -135,7 +152,6 @@ impl UrlObjectStore {
             .map_or("", |(directory, _)| directory);
         let path = self.path(directory);
         let listed: Vec<object_store::ObjectMeta> = self
-            .runtime
             .block_on(self.store.list(Some(&path)).try_collect())
             .map_err(backend)?;
         let mut keys: Vec<String> = listed
@@ -180,16 +196,14 @@ impl ContentObjectStore for UrlObjectStore {
             });
         }
         let path = self.path(key);
-        self.runtime
-            .block_on(self.store.get_range(&path, range))
+        self.block_on(self.store.get_range(&path, range))
             .map(|bytes| bytes.to_vec())
             .map_err(|error| content_error(key, error))
     }
 
     fn head(&self, key: &str) -> Result<u64, ContentStoreError> {
         let path = self.path(key);
-        self.runtime
-            .block_on(self.store.head(&path))
+        self.block_on(self.store.head(&path))
             .map(|meta| meta.size)
             .map_err(|error| content_error(key, error))
     }
@@ -197,8 +211,7 @@ impl ContentObjectStore for UrlObjectStore {
     fn remove(&mut self, key: &str) -> Result<(), ContentStoreError> {
         self.head(key)?;
         let path = self.path(key);
-        self.runtime
-            .block_on(self.store.delete(&path))
+        self.block_on(self.store.delete(&path))
             .map_err(|error| content_error(key, error))
     }
 }

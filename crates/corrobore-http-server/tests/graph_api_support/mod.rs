@@ -51,6 +51,10 @@ pub fn unique_path(name: &str) -> PathBuf {
 }
 
 fn config(storage: Option<&Path>) -> ServerConfig {
+    config_with(storage, &[])
+}
+
+fn config_with(storage: Option<&Path>, extra: &[(&str, &str)]) -> ServerConfig {
     let mut values = HashMap::from([
         ("CORROBORE_HTTP_AUTH_TOKEN".to_owned(), TOKEN.to_owned()),
         (
@@ -69,7 +73,50 @@ fn config(storage: Option<&Path>) -> ServerConfig {
             storage.display().to_string(),
         );
     }
+    for (name, value) in extra {
+        values.insert((*name).to_owned(), (*value).to_owned());
+    }
     ServerConfig::from_map(&values).unwrap()
+}
+
+/// An app configured with extra environment variables, persistent when
+/// `storage` is given.
+pub fn app_with(storage: Option<&Path>, extra: &[(&str, &str)]) -> axum::Router {
+    build_router(AppState::new(config_with(storage, extra)).unwrap())
+}
+
+/// The error `AppState::new` reports for this configuration, if any.
+pub fn app_state_error(storage: Option<&Path>, extra: &[(&str, &str)]) -> Option<String> {
+    AppState::new(config_with(storage, extra))
+        .err()
+        .map(|error| error.to_string())
+}
+
+/// Send raw bytes and return status, headers and the raw body.
+pub async fn send_bytes(
+    app: &axum::Router,
+    token: Option<&str>,
+    method: Method,
+    uri: &str,
+    body: Vec<u8>,
+    headers: &[(&str, &str)],
+) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
+    let mut builder = Request::builder().method(method).uri(uri);
+    if let Some(token) = token {
+        builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+    for (name, value) in headers {
+        builder = builder.header(*name, *value);
+    }
+    let response = app
+        .clone()
+        .oneshot(builder.body(Body::from(body)).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    (status, headers, bytes.to_vec())
 }
 
 pub fn persistent_app(storage: &Path) -> axum::Router {
