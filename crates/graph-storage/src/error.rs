@@ -384,6 +384,35 @@ pub enum GraphStorageError {
         actual: String,
     },
 
+    /// An edit of a batch is not valid; nothing was written.
+    #[error("edit {index} is invalid: {reason}")]
+    GraphEditInvalid {
+        /// Position of the edit in the batch (0 when the batch itself is invalid).
+        index: usize,
+        /// What is wrong.
+        reason: String,
+    },
+
+    /// An edit names a node that is not live at the head it applies to.
+    #[error("node {node_id} is not on branch {branch}")]
+    GraphEditNodeNotFound {
+        /// Branch edited.
+        branch: String,
+        /// Node the edit names.
+        node_id: String,
+    },
+
+    /// An edit would leave the branch inconsistent.
+    #[error("node {node_id} on branch {branch} cannot be deleted: {reason}")]
+    GraphEditBlocked {
+        /// Branch edited.
+        branch: String,
+        /// Node the edit names.
+        node_id: String,
+        /// What has to change first.
+        reason: String,
+    },
+
     /// A revert names a record that does not differ from the merge base.
     #[error("record {record_id} on branch {branch} does not differ from its merge base")]
     GraphRevertNoChange {

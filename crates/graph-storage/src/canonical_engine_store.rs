@@ -64,6 +64,7 @@ use crate::{
 mod branches;
 mod commit_reads;
 mod diff;
+mod edits;
 mod merge;
 mod retention;
 mod revert;
@@ -76,6 +77,7 @@ pub use diff::{
     DiffValues, GraphChangeFeedPage, GraphDiffEntry, GraphDiffPage, GraphDiffTotals,
     RecordChangeKind,
 };
+pub use edits::{GraphEdit, GraphEditReport, GraphEditRequest, MAX_GRAPH_EDITS};
 pub use merge::{
     GraphMergeReport, GraphMergeRequest, MergeConflict, MergeConflictKind, MergeOutcomeKind,
 };
