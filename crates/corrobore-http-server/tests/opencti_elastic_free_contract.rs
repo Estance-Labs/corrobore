@@ -17,12 +17,20 @@ use corrobore_http_server::{AppState, ServerConfig, build_router};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+/// Tests in one process may start within the clock's resolution (about a
+/// microsecond on macOS), so a counter keeps their directories apart (#370).
+static ROOTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 fn unique_root() -> PathBuf {
     let suffix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    std::env::temp_dir().join(format!("corrobore-opencti-elastic-free-{suffix}"))
+    std::env::temp_dir().join(format!(
+        "corrobore-opencti-elastic-free-{}-{suffix}-{}",
+        std::process::id(),
+        ROOTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ))
 }
 
 fn write_request(idempotency_key: &str) -> Value {
