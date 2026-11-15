@@ -3000,6 +3000,25 @@ paths:
             application/json:
               schema: {type: object}
 
+  /v1/graph/schema:
+    get:
+      operationId: getGraphSchema
+      summary: Labels, relationship types and property keys of the records visible at a commit
+      tags: [GraphHistory]
+      parameters:
+        - {name: branch, in: query, schema: {type: string, default: main}}
+        - {name: commit, in: query, schema: {type: string, pattern: '^gc[0-9a-f]{40}$'}}
+      responses:
+        '200':
+          description: >-
+            Labels and relationship types with stable ids, counts, property keys
+            with their value types, and the label pairs each type connects
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
   /v1/graph/records:
     get:
       operationId: listGraphRecords
