@@ -123,6 +123,11 @@ pub fn persistent_app(storage: &Path) -> axum::Router {
     build_router(AppState::new(config(Some(storage))).unwrap())
 }
 
+/// Persistent app with extra environment variables on top of the defaults.
+pub fn persistent_app_with(storage: &Path, extra: &[(&str, &str)]) -> axum::Router {
+    build_router(AppState::new(config_with(Some(storage), extra)).unwrap())
+}
+
 pub fn ephemeral_app() -> axum::Router {
     build_router(AppState::new(config(None)).unwrap())
 }
