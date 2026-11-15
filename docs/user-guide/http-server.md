@@ -279,8 +279,11 @@ Executes a forced read-only request.
 ```
 
 Only `query` is required. In persistent mode, `commit` reads at a graph commit
-and `branch` reads at the head of a branch; both run on a read-only
-projection of that commit, and a write answers `409 GRAPH_COMMIT_READ_ONLY`.
+on a read-only projection, and a write there answers
+`409 GRAPH_COMMIT_READ_ONLY`. `branch` reads or writes the head of a branch: a
+write publishes a commit on that branch only, and answers
+`409 GRAPH_COMMIT_PRECONDITION_FAILED` if another write moved the branch
+between the read and the commit.
 The response then carries `graph_commit_id`, the commit that was read; for
 `main` reads and writes it is the head right after the request.
 
@@ -1103,6 +1106,29 @@ Returns one commit with its `changes`. Each change has `kind` (`node` or
 `relationship`), `record_id`, `version_id`, `deleted`, `labels` (the
 relationship type for a relationship), and `source` and `target` for
 relationships. An unknown or malformed id returns `404 GRAPH_COMMIT_NOT_FOUND`.
+
+### `GET /v1/graph/branches`
+
+Lists branches, `main` first, each with `name`, `head`, `created_from`,
+`created_at`, optional `created_by`, `merged` (the head is reachable from the
+`main` head) and `commits_ahead` (first-parent commits since creation). Branch
+writes keep their record versions in `history/branch_payloads.log`, which the
+canonical catalog never indexes, so they stay off `main` until merged.
+
+### `POST /v1/graph/branches`
+
+Creates a branch from `{name, from_branch?, from_commit?, actor?}`.
+`from_commit` wins over `from_branch`, which defaults to `main`. Names have
+1-128 characters from `[A-Za-z0-9._/-]`, with no leading or trailing `/` and
+no `..`; `main` is reserved. An invalid name returns
+`400 INVALID_BRANCH_NAME`, an existing one `409 GRAPH_BRANCH_CONFLICT`.
+
+### `DELETE /v1/graph/branches/{*name}`
+
+Deletes a branch; the name may contain `/`. A branch whose head `main` does
+not contain is refused with `409 GRAPH_BRANCH_CONFLICT` unless `force=true`.
+`main` cannot be deleted. Commits of a deleted branch stay retained until
+cleanup.
 
 ### `GET /v1/graph/records`
 

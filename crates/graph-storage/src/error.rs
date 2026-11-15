@@ -373,6 +373,17 @@ pub enum GraphStorageError {
         reason: String,
     },
 
+    /// A write expected a branch head that is no longer current.
+    #[error("graph branch {branch} moved: expected head {expected}, found {actual}")]
+    GraphHeadMoved {
+        /// Branch name.
+        branch: String,
+        /// Head the writer read.
+        expected: String,
+        /// Current head.
+        actual: String,
+    },
+
     /// A branch name does not follow the naming rules.
     #[error("invalid graph branch name {branch:?}: {reason}")]
     InvalidGraphBranchName {

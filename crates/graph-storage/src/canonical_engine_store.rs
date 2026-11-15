@@ -61,7 +61,10 @@ use crate::{
     resolve_relationship_ids_by_type,
 };
 
+mod branches;
 mod commit_reads;
+
+pub use branches::GraphBranchStatus;
 
 pub use commit_reads::{
     CommitRecordPage, CommitWindow, NeighbourDirection, NeighbourGroup, NodeNeighbourhood,

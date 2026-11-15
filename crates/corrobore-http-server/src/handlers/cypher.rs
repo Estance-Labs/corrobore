@@ -46,7 +46,8 @@ pub struct ExecuteCypherRequest {
     pub budget_ref: Option<String>,
     /// Read the head of this branch instead of `main` (persistent mode).
     pub branch: Option<String>,
-    /// Read at this graph commit (persistent mode). Pinned reads are read-only.
+    /// Read at this graph commit (persistent mode). Pinned reads are read-only;
+    /// a `branch` without `commit` reads and writes that branch's head.
     pub commit: Option<String>,
 }
 
@@ -101,24 +102,26 @@ fn execute_pinned(
     branch: Option<&str>,
     commit: Option<&str>,
 ) -> Result<(CypherResponse, String), ApiError> {
-    if mode == EngineRequestMode::Mutation {
+    use crate::handlers::graph_history::{canonical_store, map_history_error, parse_commit_id};
+    use crate::pinned_graph::{BranchWriteOutcome, BranchWritePersistence, PinnedGraphPersistence};
+
+    let commit = commit.map(parse_commit_id).transpose()?;
+    if commit.is_some() && mode == EngineRequestMode::Mutation {
         return Err(ApiError {
             status: axum::http::StatusCode::CONFLICT,
             code: "GRAPH_COMMIT_READ_ONLY",
-            message: "reads pinned to a commit or branch head cannot write".to_owned(),
+            message: "reads pinned to a commit cannot write; target a branch head instead"
+                .to_owned(),
         });
     }
-    let commit = commit
-        .map(crate::handlers::graph_history::parse_commit_id)
-        .transpose()?;
-    let store = crate::handlers::graph_history::canonical_store(state)?;
+    let store = canonical_store(state)?;
     let (commit_id, graph) = {
         let mut store = store.lock().map_err(|_| {
             ApiError::internal("STATE_LOCK_FAILED", "canonical store lock poisoned")
         })?;
         let commit_id = store
             .resolve_graph_ref(branch, commit.as_ref())
-            .map_err(crate::handlers::graph_history::map_history_error)?;
+            .map_err(map_history_error)?;
         let projection = crate::app::canonical_projection_for_query(query);
         let graph = store
             .load_commit_projection(&commit_id, &projection)
@@ -127,17 +130,44 @@ fn execute_pinned(
             })?;
         (commit_id, graph)
     };
+    // A branch head (no explicit commit) accepts writes; everything else is a read.
+    let writable_branch = match (commit.as_ref(), branch) {
+        (None, Some(branch)) if mode != EngineRequestMode::ReadOnly => Some(branch.to_owned()),
+        _ => None,
+    };
+    let Some(branch) = writable_branch else {
+        let mut engine = corrobore_engine::CorroboreEngine::builder()
+            .persistence(Box::new(PinnedGraphPersistence::read_only(graph)))
+            .read_only(true)
+            .build()
+            .map_err(map_engine_error)?;
+        let response = engine
+            .execute_request(engine_request)
+            .map_err(map_engine_error)?;
+        return Ok((response, commit_id.to_string()));
+    };
+    let outcome = std::sync::Arc::new(std::sync::Mutex::new(BranchWriteOutcome::default()));
     let mut engine = corrobore_engine::CorroboreEngine::builder()
-        .persistence(Box::new(
-            crate::pinned_graph::PinnedGraphPersistence::read_only(graph),
-        ))
-        .read_only(true)
+        .persistence(Box::new(BranchWritePersistence::new(
+            graph,
+            std::sync::Arc::clone(&store),
+            branch,
+            commit_id.clone(),
+            None,
+            std::sync::Arc::clone(&outcome),
+        )))
         .build()
         .map_err(map_engine_error)?;
-    let response = engine
-        .execute_request(engine_request)
-        .map_err(map_engine_error)?;
-    Ok((response, commit_id.to_string()))
+    let response = engine.execute_request(engine_request);
+    let mut outcome = outcome.lock().map_err(|_| {
+        ApiError::internal("STATE_LOCK_FAILED", "branch write outcome lock poisoned")
+    })?;
+    if let Some(error) = outcome.error.take() {
+        return Err(map_history_error(error));
+    }
+    let response = response.map_err(map_engine_error)?;
+    let head = outcome.commit.take().unwrap_or(commit_id);
+    Ok((response, head.to_string()))
 }
 
 fn canonical_head(state: &AppState) -> Option<String> {

@@ -91,6 +91,17 @@ pub(crate) fn map_history_error(error: GraphStorageError) -> ApiError {
             code: "GRAPH_BRANCH_CONFLICT",
             message: format!("branch {branch}: {reason}"),
         },
+        GraphStorageError::GraphHeadMoved {
+            branch,
+            expected,
+            actual,
+        } => ApiError {
+            status: StatusCode::CONFLICT,
+            code: "GRAPH_COMMIT_PRECONDITION_FAILED",
+            message: format!(
+                "branch {branch} moved from {expected} to {actual}; read the new head and retry"
+            ),
+        },
         GraphStorageError::InvalidGraphBranchName { branch, reason } => ApiError::bad_request(
             "INVALID_BRANCH_NAME",
             format!("branch name {branch:?} is invalid: {reason}"),
