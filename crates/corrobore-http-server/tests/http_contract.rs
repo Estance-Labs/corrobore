@@ -1398,6 +1398,12 @@ async fn opencti_transactional_writes_commit_corrobore_before_verified_reference
                 "CORROBORE_OPENCTI_SHADOW_REFERENCE_VERSION".to_owned(),
                 "opensearch-2.19.2".to_owned(),
             ),
+            // Only the deliberate outage below may count as a retry: a
+            // saturated machine must not turn a healthy delivery into one.
+            (
+                "CORROBORE_OPENCTI_SHADOW_TIMEOUT_MS".to_owned(),
+                "60000".to_owned(),
+            ),
         ]),
     );
 
