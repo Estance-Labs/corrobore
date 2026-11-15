@@ -234,6 +234,11 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
 ### Fixed
 
+- `corrobore server export-snapshot-s3` failed against AWS S3 with
+  `411 Length Required`: empty snapshot files (adjacency logs, index locks)
+  were sent without a body or `Content-Length`. Every `PUT` now states its
+  length; the export, import, validate and restore round trip completes
+  against AWS S3 in eu-west-3 (#380).
 - Cypher parameter arrays were limited to 256 items, so a real model's
   embedding (768 values for `nomic-embed-text`) could not be written through
   Cypher. Typed parameter lists now take up to 8,192 items, the vector index
