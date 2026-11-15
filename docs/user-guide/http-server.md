@@ -287,6 +287,18 @@ between the read and the commit.
 The response then carries `graph_commit_id`, the commit that was read; for
 `main` reads and writes it is the head right after the request.
 
+Writes take an optimistic precondition: send the head you read in the
+`If-Graph-Commit` header (or `expected_commit` in the body). The write commits
+only if the target branch is still at that commit; otherwise it answers
+`409 GRAPH_COMMIT_PRECONDITION_FAILED` and changes nothing. A client therefore
+always knows how a write ended:
+
+- **committed**: `200`, and `graph_commit_id` is the new head;
+- **refused**: a `4xx` with an error code, and nothing was written;
+- **unknown**: the connection failed after the request left. Read the branch
+  head (`GET /v1/graph/commits?limit=1`) before deciding to resend; never
+  resend blindly.
+
 When a real started session id is supplied, the server transitions it through `working`, `processing`, and `idle` (or `degraded` on failure).
 
 The response embeds the typed shared-runtime response, including `status`, `data`, mutation summary, validation errors, warnings, fix hints, budget usage, and audit references when present. `Rejected` and `ValidationFailed` are valid runtime results and can still arrive with HTTP 200; inspect the inner status.

@@ -388,6 +388,9 @@ pub struct TransitionCommitContext {
     pub message: Option<String>,
     /// Extra commit parents: the source head when the transition merges a branch.
     pub merge_parents: Vec<GraphCommitId>,
+    /// Refuse the transition with `GraphHeadMoved` unless `main` is still at
+    /// this commit (optimistic precondition).
+    pub expected_head: Option<GraphCommitId>,
 }
 
 /// Caller metadata recorded on a `main` commit.
@@ -707,7 +710,18 @@ impl CanonicalEngineStore {
             actor,
             message,
             merge_parents,
+            expected_head,
         } = context;
+        if let Some(expected) = expected_head {
+            let head = self.graph_head(MAIN_BRANCH)?;
+            if head != expected {
+                return Err(GraphStorageError::GraphHeadMoved {
+                    branch: MAIN_BRANCH.to_owned(),
+                    expected: expected.to_string(),
+                    actual: head.to_string(),
+                });
+            }
+        }
         audit_events.extend(
             merge_parents
                 .iter()

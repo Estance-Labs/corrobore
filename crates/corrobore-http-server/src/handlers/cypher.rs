@@ -21,7 +21,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use axum::{Json, extract::State};
+use axum::{Json, extract::State, http::HeaderMap};
 use corrobore_engine::{
     CypherResponse, CypherResponseData, CypherValue, EngineError, EngineRequest, EngineRequestMode,
 };
@@ -49,7 +49,13 @@ pub struct ExecuteCypherRequest {
     /// Read at this graph commit (persistent mode). Pinned reads are read-only;
     /// a `branch` without `commit` reads and writes that branch's head.
     pub commit: Option<String>,
+    /// Optimistic precondition: write only if the target branch head is still
+    /// this commit. The `If-Graph-Commit` header takes precedence.
+    pub expected_commit: Option<String>,
 }
+
+/// Header carrying the optimistic write precondition.
+pub const IF_GRAPH_COMMIT: &str = "if-graph-commit";
 
 #[derive(Debug, Serialize)]
 pub struct ExecuteCypherResponse {
@@ -66,10 +72,13 @@ pub struct ExecuteCypherResponse {
 enum ReadTarget {
     /// The canonical engine on `main`.
     Canonical,
+    /// A `main` write conditioned on the head the caller read.
+    ConditionalMain { expected: String },
     /// A one-shot read of a commit or branch head.
     Pinned {
         branch: Option<String>,
         commit: Option<String>,
+        expected: Option<String>,
     },
 }
 
@@ -84,12 +93,22 @@ fn read_target(payload: &ExecuteCypherRequest) -> ReadTarget {
         .as_deref()
         .map(str::trim)
         .filter(|commit| !commit.is_empty());
+    let expected = payload
+        .expected_commit
+        .as_deref()
+        .map(str::trim)
+        .filter(|expected| !expected.is_empty())
+        .map(str::to_owned);
     if commit.is_none() && branch.is_none_or(|branch| branch == graph_storage::MAIN_BRANCH) {
-        ReadTarget::Canonical
+        match expected {
+            Some(expected) => ReadTarget::ConditionalMain { expected },
+            None => ReadTarget::Canonical,
+        }
     } else {
         ReadTarget::Pinned {
             branch: branch.map(str::to_owned),
             commit: commit.map(str::to_owned),
+            expected,
         }
     }
 }
@@ -101,6 +120,7 @@ fn execute_pinned(
     mode: EngineRequestMode,
     branch: Option<&str>,
     commit: Option<&str>,
+    expected: Option<&str>,
 ) -> Result<(CypherResponse, String), ApiError> {
     use crate::handlers::graph_history::{canonical_store, map_history_error, parse_commit_id};
     use crate::pinned_graph::{BranchWriteOutcome, BranchWritePersistence, PinnedGraphPersistence};
@@ -122,6 +142,17 @@ fn execute_pinned(
         let commit_id = store
             .resolve_graph_ref(branch, commit.as_ref())
             .map_err(map_history_error)?;
+        if let (None, Some(expected)) = (commit.as_ref(), expected)
+            && expected != commit_id.as_str()
+        {
+            return Err(map_history_error(
+                graph_storage::GraphStorageError::GraphHeadMoved {
+                    branch: branch.unwrap_or(graph_storage::MAIN_BRANCH).to_owned(),
+                    expected: expected.to_owned(),
+                    actual: commit_id.to_string(),
+                },
+            ));
+        }
         let projection = crate::app::canonical_projection_for_query(query);
         let graph = store
             .load_commit_projection(&commit_id, &projection)
@@ -170,6 +201,62 @@ fn execute_pinned(
     Ok((response, head.to_string()))
 }
 
+fn execute_conditional_main(
+    state: &AppState,
+    engine_request: EngineRequest,
+    query: &str,
+    expected: &str,
+) -> Result<(CypherResponse, String), ApiError> {
+    use crate::handlers::graph_history::{canonical_store, map_history_error, parse_commit_id};
+    use crate::pinned_graph::{BranchWriteOutcome, ConditionalMainPersistence};
+
+    let expected = parse_commit_id(expected)?;
+    let store = canonical_store(state)?;
+    let graph = {
+        let mut locked = store.lock().map_err(|_| {
+            ApiError::internal("STATE_LOCK_FAILED", "canonical store lock poisoned")
+        })?;
+        let head = locked
+            .graph_head(graph_storage::MAIN_BRANCH)
+            .map_err(map_history_error)?;
+        if head != expected {
+            return Err(map_history_error(
+                graph_storage::GraphStorageError::GraphHeadMoved {
+                    branch: graph_storage::MAIN_BRANCH.to_owned(),
+                    expected: expected.to_string(),
+                    actual: head.to_string(),
+                },
+            ));
+        }
+        locked
+            .load_projection(crate::app::canonical_projection_for_query(query))
+            .map_err(|error| ApiError::bad_request("COMMIT_PROJECTION_FAILED", error.to_string()))?
+    };
+    let outcome = std::sync::Arc::new(std::sync::Mutex::new(BranchWriteOutcome::default()));
+    let mut engine = corrobore_engine::CorroboreEngine::builder()
+        .persistence(Box::new(ConditionalMainPersistence::new(
+            graph,
+            std::sync::Arc::clone(&store),
+            expected.clone(),
+            std::sync::Arc::clone(&outcome),
+        )))
+        .build()
+        .map_err(map_engine_error)?;
+    let response = engine.execute_request(engine_request);
+    let mut outcome = outcome.lock().map_err(|_| {
+        ApiError::internal(
+            "STATE_LOCK_FAILED",
+            "conditional write outcome lock poisoned",
+        )
+    })?;
+    if let Some(error) = outcome.error.take() {
+        return Err(map_history_error(error));
+    }
+    let response = response.map_err(map_engine_error)?;
+    let head = outcome.commit.take().unwrap_or(expected);
+    Ok((response, head.to_string()))
+}
+
 fn canonical_head(state: &AppState) -> Option<String> {
     let store = crate::handlers::graph_history::canonical_store(state).ok()?;
     let mut store = store.lock().ok()?;
@@ -181,23 +268,57 @@ fn canonical_head(state: &AppState) -> Option<String> {
 
 pub async fn execute_cypher(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(payload): Json<ExecuteCypherRequest>,
 ) -> Result<Json<ExecuteCypherResponse>, ApiError> {
-    execute_cypher_inner(state, payload, None).await
+    execute_cypher_inner(state, with_precondition(&headers, payload)?, None).await
 }
 
 pub async fn execute_read_cypher(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(payload): Json<ExecuteCypherRequest>,
 ) -> Result<Json<ExecuteCypherResponse>, ApiError> {
-    execute_cypher_inner(state, payload, Some(EngineRequestMode::ReadOnly)).await
+    execute_cypher_inner(
+        state,
+        with_precondition(&headers, payload)?,
+        Some(EngineRequestMode::ReadOnly),
+    )
+    .await
 }
 
 pub async fn execute_write_cypher(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(payload): Json<ExecuteCypherRequest>,
 ) -> Result<Json<ExecuteCypherResponse>, ApiError> {
-    execute_cypher_inner(state, payload, Some(EngineRequestMode::Mutation)).await
+    execute_cypher_inner(
+        state,
+        with_precondition(&headers, payload)?,
+        Some(EngineRequestMode::Mutation),
+    )
+    .await
+}
+
+fn with_precondition(
+    headers: &HeaderMap,
+    mut payload: ExecuteCypherRequest,
+) -> Result<ExecuteCypherRequest, ApiError> {
+    if let Some(value) = headers.get(IF_GRAPH_COMMIT) {
+        let value = value.to_str().map_err(|_| {
+            ApiError::bad_request("INVALID_PRECONDITION", "If-Graph-Commit must be ASCII")
+        })?;
+        payload.expected_commit = Some(value.trim().to_owned());
+    }
+    if let Some(expected) = payload.expected_commit.as_deref() {
+        graph_storage::GraphCommitId::new(expected).map_err(|_| {
+            ApiError::bad_request(
+                "INVALID_PRECONDITION",
+                format!("expected commit {expected:?} is not a commit id"),
+            )
+        })?;
+    }
+    Ok(payload)
 }
 
 async fn execute_cypher_inner(
@@ -271,15 +392,33 @@ async fn execute_cypher_inner(
             let execution_result = tokio::time::timeout(
                 timeout,
                 tokio::task::spawn_blocking(move || match &target {
-                    ReadTarget::Pinned { branch, commit } => execute_pinned(
+                    ReadTarget::Pinned {
+                        branch,
+                        commit,
+                        expected,
+                    } => execute_pinned(
                         &blocking_state,
                         engine_request,
                         &query_text,
                         requested_mode,
                         branch.as_deref(),
                         commit.as_deref(),
+                        expected.as_deref(),
                     )
                     .map(|(response, commit_id)| (response, Some(commit_id))),
+                    ReadTarget::ConditionalMain { expected } => {
+                        // Serialize with unconditional main writes on the shared engine.
+                        let _engine = engine.lock().map_err(|_| {
+                            ApiError::internal("STATE_LOCK_FAILED", "engine lock poisoned")
+                        })?;
+                        execute_conditional_main(
+                            &blocking_state,
+                            engine_request,
+                            &query_text,
+                            expected,
+                        )
+                        .map(|(response, commit_id)| (response, Some(commit_id)))
+                    }
                     ReadTarget::Canonical => {
                         let response = {
                             let mut locked = engine.lock().map_err(|_| {

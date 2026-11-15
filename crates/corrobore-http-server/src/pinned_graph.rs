@@ -145,3 +145,84 @@ impl EnginePersistence for BranchWritePersistence {
         }
     }
 }
+
+/// Engine persistence for a `main` write conditioned on the head it read:
+/// the canonical WAL transaction is refused when `main` moved meanwhile.
+#[derive(Debug)]
+pub(crate) struct ConditionalMainPersistence {
+    graph: Graph,
+    store: Arc<Mutex<CanonicalEngineStore>>,
+    expected_head: GraphCommitId,
+    outcome: Arc<Mutex<BranchWriteOutcome>>,
+}
+
+impl ConditionalMainPersistence {
+    /// Wrap the `main` projection a conditional write executes on.
+    pub(crate) fn new(
+        graph: Graph,
+        store: Arc<Mutex<CanonicalEngineStore>>,
+        expected_head: GraphCommitId,
+        outcome: Arc<Mutex<BranchWriteOutcome>>,
+    ) -> Self {
+        Self {
+            graph,
+            store,
+            expected_head,
+            outcome,
+        }
+    }
+}
+
+impl EnginePersistence for ConditionalMainPersistence {
+    fn load_graph(&self) -> Result<Graph, String> {
+        Ok(self.graph.clone())
+    }
+
+    fn persist_graph(&mut self, _graph: &Graph) -> Result<(), String> {
+        Err("conditional writes are published as graph transitions".to_owned())
+    }
+
+    fn persist_graph_transition(
+        &mut self,
+        previous: &Graph,
+        current: &Graph,
+    ) -> Result<(), String> {
+        let transaction_id = graph_storage::DurableTransactionId::new(format!(
+            "tx--conditional-{}",
+            uuid::Uuid::new_v4()
+        ))
+        .map_err(|error| error.to_string())?;
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "canonical store lock poisoned".to_owned())?;
+        let result = store
+            .commit_transition_with_context(
+                previous,
+                current,
+                transaction_id,
+                TransitionCommitContext {
+                    expected_head: Some(self.expected_head.clone()),
+                    ..TransitionCommitContext::default()
+                },
+                None,
+            )
+            .and_then(|_| store.graph_head(graph_storage::MAIN_BRANCH));
+        let mut outcome = self
+            .outcome
+            .lock()
+            .map_err(|_| "conditional write outcome lock poisoned".to_owned())?;
+        match result {
+            Ok(head) => {
+                self.expected_head = head.clone();
+                outcome.commit = Some(head);
+                Ok(())
+            }
+            Err(error) => {
+                let message = error.to_string();
+                outcome.error = Some(error);
+                Err(message)
+            }
+        }
+    }
+}
