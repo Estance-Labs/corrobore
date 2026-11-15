@@ -484,3 +484,27 @@ fn merge_refuses_a_moved_target_and_self_merges() {
 
     let _ = fs::remove_dir_all(root.path());
 }
+
+#[test]
+fn deleting_the_same_record_on_both_sides_is_not_a_conflict() {
+    let root = empty_store("both-deleted");
+    let mut store = open(&root);
+    let shared = write_main(&mut store, "tx--issue-321-bd-a", "shared");
+    let kept = write_main(&mut store, "tx--issue-321-bd-b", "kept");
+    store
+        .create_graph_branch("draft", None, None, None)
+        .unwrap();
+    change_branch(&mut store, "draft", |graph| {
+        graph.tombstone_node(&shared).unwrap();
+        rename(graph, &kept, "kept-on-branch");
+    });
+    update_main(&mut store, "tx--issue-321-bd-c", |graph| {
+        graph.tombstone_node(&shared).unwrap();
+    });
+
+    let report = merge(&mut store, "draft", false);
+    assert_eq!(report.outcome, MergeOutcomeKind::Merged, "{report:?}");
+    assert_eq!(main_names(&mut store), vec!["kept-on-branch".to_owned()]);
+
+    let _ = fs::remove_dir_all(root.path());
+}
