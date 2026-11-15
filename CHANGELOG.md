@@ -165,6 +165,13 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   `remove_property`, so a patch can drop keys while keeping the node's other
   fields and its version history.
 
+- **Natural-language compile route (#353).** `POST /v1/nlq/compile` exposes
+  the `corrobore-nlq` template compiler: a French or English request becomes
+  one `nlq/v1` action, validated against the trust boundary the request sets
+  (allowed evidence, `allow_writes`) and returned with its kind and canonical
+  form. Nothing is executed; the caller runs the action through the routes it
+  already uses.
+
 - **Approximate vector search with HNSW (#342).** `HnswVectorIndex` implements
   `VectorIndex` with a deterministic Hierarchical Navigable Small World graph:
   layers are seeded from the record id, removals are tombstoned and the graph
