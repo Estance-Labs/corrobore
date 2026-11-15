@@ -23,6 +23,16 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   `GET /v1/graph/commits` and `GET /v1/graph/commits/{commit_id}`. Snapshots
   and restores carry the history.
 
+- **Commit-pinned reads (#318).** `POST /v1/cypher/read` and `/execute` accept
+  `commit` or `branch` and run on a read-only projection of that commit;
+  Cypher responses carry `graph_commit_id`. In persistent mode the explorer
+  graph now reads a commit: the boundary's transaction, the newest commit at a
+  timeshot's time, an explicit `commit`, or the `main` head. Previously it
+  projected whatever graph the last request had paged in, and echoed the
+  boundary without applying it. New routes `GET /v1/graph/records` (typed
+  keyset pages pinned to a commit) and `GET /v1/graph/nodes/{node_id}`
+  (relationship groups with neighbours).
+
 ### Removed
 
 - **Breaking:** the enterprise edition and its license gate leave Corrobore,

@@ -278,7 +278,13 @@ Executes a forced read-only request.
 }
 ```
 
-Only `query` is required. When a real started session id is supplied, the server transitions it through `working`, `processing`, and `idle` (or `degraded` on failure).
+Only `query` is required. In persistent mode, `commit` reads at a graph commit
+and `branch` reads at the head of a branch; both run on a read-only
+projection of that commit, and a write answers `409 GRAPH_COMMIT_READ_ONLY`.
+The response then carries `graph_commit_id`, the commit that was read; for
+`main` reads and writes it is the head right after the request.
+
+When a real started session id is supplied, the server transitions it through `working`, `processing`, and `idle` (or `degraded` on failure).
 
 The response embeds the typed shared-runtime response, including `status`, `data`, mutation summary, validation errors, warnings, fix hints, budget usage, and audit references when present. `Rejected` and `ValidationFailed` are valid runtime results and can still arrive with HTTP 200; inspect the inner status.
 
@@ -1054,6 +1060,13 @@ defaults to `current`; `snapshot` and `timeshot` require `boundary_id`. Optional
 budgets are `max_nodes`, `max_relationships`, `max_properties_per_record`,
 `max_payload_bytes`, and `max_computation_units`.
 
+In persistent mode the projection reads a graph commit and the response carries
+`graph_commit_id`. An explicit `commit` query parameter wins. Otherwise a
+snapshot or timeshot anchored to a transaction reads the commit that recorded
+it, a timeshot without one reads the newest `main` commit at its time, and
+`current` reads the `main` head. `omitted_nodes` and `omitted_relationships`
+count against the commit's totals.
+
 Unknown sessions return `SESSION_NOT_FOUND`. Unknown, wrong-kind, and
 cross-session boundaries all return the leak-safe `TEMPORAL_BOUNDARY_NOT_FOUND`.
 Invalid selections return `INVALID_TEMPORAL_BOUNDARY`; invalid budgets return
@@ -1090,6 +1103,25 @@ Returns one commit with its `changes`. Each change has `kind` (`node` or
 `relationship`), `record_id`, `version_id`, `deleted`, `labels` (the
 relationship type for a relationship), and `source` and `target` for
 relationships. An unknown or malformed id returns `404 GRAPH_COMMIT_NOT_FOUND`.
+
+### `GET /v1/graph/records`
+
+Pages the records visible at a commit in record-id order. The read target is
+`commit`, else the head of `branch`, else the `main` head. `kind` is `node`
+(default) or `relationship`; `label` filters node labels or the relationship
+type; `cursor` is the last id of the previous page; `limit` is 1-1000
+(default 100); `include_deleted=true` adds tombstoned versions. The result
+holds `commit_id`, `kind`, `total` (records matching at that commit), `nodes`
+or `relationships`, and `next_cursor`. Pages read the same commit however many
+writes land in between. Properties are plain JSON values.
+
+### `GET /v1/graph/nodes/{node_id}`
+
+Returns a node at a commit with its relationship groups. Each group has
+`type`, `direction` (`outgoing` or `incoming`), `count`, and up to
+`group_limit` items (0-200, default 8), each with the relationship and the
+neighbour node. A node not visible at that commit returns
+`404 GRAPH_NODE_NOT_FOUND`.
 
 ## Explorer frontend split
 
