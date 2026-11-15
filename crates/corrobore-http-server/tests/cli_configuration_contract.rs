@@ -1,6 +1,8 @@
 // Copyright (c) 2026 AreDee-Bangs
 // SPDX-License-Identifier: MIT
 
+mod process_support;
+
 use std::{
     collections::HashMap,
     fs,
@@ -279,21 +281,16 @@ fn valid_toml_starts_a_foreground_server_listener() {
         .spawn()
         .expect("server should spawn");
 
-    let mut listening = false;
-    for _ in 0..50 {
+    let listening = process_support::poll_until(|| {
         if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            listening = true;
-            break;
+            return Some(true);
         }
-        if child
+        child
             .try_wait()
             .expect("server status should be readable")
-            .is_some()
-        {
-            break;
-        }
-        thread::sleep(Duration::from_millis(40));
-    }
+            .map(|_| false)
+    })
+    .unwrap_or(false);
     let _ = child.kill();
     let output = child
         .wait_with_output()

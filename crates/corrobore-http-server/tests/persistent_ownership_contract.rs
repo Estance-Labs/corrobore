@@ -1,14 +1,15 @@
 // Copyright (c) 2026 AreDee-Bangs
 // SPDX-License-Identifier: MIT
 
+mod process_support;
+
 use std::{
     collections::HashMap,
     fs,
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
-    thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use corrobore_http_server::{AppState, RuntimeStoreProvider, ServerConfig};
@@ -93,39 +94,28 @@ fn spawn_server(storage_dir: &Path, runtime_dir: &Path, port: u16) -> Child {
 }
 
 fn wait_for_listener(child: &mut Child, port: u16) -> bool {
-    for _ in 0..75 {
+    process_support::poll_until(|| {
         if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return true;
+            return Some(true);
         }
-        if child
+        child
             .try_wait()
             .expect("server status should be readable")
-            .is_some()
-        {
-            return false;
-        }
-        thread::sleep(Duration::from_millis(40));
-    }
-    false
+            .map(|_| false)
+    })
+    .unwrap_or(false)
 }
 
 fn wait_for_exit(mut child: Child) -> Output {
-    for _ in 0..75 {
-        if child
-            .try_wait()
-            .expect("server status should be readable")
-            .is_some()
-        {
-            return child
-                .wait_with_output()
-                .expect("server output should be collected");
-        }
-        thread::sleep(Duration::from_millis(40));
+    let exited =
+        process_support::poll_until(|| child.try_wait().expect("server status should be readable"))
+            .is_some();
+    if !exited {
+        let _ = child.kill();
     }
-    let _ = child.kill();
     child
         .wait_with_output()
-        .expect("timed-out server output should be collected")
+        .expect("server output should be collected")
 }
 
 #[test]

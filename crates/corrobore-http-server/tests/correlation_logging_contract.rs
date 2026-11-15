@@ -3,14 +3,15 @@
 
 #![cfg(unix)]
 
+mod process_support;
+
 use std::{
     fs,
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     path::PathBuf,
     process::{Child, Command, Stdio},
-    thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 const CORRELATION_ID: &str = "operator-probe-20";
@@ -34,9 +35,9 @@ fn reserve_port() -> u16 {
 }
 
 fn wait_for_listener(child: &mut Child, port: u16) {
-    for _ in 0..100 {
+    let listening = process_support::poll_until(|| {
         if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return;
+            return Some(());
         }
         assert!(
             child
@@ -45,9 +46,9 @@ fn wait_for_listener(child: &mut Child, port: u16) {
                 .is_none(),
             "server exited before listening"
         );
-        thread::sleep(Duration::from_millis(40));
-    }
-    panic!("server did not start listening");
+        None
+    });
+    assert!(listening.is_some(), "server did not start listening");
 }
 
 #[test]
