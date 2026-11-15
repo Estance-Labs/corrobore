@@ -10,7 +10,13 @@ version = 2
 # a warning: the only current hit is `spin 0.9.8` pulled transitively through
 # axum 0.7 -> multer, which is removed by the axum 0.8 upgrade batch (#240).
 yanked = "warn"
-ignore = []
+ignore = [
+    # `paste` is unmaintained, not vulnerable (RUSTSEC-2024-0436). It is a
+    # compile-time proc-macro that Lance's bit-packing and encoding crates use;
+    # it never runs in a Corrobore binary. Revisit when Lance drops it
+    # (issue #392, Lance cold tier).
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained compile-time proc-macro used by lance 14; no vulnerability" },
+]
 
 [licenses]
 version = 2
@@ -28,6 +34,9 @@ allow = [
     "MPL-2.0",
     "CC0-1.0",
     "CDLA-Permissive-2.0",
+    # Boost Software License 1.0: permissive, OSI-approved; `xxhash-rust`,
+    # used by Lance for the cold tier (issue #392).
+    "BSL-1.0",
 ]
 confidence-threshold = 0.8
 

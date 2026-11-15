@@ -145,6 +145,9 @@ Application errors use the JSON envelope above. Transport middleware can reject 
 | `CORROBORE_HTTP_OAUTH_SCOPES` | unset | Scopes advertised in the resource metadata, space- or comma-separated. |
 | `CORROBORE_HTTP_OAUTH_CLIENT_IDS` | unset | Only tokens issued to these clients are accepted. |
 | `CORROBORE_HTTP_OAUTH_JWKS_MIN_REFRESH_SECONDS` | `30` | Shortest pause between two key-set fetches caused by an unknown key id. |
+| `CORROBORE_STORAGE_COLD_TIER_URL` | unset | Lance cold tier for pruned history (builds with `lance-cold-tier`); see [Lance cold tier](#lance-cold-tier). |
+| `CORROBORE_STORAGE_COLD_TIER_ENDPOINT` | unset | S3-compatible endpoint of the cold tier. |
+| `CORROBORE_STORAGE_COLD_TIER_ALLOW_HTTP` | `false` | Allow a plain-HTTP cold tier endpoint. |
 | `CORROBORE_HTTP_POLICY_FILE` | unset | YAML graph policy deciding what each actor may do; see [Graph policy](#graph-policy). |
 | `CORROBORE_HTTP_POLICY_SHARED_TOKEN_ACTOR` | unset | Actor the shared `CORROBORE_HTTP_AUTH_TOKEN` stands for under a policy; without it that token is denied. |
 | `CORROBORE_MEMORY_WORKSPACE_ID` | `workspace--standalone-default` | Trusted workspace for high-level memory operations; clients cannot override it in JSON. |
@@ -678,6 +681,24 @@ Reports `configured`, `model` and `max_tokens`, so a client shows its model feat
 ```
 
 `messages` holds 1 to 64 messages (`system`, `user`, `assistant`, the last from the user) and at most 200,000 characters. `json: true` asks for a JSON object and refuses any other answer. The answer is `{text, model, prompt_tokens, completion_tokens, finish_reason}`. Without a model the route answers 404 `MODEL_NOT_CONFIGURED`; a provider error answers 502 `MODEL_PROVIDER_FAILED` with the provider's message, and a slow provider 504 `MODEL_TIMEOUT`. The request and the answer are not logged.
+
+### Lance cold tier
+
+Builds with the `lance-cold-tier` feature (`cargo build --release --features corrobore-http-server/lance-cold-tier`) can keep the history that retention prunes in [Lance](https://lance.org) datasets instead of dropping it (ADR-0023 in the project documents). Set `CORROBORE_STORAGE_COLD_TIER_URL` to a local path, a `file://` URL or an `s3://bucket/prefix` URL. For an S3-compatible service other than AWS, set `CORROBORE_STORAGE_COLD_TIER_ENDPOINT` (and `CORROBORE_STORAGE_COLD_TIER_ALLOW_HTTP=true` for a plain-HTTP endpoint); credentials and region come from the standard AWS environment. A build without the feature refuses these settings at startup.
+
+With a cold tier, `POST /v1/admin/storage/cleanup` and `corrobore server cleanup` first archive the `main` commits they are about to prune, then prune them, under one hold of the store so the archive receives exactly what leaves the hot store. The answer gains a `cold_tier` object (`uri`, `archived`, `already_archived`, `node_rows`, `relationship_rows`). An archive that fails stops the cleanup before anything is pruned; repeating it archives only what is missing.
+
+Archived commits stay readable:
+
+- `GET /v1/graph/commits/{commit_id}` answers a pruned commit from the archive, with `archived: true` and no change list.
+- `POST /v1/cypher/read` (and `execute` in read mode) with a pruned `commit` runs on the archived view.
+- `GET /v1/graph/cold/commits` lists the archived commits, oldest first, and says whether a cold tier is configured.
+
+### `GET /v1/graph/cold/commits`
+
+Archived commits (`commit_id`, `branch`, `generation`, `parents`, `actor`, `message`, `created_at`), oldest first, with `configured: false` and no commits on a server without a cold tier. It needs `read`.
+
+The archive holds three datasets: `commits.lance`, `nodes.lance` and `relationships.lance`. Each record version is stored once per archive run, as JSON, with the ordinals of the first and last commit of the run that show it. Each run starts with every record of its first commit, so a commit is read from its own run alone. The commit rows are written last; record rows of a run that never wrote its commits are ignored. Branch commits other than `main` are pruned without being archived.
 
 ## Content plane
 

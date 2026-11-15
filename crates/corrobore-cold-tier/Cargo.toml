@@ -1,0 +1,25 @@
+[package]
+name = "corrobore-cold-tier"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description = "Lance cold tier for Corrobore graph history pruned by retention"
+
+[dependencies]
+futures = "0.3"
+graph-core = { path = "../graph-core" }
+lance = { version = "=14.0.3", default-features = false, features = ["aws"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[lints]
+workspace = true

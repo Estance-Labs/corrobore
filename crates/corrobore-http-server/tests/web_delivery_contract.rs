@@ -89,6 +89,7 @@ fn config(web_dir: Option<String>) -> ServerConfig {
         policy_file: None,
         policy_shared_token_actor: None,
         model: None,
+        cold_tier: None,
     }
 }
 

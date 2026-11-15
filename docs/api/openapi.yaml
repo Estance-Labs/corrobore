@@ -1743,6 +1743,19 @@ paths:
         '502': {description: MODEL_PROVIDER_FAILED}
         '504': {description: MODEL_TIMEOUT}
 
+  /v1/graph/cold/commits:
+    get:
+      operationId: listColdCommits
+      summary: Commits archived in the Lance cold tier (issue 392)
+      tags: [Graph]
+      responses:
+        '200':
+          description: configured and the archived commits, oldest first
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
   /v1/whoami:
     get:
       operationId: whoAmI

@@ -93,7 +93,7 @@ pub async fn cleanup_history(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<HistoryCleanupBody>,
-) -> Result<Json<DatabaseOperationResponse<graph_storage::HistoryCleanupReport>>, ApiError> {
+) -> Result<Json<DatabaseOperationResponse<crate::cold_tier::CleanupOutcome>>, ApiError> {
     crate::auth::require_admin_or_policy(
         &state,
         &headers,
@@ -105,10 +105,11 @@ pub async fn cleanup_history(
         keep_seconds: body.keep_seconds,
         dry_run: body.dry_run,
     };
+    // With a cold tier, what is pruned is archived first (issue #392).
+    let cold = state.cold_tier.clone();
     let result = crate::handlers::graph_history::with_store(&state, move |store| {
-        store.cleanup_graph_history(&request).map_err(|error| {
-            ApiError::service_unavailable("DATABASE_OPERATION_FAILED", error.to_string())
-        })
+        crate::cold_tier::cleanup(cold.as_ref(), store, &request)
+            .map_err(|error| ApiError::service_unavailable("DATABASE_OPERATION_FAILED", error))
     })
     .await?;
     Ok(Json(DatabaseOperationResponse { ok: true, result }))

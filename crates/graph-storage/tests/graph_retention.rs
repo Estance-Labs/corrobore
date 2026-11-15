@@ -369,3 +369,49 @@ fn retention_keeps_the_merge_base_of_live_branches() {
 
     let _ = fs::remove_dir_all(root.path());
 }
+
+#[test]
+fn the_commits_a_cleanup_prunes_are_listed_oldest_first() {
+    // Issue #392: a cold tier archives exactly these before they go.
+    let root = empty_store("pruned-list");
+    let mut store = open(&root);
+    for index in 0..8 {
+        write_main(
+            &mut store,
+            &format!("tx--cold-w{index}"),
+            &format!("n{index}"),
+        );
+    }
+    store
+        .create_graph_branch("drafts", None, None, None)
+        .unwrap();
+    write_branch(&mut store, "drafts", "draft");
+    let before = ids(&mut store, MAIN_BRANCH);
+    let request = HistoryCleanupRequest {
+        keep_commits: 3,
+        keep_seconds: None,
+        dry_run: false,
+    };
+    let listed: Vec<GraphCommitId> = store
+        .retention_pruned_commits(&request)
+        .unwrap()
+        .iter()
+        .map(|commit| commit.commit_id.clone())
+        .collect();
+    // Still readable until the cleanup runs.
+    for commit in &listed {
+        assert!(store.graph_commit(commit).is_ok());
+    }
+    let report = store.cleanup_graph_history(&request).unwrap();
+    assert_eq!(report.pruned_commits, listed.len());
+    // Exactly the main commits that are gone after the cleanup, oldest first.
+    let gone: Vec<GraphCommitId> = before
+        .iter()
+        .rev()
+        .filter(|commit| store.graph_commit(commit).is_err())
+        .cloned()
+        .collect();
+    assert_eq!(listed, gone);
+    assert!(listed.len() >= 5, "{listed:?}");
+    let _ = fs::remove_dir_all(root.path());
+}

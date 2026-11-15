@@ -27,6 +27,7 @@ base64 = "0.23"
 chrono = { workspace = true }
 clap = { workspace = true }
 corrobore-engine = { path = "../corrobore-engine" }
+corrobore-cold-tier = { path = "../corrobore-cold-tier", optional = true }
 cypher-parser = { path = "../cypher-parser" }
 cypher-planner = { path = "../cypher-planner" }
 storage-interchange = { path = "../storage-interchange" }
@@ -65,6 +66,10 @@ toml = { workspace = true }
 uuid = { workspace = true }
 x509-parser = { workspace = true }
 yaml_serde = "0.10.7"
+
+[features]
+# Lance cold tier for pruned graph history (issue #392, ADR-0023).
+lance-cold-tier = ["dep:corrobore-cold-tier"]
 
 [dev-dependencies]
 http-body-util = { workspace = true }

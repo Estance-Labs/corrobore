@@ -402,6 +402,7 @@ pub async fn changes(
                             target: change.target.clone(),
                         })
                         .collect(),
+                    archived: false,
                 })
                 .collect(),
             next_cursor: page.next_cursor.map(|cursor| cursor.to_string()),
