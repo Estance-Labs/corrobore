@@ -175,6 +175,9 @@ pub fn routes() -> Vec<RouteRule> {
         route!(GET "/v1/cluster/status" => ConfigManage, GraphWide),
         route!(GET "/v1/queries" => Read, GraphWide),
         route!(POST "/v1/queries/{name}" => InvokeQuery, Handler),
+        // The server's chat model.
+        route!(GET "/v1/model" => Read, GraphWide),
+        route!(POST "/v1/model/complete" => ModelCall, GraphWide),
     ]
 }
 

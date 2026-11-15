@@ -88,6 +88,7 @@ fn config(web_dir: Option<String>) -> ServerConfig {
         identity: Default::default(),
         policy_file: None,
         policy_shared_token_actor: None,
+        model: None,
     }
 }
 

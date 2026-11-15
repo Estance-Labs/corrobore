@@ -1203,6 +1203,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/cluster/deployments", post(crate::cluster_api::deploy))
         .route("/v1/cluster/status", get(crate::cluster_api::status))
         .route("/v1/queries", get(crate::cluster_api::list_queries))
+        .route("/v1/model", get(crate::model::status))
+        .route("/v1/model/complete", post(crate::model::complete))
         .route("/v1/queries/{name}", post(crate::cluster_api::invoke))
         .route("/v1/cypher/execute", post(execute_cypher))
         .route("/v1/cypher/read", post(execute_read_cypher))
