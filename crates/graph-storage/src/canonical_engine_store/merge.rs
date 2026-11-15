@@ -334,6 +334,7 @@ impl CanonicalEngineStore {
                 actor,
                 message,
                 merge_parents: vec![report.source_head.clone()],
+                expected_head: Some(report.target_head.clone()),
             },
             None,
         )?;

@@ -265,6 +265,13 @@ components:
           description: >-
             Read at this graph commit. Persistent mode only. Pinned reads are
             read-only and a write answers 409 GRAPH_COMMIT_READ_ONLY.
+        expected_commit:
+          type: string
+          pattern: '^gc[0-9a-f]{40}$'
+          description: >-
+            Optimistic precondition: write only if the target branch head is
+            still this commit, else 409 GRAPH_COMMIT_PRECONDITION_FAILED. The
+            If-Graph-Commit header takes precedence.
     CypherEnvelope:
       type: object
       required: [ok, result]
@@ -1624,6 +1631,8 @@ paths:
       operationId: executeCypherWrite
       summary: Execute a forced mutation Cypher request
       tags: [Cypher]
+      parameters:
+        - {name: If-Graph-Commit, in: header, description: Optimistic write precondition (the head the caller read), schema: {type: string, pattern: '^gc[0-9a-f]{40}$'}}
       requestBody:
         required: true
         content:
@@ -1635,6 +1644,11 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/CypherEnvelope'}
+        '409':
+          description: GRAPH_COMMIT_PRECONDITION_FAILED or GRAPH_COMMIT_READ_ONLY
+          content:
+            application/json:
+              schema: {type: object}
         '401': {$ref: '#/components/responses/Unauthorized'}
 
   /v1/cypher/execute:
@@ -1642,6 +1656,8 @@ paths:
       operationId: executeCypher
       summary: Execute Cypher with explicit or automatic mode
       tags: [Cypher]
+      parameters:
+        - {name: If-Graph-Commit, in: header, description: Optimistic write precondition (the head the caller read), schema: {type: string, pattern: '^gc[0-9a-f]{40}$'}}
       requestBody:
         required: true
         content:
@@ -1653,6 +1669,11 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/CypherEnvelope'}
+        '409':
+          description: GRAPH_COMMIT_PRECONDITION_FAILED or GRAPH_COMMIT_READ_ONLY
+          content:
+            application/json:
+              schema: {type: object}
         '401': {$ref: '#/components/responses/Unauthorized'}
 
   /v1/seed/search:

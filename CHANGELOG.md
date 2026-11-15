@@ -59,6 +59,13 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   into `main` go through the canonical WAL and keep the source head as a
   second parent, also when the commit is republished from the journals.
 
+- **Optimistic write preconditions (#322).** Cypher writes accept the
+  `If-Graph-Commit` header or `expected_commit` and commit only if the target
+  branch (`main` or a branch head) is still at that commit; otherwise
+  `409 GRAPH_COMMIT_PRECONDITION_FAILED`, with nothing written. Merges into
+  `main` check the target head inside the WAL transaction, so a write that
+  lands between the merge plan and its commit is refused, not overwritten.
+
 ### Removed
 
 - **Breaking:** the enterprise edition and its license gate leave Corrobore,
