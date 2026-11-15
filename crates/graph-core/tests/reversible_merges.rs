@@ -246,6 +246,27 @@ fn invalid_undo_or_non_merge_never_changes_state() {
     );
 }
 
+/// JSON with object keys sorted, so equal property maps give equal strings
+/// whatever order the map iterates in (issue #385).
+fn canonical_json<T: serde::Serialize>(value: &T) -> String {
+    fn sorted(value: serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Object(map) => {
+                let ordered: std::collections::BTreeMap<String, serde_json::Value> = map
+                    .into_iter()
+                    .map(|(key, value)| (key, sorted(value)))
+                    .collect();
+                serde_json::to_value(ordered).expect("ordered map")
+            }
+            serde_json::Value::Array(items) => {
+                serde_json::Value::Array(items.into_iter().map(sorted).collect())
+            }
+            other => other,
+        }
+    }
+    sorted(serde_json::to_value(value).expect("properties")).to_string()
+}
+
 fn mention_links(graph: &Graph) -> Vec<(String, String, String)> {
     let mut links = graph
         .list_relationships()
@@ -256,15 +277,9 @@ fn mention_links(graph: &Graph) -> Vec<(String, String, String)> {
             let source = graph.get_node(r.source()).expect("node").expect("source");
             let target = graph.get_node(r.target()).expect("node").expect("target");
             (
-                serde_json::to_value(source.properties())
-                    .expect("properties")
-                    .to_string(),
-                serde_json::to_value(target.properties())
-                    .expect("properties")
-                    .to_string(),
-                serde_json::to_value(r.properties())
-                    .expect("properties")
-                    .to_string(),
+                canonical_json(source.properties()),
+                canonical_json(target.properties()),
+                canonical_json(r.properties()),
             )
         })
         .collect::<Vec<_>>();
