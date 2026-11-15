@@ -83,6 +83,21 @@ pub struct SearchResult {
     pub hits: Vec<SearchHitView>,
 }
 
+/// Access scope of the graph API's searches (issue #369).
+///
+/// A bearer-token caller already reads every record through
+/// `/v1/graph/records`, `/v1/graph/nodes` and Cypher, which apply no
+/// OpenCTI marking filter, so graph search uses the same scope rather than an
+/// empty context that the access policy rejects. Marking-aware reads stay on
+/// the `/v1/opencti/*` routes, whose callers send their own context.
+pub(crate) fn graph_api_access() -> CanonicalAccessContext {
+    CanonicalAccessContext {
+        subject_id: "corrobore-graph-api".to_owned(),
+        roles: vec!["system".to_owned()],
+        ..CanonicalAccessContext::default()
+    }
+}
+
 fn hit_view(hit: GraphSearchHit) -> SearchHitView {
     SearchHitView {
         node_id: hit.node_id,
@@ -169,9 +184,7 @@ pub async fn hybrid_search(
         property: body.property,
         k: body.k.unwrap_or(DEFAULT_K).clamp(1, MAX_K),
         graph_expansion: body.graph_expansion,
-        // Full text is access-aware; without a caller identity only records
-        // visible to an empty access context are returned.
-        access: CanonicalAccessContext::default(),
+        access: graph_api_access(),
     };
     with_store(&state, move |store| {
         let commit_id = store
