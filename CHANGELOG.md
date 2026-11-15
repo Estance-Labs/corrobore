@@ -66,6 +66,12 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   `main` check the target head inside the WAL transaction, so a write that
   lands between the merge plan and its commit is refused, not overwritten.
 
+- **Schema registry (#323).** `GET /v1/graph/schema` describes the records
+  visible at a commit or branch head: labels and relationship types with
+  stable ids (persisted in `history/schema_registry.log`, never reused),
+  counts, property keys with their value types, and the label pairs each
+  relationship type connects.
+
 ### Removed
 
 - **Breaking:** the enterprise edition and its license gate leave Corrobore,

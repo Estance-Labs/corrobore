@@ -1195,6 +1195,22 @@ processing a page. A cursor the history no longer retains returns
 commit. A retained commit that is not on the branch returns
 `409 GRAPH_BRANCH_CONFLICT`.
 
+### `GET /v1/graph/schema`
+
+Describes the records visible at a commit (`commit`, else the head of
+`branch`, else `main`). Corrobore graphs are schema-free, so this schema is
+derived from the records rather than declared. `labels` and
+`relationship_types` each carry a stable `id`, a `count` of live records and
+their `properties`: `key`, `value_types` (`string`, `integer`, `float`,
+`boolean`, `null`, the `*_list` forms, `json`) and how many records carry the
+key. Relationship types also list `endpoints`: the source and target label
+pairs they connect, most frequent first.
+
+Ids are assigned the first time any commit's schema contains a label, type or
+property key. They are persisted in `history/schema_registry.log` and never
+reused, so a type keeps its id across commits even after it disappears and
+comes back.
+
 ### `GET /v1/graph/records`
 
 Pages the records visible at a commit in record-id order. The read target is

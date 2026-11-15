@@ -65,6 +65,7 @@ mod branches;
 mod commit_reads;
 mod diff;
 mod merge;
+mod schema;
 
 pub use branches::GraphBranchStatus;
 pub use diff::{
@@ -73,6 +74,10 @@ pub use diff::{
 };
 pub use merge::{
     GraphMergeReport, GraphMergeRequest, MergeConflict, MergeConflictKind, MergeOutcomeKind,
+};
+pub use schema::{
+    GraphSchema, SchemaEndpoint, SchemaLabel, SchemaProperty, SchemaRelationshipType,
+    property_value_type,
 };
 
 pub use commit_reads::{
@@ -375,6 +380,7 @@ pub struct CanonicalEngineStore {
     epistemic: EpistemicStores,
     history: GraphHistory,
     history_needs_reconcile: bool,
+    schema_registry: Option<schema::SchemaRegistry>,
 }
 
 /// Caller context recorded on the graph commit of a transition.
@@ -474,6 +480,7 @@ impl CanonicalEngineStore {
             epistemic,
             history,
             history_needs_reconcile: true,
+            schema_registry: None,
         };
         store.migrate_legacy_snapshot_if_needed()?;
         store.refresh_index_stats();
