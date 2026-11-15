@@ -234,6 +234,12 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
 
 ### Fixed
 
+- `corrobore server import-snapshot` and `export-snapshot-s3` panicked before
+  doing any work ("Cannot start a runtime from within a runtime", "Cannot drop
+  a runtime …") because they ran inside the binary's async runtime. Offline
+  storage commands now run on the blocking pool; an S3 snapshot round trip
+  (export, import, validate, restore) completes against an S3-compatible
+  server (#376).
 - Text search through `POST /v1/graph/search/hybrid` failed on branches and
   older commits with "hybrid search needs text, a vector, or both", because the
   full-text index covers the `main` head only, and on the `main` head it missed
