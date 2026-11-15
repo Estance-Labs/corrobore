@@ -1257,6 +1257,10 @@ pub fn build_router(state: AppState) -> Router {
             post(crate::handlers::database_operations::cleanup_history),
         )
         .route(
+            "/v1/admin/storage/export/parquet",
+            post(crate::handlers::database_operations::export_parquet),
+        )
+        .route(
             "/v1/admin/storage/operations",
             get(database_operation_status),
         )

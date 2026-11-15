@@ -87,6 +87,48 @@ enum ServerCommand {
     CancelRebuild(MigrationRootArgs),
     /// Prune graph history outside a retention window and compact payloads.
     Cleanup(CleanupArgs),
+    /// Download a snapshot from an object store URL into a new local snapshot directory.
+    ImportSnapshot(ImportSnapshotArgs),
+    /// Export one commit of an offline graph to Apache Parquet files.
+    ExportParquet(ExportParquetArgs),
+}
+
+#[derive(Args)]
+struct ImportSnapshotArgs {
+    /// Object store URL: `s3://bucket`, `file:///path` or `memory://`.
+    #[arg(long)]
+    source: String,
+    /// Object prefix the snapshot was exported under.
+    #[arg(long)]
+    prefix: String,
+    /// New local snapshot directory.
+    #[arg(long)]
+    destination: PathBuf,
+    /// S3 or MinIO endpoint, for `s3://` sources.
+    #[arg(long)]
+    endpoint: Option<String>,
+    /// AWS signing region, for `s3://` sources.
+    #[arg(long, default_value = "us-east-1")]
+    region: String,
+    /// Expected key-provider identity.
+    #[arg(long)]
+    encryption_key_id: Option<String>,
+}
+
+#[derive(Args)]
+struct ExportParquetArgs {
+    /// Offline persistent data directory.
+    #[arg(long)]
+    storage_dir: PathBuf,
+    /// New export directory.
+    #[arg(long)]
+    destination: PathBuf,
+    /// Export the head of this branch (default `main`).
+    #[arg(long)]
+    branch: Option<String>,
+    /// Export this commit.
+    #[arg(long)]
+    commit: Option<String>,
 }
 
 #[derive(Args)]
@@ -568,7 +610,75 @@ async fn main() -> ExitCode {
         Command::Server(ServerArgs {
             command: ServerCommand::Cleanup(args),
         }) => run_history_cleanup(args),
+        Command::Server(ServerArgs {
+            command: ServerCommand::ImportSnapshot(args),
+        }) => run_snapshot_import(args),
+        Command::Server(ServerArgs {
+            command: ServerCommand::ExportParquet(args),
+        }) => run_parquet_export(args),
     }
+}
+
+fn run_snapshot_import(args: ImportSnapshotArgs) -> ExitCode {
+    let started = std::time::Instant::now();
+    let mut options: Vec<(String, String)> = vec![("aws_region".to_owned(), args.region)];
+    if let Some(endpoint) = args.endpoint {
+        if endpoint.starts_with("http://") {
+            options.push(("aws_allow_http".to_owned(), "true".to_owned()));
+        }
+        options.push(("aws_endpoint".to_owned(), endpoint));
+    }
+    for (variable, option) in [
+        ("CORROBORE_S3_ACCESS_KEY", "aws_access_key_id"),
+        ("CORROBORE_S3_SECRET_KEY", "aws_secret_access_key"),
+        ("CORROBORE_S3_SESSION_TOKEN", "aws_session_token"),
+    ] {
+        if let Ok(value) = std::env::var(variable)
+            && !value.trim().is_empty()
+        {
+            options.push((option.to_owned(), value));
+        }
+    }
+    let store = match storage_interchange::UrlObjectStore::open(&args.source, options) {
+        Ok(store) => store,
+        Err(error) => return database_operation_failure("import_snapshot", started, error),
+    };
+    print_database_operation(
+        "import_snapshot",
+        started,
+        graph_storage::import_snapshot_from_store(
+            &store,
+            &args.prefix,
+            &args.destination,
+            args.encryption_key_id.as_deref(),
+        ),
+    )
+}
+
+fn run_parquet_export(args: ExportParquetArgs) -> ExitCode {
+    let started = std::time::Instant::now();
+    let ownership = match DataDirectoryOwnership::acquire(&args.storage_dir) {
+        Ok(ownership) => ownership,
+        Err(error) => return database_operation_failure("export_parquet", started, error),
+    };
+    let result = (|| -> Result<storage_interchange::ParquetExportReport, String> {
+        let commit = args
+            .commit
+            .as_deref()
+            .map(graph_storage::GraphCommitId::new)
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        let root = open_storage_root(&args.storage_dir).map_err(|error| error.to_string())?;
+        let mut store = CanonicalEngineStore::open(root, CanonicalStoreOptions::default())
+            .map_err(|error| error.to_string())?;
+        let commit_id = store
+            .resolve_graph_ref(args.branch.as_deref(), commit.as_ref())
+            .map_err(|error| error.to_string())?;
+        storage_interchange::export_commit_parquet(&mut store, &commit_id, &args.destination)
+            .map_err(|error| error.to_string())
+    })();
+    drop(ownership);
+    print_database_operation("export_parquet", started, result)
 }
 
 fn run_history_cleanup(args: CleanupArgs) -> ExitCode {

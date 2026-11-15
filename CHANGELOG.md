@@ -104,6 +104,16 @@ Changes on `main` after `v0.3.3` that have not yet been tagged in a release.
   `/v1/seed/search` still need an embedding provider for their text
   objective and are unchanged.
 
+- **Object storage and open columnar export (#327).** A new
+  `storage-interchange` crate adopts the `object_store` crate (pinned 0.14.2)
+  for `s3://`, `file://` and `memory://` stores behind the content-plane
+  `ObjectStore` and snapshot `SnapshotArtifactStore` interfaces. `corrobore
+  server import-snapshot` downloads and validates a snapshot from such a store
+  for `restore`, which closes the S3 restore gap. It also adds Apache Parquet
+  export of a commit (Arrow and Parquet pinned 60.1.0): one file per label and
+  relationship type, with typed `prop_<key>` columns, through
+  `corrobore server export-parquet` and `POST /v1/admin/storage/export/parquet`.
+
 ### Removed
 
 - **Breaking:** the enterprise edition and its license gate leave Corrobore,

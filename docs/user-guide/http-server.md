@@ -8,7 +8,8 @@ point and deployment runbooks, start with
 
 Administrative database operations are available at
 `POST /v1/admin/storage/snapshots`, `POST /v1/admin/storage/indexes/rebuild`,
-`POST /v1/admin/storage/cleanup`, and `GET /v1/admin/storage/operations`. They require the administrative bearer token;
+`POST /v1/admin/storage/cleanup`, `POST /v1/admin/storage/export/parquet`, and
+`GET /v1/admin/storage/operations`. They require the administrative bearer token;
 see [Database operations](database-operations.md) for restore, migration, S3/MinIO,
 rollback, cancellation and recovery procedures.
 
@@ -401,6 +402,13 @@ Admin token required. Prunes graph history outside a retention window from
 `{keep_commits?, keep_seconds?, dry_run?}` (default `keep_commits` 100) and
 compacts branch payloads and the WAL behind the latest checkpoint. See
 [Database operations](database-operations.md#history-retention).
+
+## `POST /v1/admin/storage/export/parquet`
+
+Admin token required. Exports one commit (`commit`, else the head of `branch`,
+else `main`) to Apache Parquet files under `destination` on the server, one per
+label and relationship type, with a `manifest.json`. See
+[Database operations](database-operations.md#object-storage-and-parquet-export).
 
 ## `POST /v1/admin/storage/indexes/rebuild`
 

@@ -68,6 +68,51 @@ corrobore server export-snapshot-s3 \
 Every object is read back after upload. The versioned snapshot manifest is
 published last, so an incomplete prefix cannot look like a completed snapshot.
 
+## Object storage and Parquet export
+
+`corrobore server import-snapshot` downloads a snapshot exported with
+`export-snapshot-s3` (or any exporter publishing the same layout) from an
+object store URL into a new local snapshot directory. It reads the manifest
+first, writes it last, and validates every component checksum, so an
+interrupted download never looks complete. Then `restore` it as usual. URLs
+are `s3://bucket` (with `--endpoint`, `--region` and the `CORROBORE_S3_*`
+credentials), `file:///path` or `memory://`, served by the `object_store`
+crate.
+
+```bash
+corrobore server import-snapshot --source s3://corrobore-backups \
+  --endpoint https://s3.example.net --prefix production/2026-07-26 \
+  --destination /var/backups/corrobore/2026-07-26
+corrobore server restore --snapshot /var/backups/corrobore/2026-07-26 --target /var/lib/corrobore/graph
+```
+
+`corrobore server export-parquet` writes one commit (`--commit`, else the head
+of `--branch`, else `main`) to Apache Parquet files that DuckDB, Polars or
+Spark read directly:
+
+- **Nodes:** one `nodes/<label>.parquet` file per label.
+- **Relationships:** one `relationships/<type>.parquet` file per relationship
+  type.
+- **`manifest.json`:** the commit and the files written.
+
+Each file has these columns:
+
+- the native fields: `id`, `version_id`, `status`, then `labels`, or `type`,
+  `source` and `target` for relationships, then `first_seen` and `last_seen`;
+- `properties`, holding every property as JSON;
+- one typed `prop_<key>` column for every property whose values share one
+  scalar type at that commit. The type is `Int64`, `Float64` (integers and
+  floats mixed), `Utf8` or `Boolean`.
+
+The online equivalent is `POST /v1/admin/storage/export/parquet` with
+`{destination, branch?, commit?}` and the admin token. The destination must
+not exist yet.
+
+```bash
+corrobore server export-parquet --storage-dir /var/lib/corrobore/graph --destination /var/exports/graph-2026-11-15
+duckdb -c "SELECT prop_name, prop_score FROM '/var/exports/graph-2026-11-15/nodes/Indicator.parquet'"
+```
+
 ## Migration, rollback and index rebuild
 
 Migration is offline, versioned, idempotent and resumable. Durable progress lives
