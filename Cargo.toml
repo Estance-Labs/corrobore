@@ -54,7 +54,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 # exactly; the Arrow family moves in lockstep.
 object_store = { version = "=0.14.2", default-features = false, features = ["aws", "fs"] }
 arrow-array = "=60.1.0"
-arrow-schema = "=60.1.0"
+arrow-schema = "=60.2.0"
 parquet = { version = "=60.1.0", default-features = false, features = ["arrow", "snap"] }
 clap = { version = "4", features = ["derive"] }
 csv = "1"
